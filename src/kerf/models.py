@@ -41,11 +41,33 @@ class InstanceConfig:
     enable_numa: Optional[bool] = None
 
 @dataclass
+class CPUTopology:
+    """CPU topology information."""
+    cpu_id: int
+    numa_node: int
+    core_id: int
+    thread_id: int
+    socket_id: int
+    cache_levels: List[int]  # Cache sizes at each level
+    flags: List[str]  # CPU flags like "smt", "ht", etc.
+
+@dataclass
+class NUMANode:
+    """NUMA node information."""
+    node_id: int
+    memory_base: int
+    memory_size: int
+    cpus: List[int]
+    distance_matrix: Dict[int, int]  # Distance to other NUMA nodes
+    memory_type: str  # "dram", "hbm", "cxl", etc.
+
+@dataclass
 class CPUAllocation:
     """CPU allocation information."""
     total: int
     host_reserved: List[int]
     available: List[int]
+    topology: Optional[Dict[int, CPUTopology]] = None  # CPU ID -> topology info
     
     def get_allocated_cpus(self) -> Set[int]:
         """Get set of CPUs allocated to instances."""
@@ -87,6 +109,9 @@ class InstanceResources:
     memory_base: int
     memory_bytes: int
     devices: List[str]  # List of device references
+    numa_nodes: Optional[List[int]] = None  # Preferred NUMA nodes
+    cpu_affinity: Optional[str] = None  # "compact", "spread", "local"
+    memory_policy: Optional[str] = None  # "local", "interleave", "bind"
 
 
 @dataclass
@@ -98,11 +123,38 @@ class Instance:
     config: Optional[InstanceConfig] = None
 
 @dataclass
+class NUMATopology:
+    """NUMA topology information."""
+    nodes: Dict[int, NUMANode]  # NUMA node ID -> node info
+    
+    def get_cpus_in_numa_node(self, numa_node: int) -> List[int]:
+        """Get all CPUs in a specific NUMA node."""
+        if numa_node not in self.nodes:
+            return []
+        return self.nodes[numa_node].cpus
+    
+    def get_numa_node_for_cpu(self, cpu_id: int) -> Optional[int]:
+        """Get NUMA node ID for a specific CPU."""
+        for node_id, node in self.nodes.items():
+            if cpu_id in node.cpus:
+                return node_id
+        return None
+    
+    def get_memory_region_for_numa_node(self, numa_node: int) -> Optional[Tuple[int, int]]:
+        """Get memory region (base, size) for a specific NUMA node."""
+        if numa_node not in self.nodes:
+            return None
+        node = self.nodes[numa_node]
+        return (node.memory_base, node.memory_size)
+
+
+@dataclass
 class HardwareInventory:
     """Complete hardware inventory."""
     cpus: CPUAllocation
     memory: MemoryAllocation
-    devices: Dict[str, DeviceInfo]
+    numa_topology: Optional[NUMATopology] = None
+    devices: Dict[str, DeviceInfo] = None
 
 
 @dataclass

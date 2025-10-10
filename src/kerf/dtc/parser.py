@@ -20,7 +20,7 @@ import libfdt
 from typing import Dict, List, Optional, Tuple, Any
 from ..models import (
     GlobalDeviceTree, HardwareInventory, CPUAllocation, MemoryAllocation,
-    DeviceInfo, Instance, InstanceResources
+    DeviceInfo, Instance, InstanceResources, NUMATopology, NUMANode
 )
 from ..exceptions import ParseError
 
@@ -98,12 +98,16 @@ class DeviceTreeParser:
         # Parse memory information
         memory = self._parse_memory_allocation(resources_node)
         
+        # Parse NUMA topology
+        numa_topology = self._parse_numa_topology(resources_node)
+        
         # Parse devices
         devices = self._parse_devices(resources_node)
         
         return HardwareInventory(
             cpus=cpus,
             memory=memory,
+            numa_topology=numa_topology,
             devices=devices
         )
     
@@ -337,12 +341,16 @@ class DeviceTreeParser:
         # Parse memory information
         memory = self._parse_memory_from_dts(dts_content)
         
+        # Parse NUMA topology
+        numa_topology = self._parse_numa_topology_from_dts(dts_content)
+        
         # Parse devices
         devices = self._parse_devices_from_dts(dts_content)
         
         return HardwareInventory(
             cpus=cpus,
             memory=memory,
+            numa_topology=numa_topology,
             devices=devices
         )
     
@@ -375,10 +383,14 @@ class DeviceTreeParser:
             raise ParseError("Missing 'available' in CPU section")
         available = [int(x.strip()) for x in available_match.group(1).split()]
         
+        # Parse CPU topology if present
+        topology = self._parse_cpu_topology_from_dts(dts_content)
+        
         return CPUAllocation(
             total=total,
             host_reserved=host_reserved,
-            available=available
+            available=available,
+            topology=topology
         )
     
     def _parse_memory_from_dts(self, dts_content: str) -> MemoryAllocation:
@@ -680,11 +692,32 @@ class DeviceTreeParser:
             # Remove & prefix from device references
             devices = [x.strip().lstrip('&') for x in devices_match.group(1).split(',')]
         
+        # Parse NUMA nodes (optional)
+        numa_nodes = None
+        numa_nodes_match = re.search(r'numa-nodes\s*=\s*<([^>]+)>', resources_text)
+        if numa_nodes_match:
+            numa_nodes = [int(x.strip()) for x in numa_nodes_match.group(1).split()]
+        
+        # Parse CPU affinity (optional)
+        cpu_affinity = None
+        cpu_affinity_match = re.search(r'cpu-affinity\s*=\s*"([^"]+)"', resources_text)
+        if cpu_affinity_match:
+            cpu_affinity = cpu_affinity_match.group(1)
+        
+        # Parse memory policy (optional)
+        memory_policy = None
+        memory_policy_match = re.search(r'memory-policy\s*=\s*"([^"]+)"', resources_text)
+        if memory_policy_match:
+            memory_policy = memory_policy_match.group(1)
+        
         return InstanceResources(
             cpus=cpus,
             memory_base=memory_base,
             memory_bytes=memory_bytes,
-            devices=devices
+            devices=devices,
+            numa_nodes=numa_nodes,
+            cpu_affinity=cpu_affinity,
+            memory_policy=memory_policy
         )
     
     
@@ -731,6 +764,181 @@ class DeviceTreeParser:
             device_references[ref_name] = device_ref
         
         return device_references
+    
+    def _parse_numa_topology_from_dts(self, dts_content: str) -> Optional[NUMATopology]:
+        """Parse NUMA topology from DTS content."""
+        import re
+        from ..models import NUMANode, NUMATopology
+        
+        numa_nodes = {}
+        
+        # Look for numa-topology section
+        numa_section = re.search(r'numa-topology\s*\{([^}]+)\}', dts_content, re.DOTALL)
+        if not numa_section:
+            return None
+        
+        numa_text = numa_section.group(1)
+        
+        # Find all NUMA node definitions
+        node_pattern = r'node@(\d+)\s*\{([^}]+)\}'
+        node_matches = re.finditer(node_pattern, numa_text, re.DOTALL)
+        
+        for match in node_matches:
+            node_id = int(match.group(1))
+            node_content = match.group(2)
+            
+            # Parse node properties
+            memory_base = 0
+            memory_size = 0
+            cpus = []
+            distance_matrix = {}
+            memory_type = "dram"
+            
+            # Parse memory-base
+            memory_base_match = re.search(r'memory-base\s*=\s*<([^>]+)>', node_content)
+            if memory_base_match:
+                memory_base = self._parse_hex_value(memory_base_match.group(1))
+            
+            # Parse memory-size
+            memory_size_match = re.search(r'memory-size\s*=\s*<([^>]+)>', node_content)
+            if memory_size_match:
+                memory_size = self._parse_hex_value(memory_size_match.group(1))
+            
+            # Parse CPUs
+            cpus_match = re.search(r'cpus\s*=\s*<([^>]+)>', node_content)
+            if cpus_match:
+                cpus = [int(x.strip()) for x in cpus_match.group(1).split()]
+            
+            # Parse distance matrix (optional)
+            distance_match = re.search(r'distance-matrix\s*=\s*<([^>]+)>', node_content)
+            if distance_match:
+                distances = [int(x.strip()) for x in distance_match.group(1).split()]
+                # Simple distance matrix parsing - would need more sophisticated logic for full matrix
+                pass
+            
+            # Parse memory type
+            memory_type_match = re.search(r'memory-type\s*=\s*"([^"]+)"', node_content)
+            if memory_type_match:
+                memory_type = memory_type_match.group(1)
+            
+            numa_nodes[node_id] = NUMANode(
+                node_id=node_id,
+                memory_base=memory_base,
+                memory_size=memory_size,
+                cpus=cpus,
+                distance_matrix=distance_matrix,
+                memory_type=memory_type
+            )
+        
+        return NUMATopology(nodes=numa_nodes) if numa_nodes else None
+    
+    def _parse_cpu_topology_from_dts(self, dts_content: str) -> Optional[Dict[int, 'CPUTopology']]:
+        """Parse CPU topology from DTS content."""
+        import re
+        from ..models import CPUTopology
+        
+        topology = {}
+        
+        # Look for cores section
+        cores_section = re.search(r'cores\s*\{([^}]+)\}', dts_content, re.DOTALL)
+        if not cores_section:
+            return None
+        
+        cores_text = cores_section.group(1)
+        
+        # Find all core definitions
+        core_pattern = r'core@(\d+)\s*\{\s*cpus\s*=\s*<([^>]+)>\s*;\s*\}'
+        core_matches = re.finditer(core_pattern, cores_text, re.DOTALL)
+        
+        for match in core_matches:
+            core_id = int(match.group(1))
+            cpus_str = match.group(2)
+            cpus = [int(x.strip()) for x in cpus_str.split()]
+            
+            # Create topology entries for each CPU in this core
+            for i, cpu_id in enumerate(cpus):
+                topology[cpu_id] = CPUTopology(
+                    cpu_id=cpu_id,
+                    numa_node=0,  # Will be filled from NUMA topology
+                    core_id=core_id,
+                    thread_id=i,
+                    socket_id=0,  # Will be determined from NUMA topology
+                    cache_levels=[],  # Could be parsed from additional properties
+                    flags=[]  # Could be parsed from additional properties
+                )
+        
+        return topology if topology else None
+    
+    def _parse_numa_topology(self, resources_node: int) -> Optional[NUMATopology]:
+        """Parse NUMA topology from resources node."""
+        try:
+            numa_node = self.fdt.subnode_offset(resources_node, 'numa-topology')
+        except libfdt.FdtException:
+            return None
+        
+        nodes = {}
+        
+        # Iterate through NUMA node definitions
+        offset = self.fdt.first_subnode(numa_node)
+        while offset >= 0:
+            try:
+                node_name = self.fdt.get_name(offset)
+                if node_name.startswith('node@'):
+                    node_id = int(node_name.split('@')[1])
+                    node_info = self._parse_numa_node_info(offset, node_id)
+                    nodes[node_id] = node_info
+                offset = self.fdt.next_subnode(offset)
+            except Exception:
+                offset = self.fdt.next_subnode(offset)
+        
+        return NUMATopology(nodes=nodes) if nodes else None
+    
+    def _parse_numa_node_info(self, node_offset: int, node_id: int) -> NUMANode:
+        """Parse individual NUMA node information."""
+        # Parse memory-base
+        memory_base = 0
+        try:
+            memory_base = self.fdt.getprop(node_offset, 'memory-base').as_uint64()
+        except libfdt.FdtException:
+            pass
+        
+        # Parse memory-size
+        memory_size = 0
+        try:
+            memory_size = self.fdt.getprop(node_offset, 'memory-size').as_uint64()
+        except libfdt.FdtException:
+            pass
+        
+        # Parse CPUs
+        cpus = []
+        try:
+            cpus = list(self.fdt.getprop(node_offset, 'cpus').as_uint32_array())
+        except libfdt.FdtException:
+            pass
+        
+        # Parse distance matrix (optional)
+        distance_matrix = {}
+        try:
+            distances = list(self.fdt.getprop(node_offset, 'distance-matrix').as_uint32_array())
+            # Simple distance matrix parsing - would need more sophisticated logic for full matrix
+        except libfdt.FdtException:
+            pass
+        
+        # Parse memory type
+        memory_type = "dram"
+        try:
+            memory_type = self.fdt.getprop(node_offset, 'memory-type').as_string()
+        except libfdt.FdtException:
+            pass
+        
+        return NUMANode(
+            node_id=node_id,
+            memory_base=memory_base,
+            memory_size=memory_size,
+            cpus=cpus,
+            distance_matrix=distance_matrix,
+            memory_type=memory_type
+        )
     
     def _parse_hex_value(self, hex_str: str) -> int:
         """Parse hex value from DTS format."""

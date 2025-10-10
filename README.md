@@ -75,6 +75,7 @@ Input: Single Global DTS
 - **Format Support**: DTS to DTB compilation with multiple output formats
 - **Error Reporting**: Detailed error messages with actionable suggestions
 - **Resource Analysis**: Complete resource utilization reporting
+- **CPU & NUMA Topology**: Full support for CPU topology and NUMA-aware resource allocation
 
 ### Command Line Interface
 ```bash
@@ -814,8 +815,63 @@ The `examples/` directory contains sample Device Tree Source (DTS) files demonst
 - **`minimal.dts`** - Simple configuration for testing and development (8 CPUs, 8GB memory)
 - **`high_performance.dts`** - Large-scale configuration for high-performance computing (128 CPUs, 64GB memory)
 - **`edge_computing.dts`** - Edge computing configuration with GPU support for AI inference (16 CPUs, 32GB memory)
+- **`numa_topology.dts`** - Advanced NUMA topology configuration with 4 NUMA nodes and topology-aware allocation
+- **`simple_numa.dts`** - Basic NUMA configuration with 2 NUMA nodes and NUMA-aware policies
 - **`conflict_example.dts`** - Intentionally invalid configuration demonstrating common validation errors
 - **`bad_system.dts`** - Another example of invalid configuration for testing error detection
+
+## CPU and NUMA Topology Support
+
+Kerf provides comprehensive support for CPU and NUMA topology management:
+
+### Key Features
+- **CPU Topology**: Socket, core, and thread mapping with SMT/hyperthreading support
+- **NUMA Awareness**: NUMA node definition with memory regions and CPU assignments
+- **Topology Policies**: CPU affinity (`compact`, `spread`, `local`) and memory policies (`local`, `interleave`, `bind`)
+- **Performance Validation**: Automatic validation of topology constraints and performance warnings
+
+### Example NUMA Configuration
+```dts
+resources {
+    cpus {
+        total = <32>;
+        host-reserved = <0 1 2 3>;
+        available = <4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 
+                    20 21 22 23 24 25 26 27 28 29 30 31>;
+    };
+    
+    numa-topology {
+        node@0 {
+            node-id = <0>;
+            memory-base = <0x0 0x0>;
+            memory-size = <0x0 0x800000000>;  // 16GB
+            cpus = <0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15>;
+        };
+        
+        node@1 {
+            node-id = <1>;
+            memory-base = <0x0 0x800000000>;
+            memory-size = <0x0 0x800000000>;  // 16GB
+            cpus = <16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31>;
+        };
+    };
+};
+
+instances {
+    web-server {
+        resources {
+            cpus = <4 5 6 7 8 9 10 11>;  // NUMA node 0
+            memory-base = <0x0 0x800000000>;
+            memory-bytes = <0x0 0x200000000>;  // 8GB
+            numa-nodes = <0>;
+            cpu-affinity = "compact";
+            memory-policy = "local";
+        };
+    };
+};
+```
+
+For detailed information about CPU and NUMA topology support, see [CPU_NUMA_TOPOLOGY.md](docs/CPU_NUMA_TOPOLOGY.md).
 
 ## References
 

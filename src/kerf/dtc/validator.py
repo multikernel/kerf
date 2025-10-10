@@ -160,6 +160,9 @@ class MultikernelValidator:
         
         # Validate device allocation
         self._validate_device_allocation(instance, tree)
+        
+        # Validate topology constraints
+        self._validate_topology_constraints(instance, tree)
     
     def _validate_cpu_allocation(self, instance, tree: GlobalDeviceTree):
         """Validate CPU allocation for an instance."""
@@ -420,3 +423,224 @@ class MultikernelValidator:
             self.warnings.append(
                 f"Resource utilization: {unallocated_memory} bytes ({percentage:.1f}% of memory pool) remain unallocated"
             )
+    
+    def _validate_topology_constraints(self, instance, tree: GlobalDeviceTree):
+        """Validate NUMA and CPU topology constraints for an instance."""
+        resources = instance.resources
+        
+        # Validate NUMA node constraints
+        if resources.numa_nodes and tree.hardware.numa_topology:
+            self._validate_numa_constraints(instance, tree)
+        
+        # Validate CPU affinity constraints
+        if resources.cpu_affinity:
+            self._validate_cpu_affinity_constraints(instance, tree)
+        
+        # Validate memory policy constraints
+        if resources.memory_policy:
+            self._validate_memory_policy_constraints(instance, tree)
+    
+    def _validate_numa_constraints(self, instance, tree: GlobalDeviceTree):
+        """Validate NUMA node constraints for an instance."""
+        resources = instance.resources
+        numa_topology = tree.hardware.numa_topology
+        
+        if not numa_topology:
+            return
+        
+        # Check if specified NUMA nodes exist
+        for numa_node in resources.numa_nodes:
+            if numa_node not in numa_topology.nodes:
+                self.errors.append(
+                    f"Instance {instance.name}: NUMA node {numa_node} does not exist in hardware topology"
+                )
+        
+        # Check if CPUs are in the specified NUMA nodes
+        if resources.numa_nodes:
+            for cpu in resources.cpus:
+                cpu_numa_node = numa_topology.get_numa_node_for_cpu(cpu)
+                
+                if cpu_numa_node is not None and cpu_numa_node not in resources.numa_nodes:
+                    self.warnings.append(
+                        f"Instance {instance.name}: CPU {cpu} is in NUMA node {cpu_numa_node}, "
+                        f"but instance is configured for NUMA nodes {resources.numa_nodes}. "
+                        f"This may cause performance issues due to remote memory access."
+                    )
+    
+    def _validate_cpu_affinity_constraints(self, instance, tree: GlobalDeviceTree):
+        """Validate CPU affinity constraints for an instance."""
+        resources = instance.resources
+        cpus = resources.cpus
+        
+        if resources.cpu_affinity == "compact":
+            # For compact affinity, CPUs should be from the same NUMA node and preferably same core
+            self._validate_compact_affinity(instance, tree)
+        elif resources.cpu_affinity == "spread":
+            # For spread affinity, CPUs should be distributed across different NUMA nodes
+            self._validate_spread_affinity(instance, tree)
+        elif resources.cpu_affinity == "local":
+            # For local affinity, CPUs should be from the same NUMA node as memory
+            self._validate_local_affinity(instance, tree)
+    
+    def _validate_compact_affinity(self, instance, tree: GlobalDeviceTree):
+        """Validate compact CPU affinity."""
+        resources = instance.resources
+        cpus = resources.cpus
+        
+        if not tree.hardware.numa_topology:
+            return
+        
+        # Check if CPUs are from the same NUMA node
+        numa_nodes = set()
+        for cpu in cpus:
+            numa_node = tree.hardware.numa_topology.get_numa_node_for_cpu(cpu)
+            if numa_node is not None:
+                numa_nodes.add(numa_node)
+        
+        if len(numa_nodes) > 1:
+            self.warnings.append(
+                f"Instance {instance.name}: Compact CPU affinity requested but CPUs span multiple NUMA nodes: {sorted(numa_nodes)}"
+            )
+        
+        # Check if CPUs are from the same core (for SMT)
+        if tree.hardware.cpus.topology:
+            cores = set()
+            for cpu in cpus:
+                if cpu in tree.hardware.cpus.topology:
+                    cores.add(tree.hardware.cpus.topology[cpu].core_id)
+            
+            if len(cores) > len(cpus) // 2:
+                self.warnings.append(
+                    f"Instance {instance.name}: Compact CPU affinity may not be optimal - CPUs span {len(cores)} cores"
+                )
+    
+    def _validate_spread_affinity(self, instance, tree: GlobalDeviceTree):
+        """Validate spread CPU affinity."""
+        resources = instance.resources
+        cpus = resources.cpus
+        
+        if not tree.hardware.numa_topology:
+            return
+        
+        # Check if CPUs are distributed across different NUMA nodes
+        numa_nodes = set()
+        for cpu in cpus:
+            numa_node = tree.hardware.numa_topology.get_numa_node_for_cpu(cpu)
+            if numa_node is not None:
+                numa_nodes.add(numa_node)
+        
+        if len(numa_nodes) < 2:
+            self.warnings.append(
+                f"Instance {instance.name}: Spread CPU affinity requested but CPUs are from single NUMA node {list(numa_nodes)[0]}"
+            )
+    
+    def _validate_local_affinity(self, instance, tree: GlobalDeviceTree):
+        """Validate local CPU affinity (CPUs and memory on same NUMA node)."""
+        resources = instance.resources
+        cpus = resources.cpus
+        
+        if not tree.hardware.numa_topology:
+            return
+        
+        # Find the NUMA node for the memory allocation
+        memory_numa_node = None
+        memory_base = resources.memory_base
+        
+        for node_id, node in tree.hardware.numa_topology.nodes.items():
+            if node.memory_base <= memory_base < node.memory_base + node.memory_size:
+                memory_numa_node = node_id
+                break
+        
+        if memory_numa_node is None:
+            self.warnings.append(
+                f"Instance {instance.name}: Could not determine NUMA node for memory allocation at {hex(memory_base)}"
+            )
+            return
+        
+        # Check if CPUs are from the same NUMA node as memory
+        cpu_numa_nodes = set()
+        for cpu in cpus:
+            numa_node = tree.hardware.numa_topology.get_numa_node_for_cpu(cpu)
+            if numa_node is not None:
+                cpu_numa_nodes.add(numa_node)
+        
+        if memory_numa_node not in cpu_numa_nodes:
+            self.warnings.append(
+                f"Instance {instance.name}: Local affinity requested but CPUs are from NUMA nodes {sorted(cpu_numa_nodes)} "
+                f"while memory is on NUMA node {memory_numa_node}"
+            )
+    
+    def _validate_memory_policy_constraints(self, instance, tree: GlobalDeviceTree):
+        """Validate memory policy constraints for an instance."""
+        resources = instance.resources
+        
+        if resources.memory_policy == "local":
+            # For local memory policy, memory should be allocated from the same NUMA node as CPUs
+            self._validate_local_memory_policy(instance, tree)
+        elif resources.memory_policy == "interleave":
+            # For interleave policy, memory should be distributed across multiple NUMA nodes
+            self._validate_interleave_memory_policy(instance, tree)
+        elif resources.memory_policy == "bind":
+            # For bind policy, memory should be bound to specific NUMA nodes
+            self._validate_bind_memory_policy(instance, tree)
+    
+    def _validate_local_memory_policy(self, instance, tree: GlobalDeviceTree):
+        """Validate local memory policy."""
+        resources = instance.resources
+        
+        if not tree.hardware.numa_topology:
+            return
+        
+        # Find the NUMA node for the memory allocation
+        memory_numa_node = None
+        memory_base = resources.memory_base
+        
+        for node_id, node in tree.hardware.numa_topology.nodes.items():
+            if node.memory_base <= memory_base < node.memory_base + node.memory_size:
+                memory_numa_node = node_id
+                break
+        
+        if memory_numa_node is None:
+            self.warnings.append(
+                f"Instance {instance.name}: Local memory policy requested but memory allocation "
+                f"at {hex(memory_base)} is not within any NUMA node memory range"
+            )
+            return
+        
+        # Check if CPUs are from the same NUMA node
+        cpu_numa_nodes = set()
+        for cpu in resources.cpus:
+            numa_node = tree.hardware.numa_topology.get_numa_node_for_cpu(cpu)
+            if numa_node is not None:
+                cpu_numa_nodes.add(numa_node)
+        
+        if memory_numa_node not in cpu_numa_nodes:
+            self.warnings.append(
+                f"Instance {instance.name}: Local memory policy requested but CPUs are from NUMA nodes "
+                f"{sorted(cpu_numa_nodes)} while memory is on NUMA node {memory_numa_node}"
+            )
+    
+    def _validate_interleave_memory_policy(self, instance, tree: GlobalDeviceTree):
+        """Validate interleave memory policy."""
+        # For interleave policy, we would typically check if memory is distributed
+        # across multiple NUMA nodes, but this is complex to validate without
+        # knowing the actual memory allocation implementation
+        pass
+    
+    def _validate_bind_memory_policy(self, instance, tree: GlobalDeviceTree):
+        """Validate bind memory policy."""
+        resources = instance.resources
+        
+        if not resources.numa_nodes:
+            self.warnings.append(
+                f"Instance {instance.name}: Bind memory policy requested but no NUMA nodes specified"
+            )
+            return
+        
+        # Check if specified NUMA nodes exist
+        if tree.hardware.numa_topology:
+            for numa_node in resources.numa_nodes:
+                if numa_node not in tree.hardware.numa_topology.nodes:
+                    self.errors.append(
+                        f"Instance {instance.name}: Bind memory policy references non-existent NUMA node {numa_node}"
+                    )
