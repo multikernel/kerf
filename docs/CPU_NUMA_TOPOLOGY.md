@@ -117,7 +117,7 @@ instances {
     
     database {
         id = <2>;
-        resources {src/kerf/dtc/__pycache__/
+        resources {
             cpus = <20 21 22 23 24 25 26 27>;  // NUMA node 1
             memory-base = <0x0 0x800000000>;
             memory-bytes = <0x0 0x400000000>;  // 16GB
