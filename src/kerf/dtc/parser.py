@@ -20,7 +20,7 @@ import libfdt
 from typing import Dict, List, Optional, Tuple, Any
 from ..models import (
     GlobalDeviceTree, HardwareInventory, CPUAllocation, MemoryAllocation,
-    DeviceInfo, Instance, InstanceResources, NUMATopology, NUMANode
+    DeviceInfo, Instance, InstanceResources, TopologySection, NUMANode
 )
 from ..exceptions import ParseError
 
@@ -98,8 +98,8 @@ class DeviceTreeParser:
         # Parse memory information
         memory = self._parse_memory_allocation(resources_node)
         
-        # Parse NUMA topology
-        numa_topology = self._parse_numa_topology(resources_node)
+        # Parse topology section
+        topology = self._parse_topology(resources_node)
         
         # Parse devices
         devices = self._parse_devices(resources_node)
@@ -107,7 +107,7 @@ class DeviceTreeParser:
         return HardwareInventory(
             cpus=cpus,
             memory=memory,
-            numa_topology=numa_topology,
+            topology=topology,
             devices=devices
         )
     
@@ -341,8 +341,8 @@ class DeviceTreeParser:
         # Parse memory information
         memory = self._parse_memory_from_dts(dts_content)
         
-        # Parse NUMA topology
-        numa_topology = self._parse_numa_topology_from_dts(dts_content)
+        # Parse topology section
+        topology = self._parse_topology_from_dts(dts_content)
         
         # Parse devices
         devices = self._parse_devices_from_dts(dts_content)
@@ -350,7 +350,7 @@ class DeviceTreeParser:
         return HardwareInventory(
             cpus=cpus,
             memory=memory,
-            numa_topology=numa_topology,
+            topology=topology,
             devices=devices
         )
     
@@ -765,15 +765,32 @@ class DeviceTreeParser:
         
         return device_references
     
-    def _parse_numa_topology_from_dts(self, dts_content: str) -> Optional[NUMATopology]:
-        """Parse NUMA topology from DTS content."""
+    def _parse_topology_from_dts(self, dts_content: str) -> Optional[TopologySection]:
+        """Parse topology section from DTS content."""
         import re
-        from ..models import NUMANode, NUMATopology
+        from ..models import NUMANode, TopologySection
+        
+        # Look for topology section
+        topology_section = re.search(r'topology\s*\{([^}]+)\}', dts_content, re.DOTALL)
+        if not topology_section:
+            return None
+        
+        topology_text = topology_section.group(1)
+        
+        # Parse NUMA nodes from topology section
+        numa_nodes = self._parse_numa_nodes_from_dts(topology_text)
+        
+        return TopologySection(numa_nodes=numa_nodes) if numa_nodes else None
+    
+    def _parse_numa_nodes_from_dts(self, topology_text: str) -> Optional[Dict[int, NUMANode]]:
+        """Parse NUMA nodes from topology text."""
+        import re
+        from ..models import NUMANode
         
         numa_nodes = {}
         
-        # Look for numa-topology section
-        numa_section = re.search(r'numa-topology\s*\{([^}]+)\}', dts_content, re.DOTALL)
+        # Look for numa-nodes subsection
+        numa_section = re.search(r'numa-nodes\s*\{([^}]+)\}', topology_text, re.DOTALL)
         if not numa_section:
             return None
         
@@ -830,7 +847,7 @@ class DeviceTreeParser:
                 memory_type=memory_type
             )
         
-        return NUMATopology(nodes=numa_nodes) if numa_nodes else None
+        return numa_nodes if numa_nodes else None
     
     def _parse_cpu_topology_from_dts(self, dts_content: str) -> Optional[Dict[int, 'CPUTopology']]:
         """Parse CPU topology from DTS content."""
@@ -869,17 +886,29 @@ class DeviceTreeParser:
         
         return topology if topology else None
     
-    def _parse_numa_topology(self, resources_node: int) -> Optional[NUMATopology]:
-        """Parse NUMA topology from resources node."""
+    def _parse_topology(self, resources_node: int) -> Optional[TopologySection]:
+        """Parse topology section from resources node."""
         try:
-            numa_node = self.fdt.subnode_offset(resources_node, 'numa-topology')
+            topology_node = self.fdt.subnode_offset(resources_node, 'topology')
+        except libfdt.FdtException:
+            return None
+        
+        # Parse NUMA nodes from topology section
+        numa_nodes = self._parse_numa_nodes_from_topology(topology_node)
+        
+        return TopologySection(numa_nodes=numa_nodes) if numa_nodes else None
+    
+    def _parse_numa_nodes_from_topology(self, topology_node: int) -> Optional[Dict[int, NUMANode]]:
+        """Parse NUMA nodes from topology section."""
+        try:
+            numa_nodes_node = self.fdt.subnode_offset(topology_node, 'numa-nodes')
         except libfdt.FdtException:
             return None
         
         nodes = {}
         
         # Iterate through NUMA node definitions
-        offset = self.fdt.first_subnode(numa_node)
+        offset = self.fdt.first_subnode(numa_nodes_node)
         while offset >= 0:
             try:
                 node_name = self.fdt.get_name(offset)
@@ -891,7 +920,7 @@ class DeviceTreeParser:
             except Exception:
                 offset = self.fdt.next_subnode(offset)
         
-        return NUMATopology(nodes=nodes) if nodes else None
+        return nodes if nodes else None
     
     def _parse_numa_node_info(self, node_offset: int, node_id: int) -> NUMANode:
         """Parse individual NUMA node information."""

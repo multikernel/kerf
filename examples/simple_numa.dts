@@ -11,19 +11,21 @@
                         20 21 22 23 24 25 26 27 28 29 30 31>;
         };
         
-        numa-topology {
-            node@0 {
-                node-id = <0>;
-                memory-base = <0x0 0x0>;
-                memory-size = <0x0 0x800000000>;  // 16GB
-                cpus = <0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15>;
-            };
-            
-            node@1 {
-                node-id = <1>;
-                memory-base = <0x0 0x800000000>;
-                memory-size = <0x0 0x800000000>;  // 16GB
-                cpus = <16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31>;
+        topology {
+            numa-nodes {
+                node@0 {
+                    node-id = <0>;
+                    memory-base = <0x0 0x0>;
+                    memory-size = <0x0 0x800000000>;  // 16GB
+                    cpus = <0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15>;
+                };
+                
+                node@1 {
+                    node-id = <1>;
+                    memory-base = <0x0 0x800000000>;
+                    memory-size = <0x0 0x800000000>;  // 16GB
+                    cpus = <16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31>;
+                };
             };
         };
         

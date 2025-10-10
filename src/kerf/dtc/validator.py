@@ -429,7 +429,7 @@ class MultikernelValidator:
         resources = instance.resources
         
         # Validate NUMA node constraints
-        if resources.numa_nodes and tree.hardware.numa_topology:
+        if resources.numa_nodes and tree.hardware.topology and tree.hardware.topology.numa_nodes:
             self._validate_numa_constraints(instance, tree)
         
         # Validate CPU affinity constraints
@@ -443,14 +443,14 @@ class MultikernelValidator:
     def _validate_numa_constraints(self, instance, tree: GlobalDeviceTree):
         """Validate NUMA node constraints for an instance."""
         resources = instance.resources
-        numa_topology = tree.hardware.numa_topology
+        topology = tree.hardware.topology
         
-        if not numa_topology:
+        if not topology or not topology.numa_nodes:
             return
         
         # Check if specified NUMA nodes exist
         for numa_node in resources.numa_nodes:
-            if numa_node not in numa_topology.nodes:
+            if numa_node not in topology.numa_nodes:
                 self.errors.append(
                     f"Instance {instance.name}: NUMA node {numa_node} does not exist in hardware topology"
                 )
@@ -458,7 +458,7 @@ class MultikernelValidator:
         # Check if CPUs are in the specified NUMA nodes
         if resources.numa_nodes:
             for cpu in resources.cpus:
-                cpu_numa_node = numa_topology.get_numa_node_for_cpu(cpu)
+                cpu_numa_node = topology.get_numa_node_for_cpu(cpu)
                 
                 if cpu_numa_node is not None and cpu_numa_node not in resources.numa_nodes:
                     self.warnings.append(
@@ -487,13 +487,13 @@ class MultikernelValidator:
         resources = instance.resources
         cpus = resources.cpus
         
-        if not tree.hardware.numa_topology:
+        if not tree.hardware.topology or not tree.hardware.topology.numa_nodes:
             return
         
         # Check if CPUs are from the same NUMA node
         numa_nodes = set()
         for cpu in cpus:
-            numa_node = tree.hardware.numa_topology.get_numa_node_for_cpu(cpu)
+            numa_node = tree.hardware.topology.get_numa_node_for_cpu(cpu)
             if numa_node is not None:
                 numa_nodes.add(numa_node)
         
@@ -519,13 +519,13 @@ class MultikernelValidator:
         resources = instance.resources
         cpus = resources.cpus
         
-        if not tree.hardware.numa_topology:
+        if not tree.hardware.topology or not tree.hardware.topology.numa_nodes:
             return
         
         # Check if CPUs are distributed across different NUMA nodes
         numa_nodes = set()
         for cpu in cpus:
-            numa_node = tree.hardware.numa_topology.get_numa_node_for_cpu(cpu)
+            numa_node = tree.hardware.topology.get_numa_node_for_cpu(cpu)
             if numa_node is not None:
                 numa_nodes.add(numa_node)
         
@@ -539,14 +539,14 @@ class MultikernelValidator:
         resources = instance.resources
         cpus = resources.cpus
         
-        if not tree.hardware.numa_topology:
+        if not tree.hardware.topology or not tree.hardware.topology.numa_nodes:
             return
         
         # Find the NUMA node for the memory allocation
         memory_numa_node = None
         memory_base = resources.memory_base
         
-        for node_id, node in tree.hardware.numa_topology.nodes.items():
+        for node_id, node in tree.hardware.topology.numa_nodes.items():
             if node.memory_base <= memory_base < node.memory_base + node.memory_size:
                 memory_numa_node = node_id
                 break
@@ -560,7 +560,7 @@ class MultikernelValidator:
         # Check if CPUs are from the same NUMA node as memory
         cpu_numa_nodes = set()
         for cpu in cpus:
-            numa_node = tree.hardware.numa_topology.get_numa_node_for_cpu(cpu)
+            numa_node = tree.hardware.topology.get_numa_node_for_cpu(cpu)
             if numa_node is not None:
                 cpu_numa_nodes.add(numa_node)
         
@@ -588,14 +588,14 @@ class MultikernelValidator:
         """Validate local memory policy."""
         resources = instance.resources
         
-        if not tree.hardware.numa_topology:
+        if not tree.hardware.topology or not tree.hardware.topology.numa_nodes:
             return
         
         # Find the NUMA node for the memory allocation
         memory_numa_node = None
         memory_base = resources.memory_base
         
-        for node_id, node in tree.hardware.numa_topology.nodes.items():
+        for node_id, node in tree.hardware.topology.numa_nodes.items():
             if node.memory_base <= memory_base < node.memory_base + node.memory_size:
                 memory_numa_node = node_id
                 break
@@ -610,7 +610,7 @@ class MultikernelValidator:
         # Check if CPUs are from the same NUMA node
         cpu_numa_nodes = set()
         for cpu in resources.cpus:
-            numa_node = tree.hardware.numa_topology.get_numa_node_for_cpu(cpu)
+            numa_node = tree.hardware.topology.get_numa_node_for_cpu(cpu)
             if numa_node is not None:
                 cpu_numa_nodes.add(numa_node)
         
@@ -638,9 +638,9 @@ class MultikernelValidator:
             return
         
         # Check if specified NUMA nodes exist
-        if tree.hardware.numa_topology:
+        if tree.hardware.topology and tree.hardware.topology.numa_nodes:
             for numa_node in resources.numa_nodes:
-                if numa_node not in tree.hardware.numa_topology.nodes:
+                if numa_node not in tree.hardware.topology.numa_nodes:
                     self.errors.append(
                         f"Instance {instance.name}: Bind memory policy references non-existent NUMA node {numa_node}"
                     )
