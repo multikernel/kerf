@@ -137,7 +137,7 @@ The global device tree contains three main sections that map directly to the sys
 ### Complete Example
 
 ```dts
-/dts-v1/;
+/multikernel-v1/;
 
 / {
     compatible = "linux,multikernel-host";
@@ -355,7 +355,7 @@ From a global device tree containing all system information, `kerf` extracts a m
 **Example: web-server.dtb (extracted from global)**
 
 ```dts
-/dts-v1/;
+/multikernel-v1/;
 
 / {
     compatible = "linux,multikernel-instance";

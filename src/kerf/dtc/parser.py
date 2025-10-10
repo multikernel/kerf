@@ -757,7 +757,7 @@ class DeviceTreeParser:
             
             # Create a comprehensive DTS representation
             dts_lines = [
-                '/dts-v1/;',
+                '/multikernel-v1/;',
                 '',
                 '/ {',
                 '    compatible = "linux,multikernel-host";',

@@ -1,4 +1,4 @@
-/dts-v1/;
+/multikernel-v1/;
 
 / {
     compatible = "linux,multikernel-host";
