@@ -92,11 +92,14 @@ kerf dtc --input=system.dts --report --verbose
 ### Modular Architecture
 The `kerf` system is designed with a modular architecture that supports incremental development:
 
+- **`kerf init`**: Initialize the system resource pool
 - **`kerf dtc`**: Device tree compilation and validation (current)
+- **`kerf create`**: Create a kernel instance (future)
 - **`kerf load`**: Kernel loading (future)
 - **`kerf exec`**: Kernel execuation (future)
 - **`kerf update`**: Update a kernel instawnce (future)
 - **`kerf kill`**: Kill a kernel instance (future)
+- **`kerf delete`**: Delete a kernel instance (future)
 
 This modular design allows users to adopt `kerf` incrementally, starting with device tree validation and expanding to full multikernel management as features become available.
 
