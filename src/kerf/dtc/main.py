@@ -29,8 +29,8 @@ from .reporter import ValidationReporter
 
 @click.command()
 @click.option('--input', '-i', required=True, help='Input DTS or DTB file')
-@click.option('--output', '-o', help='Output file (for single output)')
-@click.option('--output-dir', help='Output directory (for multiple outputs)')
+@click.option('--output', '-o', help='Output file')
+@click.option('--output-dir', help='Output directory (only for --extract-all)')
 @click.option('--extract', help='Extract specific instance by name')
 @click.option('--extract-all', is_flag=True, help='Extract all instances')
 @click.option('--list-instances', is_flag=True, help='List all instances in DTB')
@@ -174,30 +174,13 @@ def dtc(input: str, output: Optional[str], output_dir: Optional[str],
         
         else:
             # Generate single output (global DTB or DTS)
-            if not output and not output_dir:
-                click.echo("Error: --output or --output-dir required", err=True)
+            if not output:
+                click.echo("Error: --output required", err=True)
                 sys.exit(2)  # Invalid command-line arguments
             
             if output_dir:
-                # Generate all outputs to directory
-                output_path = Path(output_dir)
-                output_path.mkdir(parents=True, exist_ok=True)
-                
-                # Generate global DTB
-                global_dtb = extractor.generate_global_dtb(tree)
-                global_path = output_path / "global.dtb"
-                with open(global_path, 'wb') as f:
-                    f.write(global_dtb)
-                click.echo(f"Generated: {global_path}")
-                
-                # Generate instance DTBs
-                instances = extractor.extract_all_instances(tree)
-                for name, instance_dtb in instances.items():
-                    instance_path = output_path / f"{name}.dtb"
-                    with open(instance_path, 'wb') as f:
-                        f.write(instance_dtb)
-                    click.echo(f"Generated: {instance_path}")
-                return
+                click.echo("Error: --output-dir can only be used with --extract-all", err=True)
+                sys.exit(2)  # Invalid command-line arguments
             
             output_path = Path(output)
             output_path.parent.mkdir(parents=True, exist_ok=True)
