@@ -5,7 +5,7 @@ build-backend = "poetry.core.masonry.api"
 [tool.poetry]
 name = "kerf"
 version = "0.1.0"
-description = "Multikernel Management System"
+description = "Multikernel Management CLI tool"
 authors = ["Cong Wang"]
 readme = "README.md"
 packages = [{include = "kerf", from = "src"}]

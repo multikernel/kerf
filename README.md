@@ -781,18 +781,16 @@ pylibfdt = "^1.7.0"      # Device tree parsing (from dtc project)
 ### Installation
 
 ```bash
-# From PyPI (future)
-pip install kerf
-
-# From source (development)
+# From source (recommended for development)
 git clone https://github.com/multikernel/kerf.git
 cd kerf
-pip install -e ".[dev,cli,formats]"
+# Installs 'kerf' command to ~/.local/bin/kerf
+pip install -e .
 
-# System packages (future)
-apt install kerf              # Debian/Ubuntu
-dnf install kerf              # Fedora/RHEL
-pacman -S kerf                # Arch Linux
+# Installs 'kerf' command to the system Python's scripts directory
+# (typically /usr/local/bin/kerf, or /usr/bin/kerf if using system Python)
+sudo pip install .
+
 ```
 
 ### Getting Started

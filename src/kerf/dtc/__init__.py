@@ -13,10 +13,10 @@
 # limitations under the License.
 
 """
-Device Tree Compiler module for kerf.
+Device Tree Compiler module for kerf CLI tool.
 
-This module provides device tree compilation, validation, and instance extraction
-capabilities for multikernel systems.
+Internal module providing device tree compilation, validation, and instance extraction
+capabilities.
 """
 
 from .parser import DeviceTreeParser
