@@ -103,6 +103,14 @@ kerf dtc --input=global.dtb --extract=web-server --output=web-server.dtb
 
 # Generate validation reports
 kerf dtc --input=system.dts --report --verbose
+
+# Load kernel image with initrd and boot parameters
+kerf load --kernel=/boot/vmlinuz --initrd=/boot/initrd.img \
+          --cmdline="root=/dev/sda1 ro" --id=1
+
+# Load kernel with multikernel ID
+kerf load -k /boot/vmlinuz -i /boot/initrd.img -c "console=ttyS0" \
+          --id=2 --verbose
 ```
 
 ### Modular Architecture
@@ -110,8 +118,8 @@ The `kerf` system is designed with a modular architecture that supports incremen
 
 - **`kerf init`**: Initialize the system resource pool
 - **`kerf dtc`**: Device tree compilation and validation (current)
+- **`kerf load`**: Kernel loading via kexec_file_load syscall (current)
 - **`kerf create`**: Create a kernel instance (future)
-- **`kerf load`**: Kernel loading (future)
 - **`kerf exec`**: Kernel execuation (future)
 - **`kerf update`**: Update a kernel instawnce (future)
 - **`kerf kill`**: Kill a kernel instance (future)

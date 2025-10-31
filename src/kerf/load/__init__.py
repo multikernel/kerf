@@ -13,25 +13,10 @@
 # limitations under the License.
 
 """
-Command-line interface for kerf.
+Kernel loading subcommand implementation.
 """
 
-import click
-from .dtc.main import dtc
-from .load.main import load
+from .main import load
 
+__all__ = ['load']
 
-@click.group()
-@click.version_option(version="0.1.0", prog_name="kerf")
-def main():
-    """kerf: Multikernel Management System - Device Tree Foundation."""
-    pass
-
-
-# Add subcommands
-main.add_command(dtc)
-main.add_command(load)
-
-
-if __name__ == '__main__':
-    main()
