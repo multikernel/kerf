@@ -46,6 +46,7 @@ The `kerf` system is built on foundational principles that support both current 
 
 ### Compilation Model
 
+**Default compilation (one-to-one):**
 ```
 Input: Single Global DTS
          │
@@ -55,17 +56,32 @@ Input: Single Global DTS
     │ Compiler│
     └─────────┘
          │
+         ▼
+    global.dtb
+    (complete)
+```
+
+**Instance extraction:**
+```
+Input: Global DTB
+         │
+         ▼
+    ┌─────────┐
+    │ kerf    │ ← Validates before extraction
+    │ Extract │
+    └─────────┘
+         │
          ├──────────────┬──────────────┬──────────────┐
          ▼              ▼              ▼              ▼
-    global.dtb   instance1.dtb   instance2.dtb   instance3.dtb
-    (complete)   (minimal)       (minimal)       (minimal)
+    instance1.dtb   instance2.dtb   instance3.dtb   ...
+    (minimal)       (minimal)       (minimal)
 ```
 
 **Key Points:**
-- **One DTS input** describing entire system
-- **Multiple DTB outputs** (1 global + N instance-specific)
-- **Validation happens once** during compilation
-- **All outputs are pre-validated** and guaranteed consistent
+- **Default: One DTS input → One DTB output** (global device tree)
+- **Instance extraction is explicit**: Only when `--extract` or `--extract-all` is specified
+- **Validation is mandatory**: Always validates during compilation and before extraction
+- **Single source of truth**: Global DTB is the authoritative configuration
 
 ## Current Capabilities
 
