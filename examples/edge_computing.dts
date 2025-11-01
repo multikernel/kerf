@@ -1,8 +1,15 @@
+/*
+ * Edge Computing Baseline Example
+ *
+ * Baseline defines hardware resources including GPU for edge/AI workloads.
+ * Usage: kerf init --input=edge_computing.dts --apply
+ */
+
 /multikernel-v1/;
 
 / {
     compatible = "linux,multikernel-host";
-    
+
     resources {
         cpus {
             total = <16>;
@@ -33,41 +40,4 @@
             };
         };
     };
-    
-    instances {
-        iot-gateway {
-            id = <1>;
-            resources {
-                cpus = <2 3 4 5>;
-                memory-base = <0x200000000>;
-                memory-bytes = <0x400000000>;  // 4GB
-                devices = <&eth0_vf1>;
-            };
-        };
-        
-        ai-inference {
-            id = <2>;
-            resources {
-                cpus = <6 7 8 9 10 11>;
-                memory-base = <0x600000000>;
-                memory-bytes = <0x800000000>;  // 8GB
-                devices = <&eth0_vf2>, <&gpu0>;
-            };
-        };
-        
-        data-processor {
-            id = <3>;
-            resources {
-                cpus = <12 13 14 15>;
-                memory-base = <0xE00000000>;
-                memory-bytes = <0x400000000>;  // 4GB
-                devices = <&eth0_vf3>;
-            };
-        };
-    };
-    
-    // Device references
-    eth0_vf1: ethernet-vf@1 { parent = <&eth0>; vf-id = <1>; };
-    eth0_vf2: ethernet-vf@2 { parent = <&eth0>; vf-id = <2>; };
-    eth0_vf3: ethernet-vf@3 { parent = <&eth0>; vf-id = <3>; };
 };

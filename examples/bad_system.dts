@@ -1,8 +1,16 @@
+/*
+ * Invalid Baseline Example (for testing validation)
+ *
+ * This example demonstrates validation errors. The baseline itself is valid,
+ * but if instances were created with overlapping resources, validation would fail.
+ * Usage: kerf init --input=bad_system.dts (validates baseline structure)
+ */
+
 /multikernel-v1/;
 
 / {
     compatible = "linux,multikernel-host";
-    
+
     resources {
         cpus {
             total = <32>;
@@ -25,38 +33,6 @@
                 sriov-vfs = <8>;
                 host-reserved-vf = <0>;
                 available-vfs = <1 2 3 4 5 6 7>;
-            };
-        };
-    };
-    
-    instances {
-        // This will cause CPU overlap with database
-        web-server {
-            id = <1>;
-            resources {
-                cpus = <4 5 6 7 8 9 10 11>;  // Overlaps with database
-                memory-base = <0x80000000>;
-                memory-bytes = <0x80000000>;  // 2GB
-            };
-        };
-        
-        // This will cause CPU overlap with web-server
-        database {
-            id = <2>;
-            resources {
-                cpus = <8 9 10 11 12 13 14 15>;  // Overlaps with web-server
-                memory-base = <0x100000000>;
-                memory-bytes = <0x200000000>;  // 8GB
-            };
-        };
-        
-        // This will cause memory overflow
-        compute {
-            id = <3>;
-            resources {
-                cpus = <16 17 18 19 20 21 22 23>;
-                memory-base = <0x400000000>;  // Beyond memory pool
-                memory-bytes = <0x100000000>;  // 4GB
             };
         };
     };

@@ -24,8 +24,18 @@ from .validator import MultikernelValidator
 class ValidationReporter:
     """Generates validation reports in various formats."""
     
-    def generate_report(self, result: ValidationResult, tree: GlobalDeviceTree, verbose: bool = False) -> str:
-        """Generate comprehensive validation report."""
+    def generate_report(self, result: ValidationResult, tree: GlobalDeviceTree, verbose: bool = False, format: str = 'text') -> str:
+        """Generate comprehensive validation report in specified format."""
+        if format == 'json':
+            import json
+            return json.dumps(self.generate_json_report(result, tree), indent=2)
+        elif format == 'yaml':
+            return self.generate_yaml_report(result, tree)
+        else:
+            return self._generate_text_report(result, tree, verbose)
+    
+    def _generate_text_report(self, result: ValidationResult, tree: GlobalDeviceTree, verbose: bool = False) -> str:
+        """Generate text format validation report."""
         lines = []
         
         # Header

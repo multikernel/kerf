@@ -1,8 +1,15 @@
+/*
+ * Minimal Baseline Device Tree Example
+ *
+ * Baseline defines hardware resources only (no instances).
+ * Usage: kerf init --input=minimal.dts --apply
+ */
+
 /multikernel-v1/;
 
 / {
     compatible = "linux,multikernel-host";
-    
+
     resources {
         cpus {
             total = <8>;
@@ -15,17 +22,6 @@
             host-reserved-bytes = <0x0 0x40000000>; // 1GB
             memory-pool-base = <0x40000000>;
             memory-pool-bytes = <0x0 0x1C000000>;   // 7GB
-        };
-    };
-    
-    instances {
-        app {
-            id = <1>;
-            resources {
-                cpus = <2 3 4 5>;
-                memory-base = <0x40000000>;
-                memory-bytes = <0x80000000>;  // 2GB
-            };
         };
     };
 };

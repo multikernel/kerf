@@ -95,14 +95,14 @@ Input: Global DTB
 
 ### Command Line Interface
 ```bash
-# Compile and validate system configuration
-kerf dtc --input=system.dts --output=global.dtb
+# Initialize baseline device tree (resources only)
+kerf init --input=baseline.dts --apply
 
-# Extract specific kernel instance
-kerf dtc --input=global.dtb --extract=web-server --output=web-server.dtb
+# Validate baseline with detailed report
+kerf init --input=baseline.dts --report --format=text
 
-# Generate validation reports
-kerf dtc --input=system.dts --report --verbose
+# Validate baseline (dry-run, no kernel update)
+kerf init --input=baseline.dts --verbose
 
 # Load kernel image with initrd and boot parameters
 kerf load --kernel=/boot/vmlinuz --initrd=/boot/initrd.img \
@@ -116,12 +116,11 @@ kerf load -k /boot/vmlinuz -i /boot/initrd.img -c "console=ttyS0" \
 ### Modular Architecture
 The `kerf` system is designed with a modular architecture that supports incremental development:
 
-- **`kerf init`**: Initialize the system resource pool
-- **`kerf dtc`**: Device tree compilation and validation (current)
+- **`kerf init`**: Initialize baseline device tree (resources only) (current)
 - **`kerf load`**: Kernel loading via kexec_file_load syscall (current)
 - **`kerf create`**: Create a kernel instance (future)
-- **`kerf exec`**: Kernel execuation (future)
-- **`kerf update`**: Update a kernel instawnce (future)
+- **`kerf exec`**: Kernel execution (future)
+- **`kerf update`**: Update a kernel instance (future)
 - **`kerf kill`**: Kill a kernel instance (future)
 - **`kerf delete`**: Delete a kernel instance (future)
 
@@ -418,166 +417,108 @@ From a global device tree containing all system information, `kerf` extracts a m
 ### Basic Commands
 
 ```bash
-# Compile DTS to global DTB (validates automatically)
-kerf dtc --input=system.dts --output=global.dtb
+# Initialize baseline device tree (resources only)
+kerf init --input=baseline.dts --apply
 
-# Extract single instance from global DTB
-kerf dtc --input=global.dtb --extract=web-server --output=web-server.dtb
+# Validate baseline without applying
+kerf init --input=baseline.dts
 
-# Extract all instances from global DTB
-kerf dtc --input=global.dtb --extract-all --output-dir=instances/
-# Generates:
-#   instances/web-server.dtb
-#   instances/database.dtb
-#   instances/compute.dtb
+# Generate detailed validation report
+kerf init --input=baseline.dts --report
 
-# Generate allocation report
-kerf dtc --input=global.dtb --report
-
-# Convert DTB back to DTS
-kerf dtc --input=global.dtb --output=global.dts --format=dts
+# Validate with verbose output
+kerf init --input=baseline.dts --verbose
 ```
 
-### Advanced Commands
-
-```bash
-# Verbose output (shows validation details)
-kerf dtc --input=system.dts --output=global.dtb --verbose
-
-# Dry-run: validate and show what would be generated
-kerf dtc --input=system.dts --dry-run
-
-# Extract specific instance by name (not ID)
-kerf dtc --input=global.dtb --extract=database --output=db.dtb
-
-# List all instances in global DTB
-kerf dtc --input=global.dtb --list-instances
-# Output:
-# web-server (ID: 1)
-# database (ID: 2)
-# compute (ID: 3)
-```
-
-### Output Formats
+### Report Formats
 
 ```bash
 # Human-readable text (default)
-kerf dtc --input=global.dtb --report
+kerf init --input=baseline.dts --report
 
 # JSON for tooling integration
-kerf dtc --input=global.dtb --report --format=json
+kerf init --input=baseline.dts --report --format=json
 
 # YAML for configuration management
-kerf dtc --input=global.dtb --report --format=yaml
-
-# DTS (human-readable device tree source)
-kerf dtc --input=global.dtb --output=global.dts --format=dts
+kerf init --input=baseline.dts --report --format=yaml
 ```
 
 ## Integration with Kernel
 
 ### Kernel Interface
 
-The kernel exposes a filesystem interface (typically mounted at `/sys/kernel/multikernel/`) that serves as the single source of truth for device tree configuration:
+The kernel exposes a filesystem interface (mounted at `/sys/fs/multikernel/`) that manages baseline resources and overlay-based instance changes:
 
-**Root Directory:**
+**Kernel Interface Structure:**
 ```
-/sys/kernel/multikernel/
-├── device_tree              # Read/Write: Global DTB (single source of truth)
-└── device_tree_source       # Read-only: Global DTS (human-readable)
-```
-
-**Instance Directories:**
-```
-/sys/kernel/multikernel/instances/
-├── web-server/              # Directory name from DTS node name
-│   ├── id                   # Read-only: "1"
-│   ├── device_tree_source   # Read-only: Instance DTS (config view only)
-│   └── status               # Read-only: "ready", "active", "stopped"
-│
-├── database/
-│   └── ...
-│
-└── compute/
+/sys/fs/multikernel/
+├── device_tree              # Baseline DTB (resources only, writable via kerf init)
+├── overlays/                # Overlay subsystem
+│   ├── new                 # Write DTBO here to apply overlay
+│   ├── tx_101/             # Applied overlay transaction
+│   │   ├── id              # Transaction ID: "101"
+│   │   ├── status          # "applied" | "failed" | "removed"
+│   │   ├── dtbo            # Original overlay blob (binary)
+│   │   └── ...
+│   └── tx_102/
+│       └── ...
+└── instances/              # Runtime kernel instances (read-only)
+    ├── web-server/
+    │   ├── id              # Instance ID
+    │   ├── status          # Instance status
+    │   └── ...
     └── ...
 ```
 
-**Key Design Changes:**
-- **Single Source of Truth**: Only the root `device_tree` file is writable and serves as the authoritative configuration
-- **Instance Isolation**: Instance directories are read-only and located at `/sys/kernel/multikernel/instances/`
-- **No Instance DTB Files**: Instances only expose `device_tree_source` (read-only) showing their configuration, not binary DTB files
-- **Kernel-Generated**: Instance directories and files are auto-generated from the global device tree by the kernel
+**Key Design Principles:**
+- **Baseline Separation**: Baseline (`device_tree`) contains only resources - no instances
+- **Overlay-based Changes**: All dynamic changes (create, update, delete instances) via overlays
+- **Rollback Support**: Remove overlay transaction directory (`rmdir /sys/fs/multikernel/overlays/tx_XXX/`) to rollback changes
+- **Kernel-Generated**: Instance directories auto-generated from baseline + applied overlays
 
 ### Workflow: Initial Setup
 
 ```bash
-# Step 1: Write global DTS describing entire system
-vim system.dts
+# Step 1: Write baseline DTS describing hardware resources only
+vim baseline.dts
+# Baseline contains only /resources - no instances
 
-# Step 2: Compile and validate with kerf dtc
-kerf dtc --input=system.dts --output=build/global.dtb
+# Step 2: Initialize baseline device tree
+kerf init --input=baseline.dts --apply
 # Output:
-#   ✓ Validation passed
-#   Generated: build/global.dtb
+#   ✓ Baseline validation passed
+#   ✓ Baseline applied to kernel successfully
+#   Baseline: /sys/fs/multikernel/device_tree
 
-# Step 3: Upload global DTB to kernel (single source of truth)
-cat build/global.dtb > /sys/kernel/multikernel/device_tree
-
-# Kernel automatically:
-# - Validates global DTB (defense-in-depth)
-# - Creates /sys/kernel/multikernel/instances/{web-server,database,compute}/
-# - Generates instance-specific device_tree_source files (read-only)
-# - Populates instance metadata (id, status, etc.)
-
-# Step 4: Verify instance creation
-ls /sys/kernel/multikernel/instances/
-# web-server  database  compute
-
-# Step 5: View instance configuration (read-only view)
-cat /sys/kernel/multikernel/instances/web-server/device_tree_source
-# Shows instance-specific DTS (only web-server resources)
-
-# Step 6: Load kernel with instance DTB
-# Use kerf-generated instance DTB file for kexec
-kexec_file_load(/boot/vmlinuz, build/web-server.dtb, KEXEC_MULTIKERNEL | KEXEC_MK_ID(1))
+# Kernel now has baseline configuration:
+# - Resources defined and available for allocation
+# - No instances yet (created via overlays)
+# - Ready for instance creation via 'kerf create' (future)
 ```
 
-### Workflow: Dynamic Updates
+### Workflow: Dynamic Updates (Future)
 
 ```bash
-# Step 1: Modify global DTS
-vim system.dts
-# Example: Change database CPUs from 8-15 to 8-19 (add 4 CPUs)
+# Create new kernel instance via overlay
+kerf create --name=web-server --cpus=4-7 --memory=2GB
+# This applies an overlay adding the instance to the device tree
 
-# Step 2: Recompile and validate
-kerf dtc --input=system.dts --output=build/global.dtb
-# Output:
-#   ✓ Validation passed
-#   Generated: build/global.dtb (updated)
+# Update instance resources via overlay
+kerf update --name=database --cpus=8-19 --memory=8GB
+# This applies an overlay updating the instance configuration
 
-# Step 3: Upload updated global DTB
-cat build/global.dtb > /sys/kernel/multikernel/device_tree
-
-# Kernel automatically:
-# - Validates new global DTB
-# - Calculates resource deltas for all instances
-# - Phase 1: Releases resources being removed
-# - Phase 2: Allocates new resources
-# - Updates instance device_tree_source files (read-only)
-# - Notifies spawned kernels via shared memory/interrupts
-
-# Step 4: Verify update (read-only instance view)
-cat /sys/kernel/multikernel/instances/database/device_tree_source | grep cpus
-# linux,multikernel-cpus = <8 9 10 11 12 13 14 15 16 17 18 19>;
+# Delete instance via overlay removal
+kerf delete --name=compute
+# This removes the overlay transaction, reverting the change
 ```
 
 
 ## Validation Output Examples
 
-### Successful Validation
+### Successful Baseline Validation
 
 ```
-$ kerf dtc --input=system.dts --output=build/global.dtb
+$ kerf init --input=baseline.dts --apply --report
 
 Multikernel Device Tree Validation Report
 ==========================================
@@ -592,79 +533,32 @@ Hardware Inventory:
     Memory pool: 14GB at 0x80000000 (88%)
   Devices: 2 network, 1 storage
 
-Instance Allocations:
-  web-server (ID: 1):
-    CPUs: 4-7 (4 CPUs, 14% of pool)
-    Memory: 2GB at 0x80000000 (14% of pool)
-    Devices: eth0:vf1
-    Status: ✓ Valid
-    
-  database (ID: 2):
-    CPUs: 8-15 (8 CPUs, 29% of pool)
-    Memory: 8GB at 0x100000000 (57% of pool)
-    Devices: eth0:vf2, nvme0:ns2
-    Status: ✓ Valid
-    
-  compute (ID: 3):
-    CPUs: 16-23 (8 CPUs, 29% of pool)
-    Memory: 4GB at 0x300000000 (29% of pool)
-    Devices: none
-    Status: ✓ Valid
-
-Resource Utilization:
-  CPUs: 20/28 allocated (71%), 8 free
-  Memory: 14/14 GB allocated (100%), 0 free
-  Network: 2/7 VFs allocated (29%)
-  Storage: 1/3 namespaces allocated (33%)
-  
-✓ All validations passed
-
-Generated output:
-  build/global.dtb (3847 bytes)
-  build/web-server.dtb (1024 bytes)
-  build/database.dtb (1536 bytes)
-  build/compute.dtb (896 bytes)
+✓ Baseline validation passed
+✓ Baseline applied to kernel successfully
+  Baseline: /sys/fs/multikernel/device_tree
 ```
 
-### Failed Validation
+### Failed Baseline Validation
 
 ```
-$ kerf dtc --input=bad_system.dts --output=global.dtb
+$ kerf init --input=bad_baseline.dts --report
 
 Multikernel Device Tree Validation Report
 ==========================================
 Status: ✗ INVALID
 
-ERROR: Instance database: CPU allocation conflict with web-server
-  web-server uses CPUs: 4-11
-  database requested CPUs: 8-15
-  Overlapping CPUs: 8, 9, 10, 11
-  
-  Suggestion: Change database to use CPUs 12-19
-  Alternative: Reduce web-server to CPUs 4-7
-  
-  In file system.dts:
-    Line 45: web-server { cpus = <4 5 6 7 8 9 10 11>; }
-    Line 68: database { cpus = <8 9 10 11 12 13 14 15>; }
+ERROR: Baseline must not contain instances. Instances should be created via overlays.
+  Baseline must contain:
+    ✓ /resources (hardware inventory)
+    ✗ /instances (must be empty or absent)
 
-ERROR: Instance compute: Memory allocation exceeds memory pool
-  Memory pool: 0x80000000 - 0x400000000 (14GB available)
-  compute requested: 0x400000000 - 0x500000000 (4GB)
-  Exceeds pool end by: 4GB
+  Suggestion: Remove instances section from baseline
+  Instances should be created via 'kerf create' using overlays
   
-  Suggestion: Change memory-base to 0x300000000
-  Note: Requires reducing other instance allocations
-  
-  In file system.dts:
-    Line 89: memory-base = <0x400000000>;
+  In file bad_baseline.dts:
+    Line 45: instances { web-server { ... } }
 
-WARNING: Resource utilization
-  12 CPUs (43% of memory pool) remain unallocated
-  Consider: Allocate remaining CPUs or reduce total instances
-
-✗ Validation failed with 2 errors, 1 warning
-No output generated - fix errors first
-
+✗ Validation failed with 1 error
 Exit code: 1
 ```
 
@@ -825,24 +719,24 @@ pip install -e .
 
 # Test the installation
 kerf --help
-kerf dtc --help
+kerf init --help
 
-# Try with example configuration
-kerf dtc --input=examples/system.dts --output=build/global.dtb
+# Try with example baseline configuration
+kerf init --input=examples/baseline.dts --report
 ```
 
 ## Examples
 
-The `examples/` directory contains sample Device Tree Source (DTS) files demonstrating various multikernel configurations:
+The `examples/` directory contains sample baseline Device Tree Source (DTS) files demonstrating various hardware resource configurations:
 
-- **`system.dts`** - Complete multikernel system with web server, database, and compute instances (32 CPUs, 16GB memory)
-- **`minimal.dts`** - Simple configuration for testing and development (8 CPUs, 8GB memory)
-- **`high_performance.dts`** - Large-scale configuration for high-performance computing (128 CPUs, 64GB memory)
-- **`edge_computing.dts`** - Edge computing configuration with GPU support for AI inference (16 CPUs, 32GB memory)
-- **`numa_topology.dts`** - Advanced NUMA topology configuration with 4 NUMA nodes and topology-aware allocation
-- **`simple_numa.dts`** - Basic NUMA configuration with 2 NUMA nodes and NUMA-aware policies
-- **`conflict_example.dts`** - Intentionally invalid configuration demonstrating common validation errors
-- **`bad_system.dts`** - Another example of invalid configuration for testing error detection
+- **`baseline.dts`** - Complete baseline with CPU, memory, and device resources (32 CPUs, 16GB memory)
+- **`minimal.dts`** - Simple baseline for testing and development (8 CPUs, 8GB memory)
+- **`edge_computing.dts`** - Edge computing baseline with GPU support for AI inference (16 CPUs, 32GB memory)
+- **`numa_topology.dts`** - Advanced NUMA topology baseline with 4 NUMA nodes and topology-aware allocation
+- **`system.dts`** - Example baseline with various device configurations
+- **`conflict_example.dts`** - Intentionally invalid baseline demonstrating common validation errors
+
+**Note**: All baseline files contain **only** hardware resources - no instances. Instances are created dynamically via overlays using future `kerf create` commands.
 
 ## CPU and NUMA Topology Support
 

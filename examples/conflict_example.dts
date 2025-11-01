@@ -1,8 +1,16 @@
+/*
+ * Conflict Example Baseline (for testing validation)
+ *
+ * This baseline is valid. Conflict examples would occur when creating
+ * instances with overlapping resources via overlays.
+ * Usage: kerf init --input=conflict_example.dts
+ */
+
 /multikernel-v1/;
 
 / {
     compatible = "linux,multikernel-host";
-    
+
     resources {
         cpus {
             total = <16>;
@@ -15,38 +23,6 @@
             host-reserved-bytes = <0x0 0x100000000>; // 4GB
             memory-pool-base = <0x100000000>;
             memory-pool-bytes = <0x0 0x300000000>;   // 12GB
-        };
-    };
-    
-    instances {
-        // This will cause CPU overlap with app2
-        app1 {
-            id = <1>;
-            resources {
-                cpus = <2 3 4 5 6 7>;  // Overlaps with app2
-                memory-base = <0x100000000>;
-                memory-bytes = <0x200000000>;  // 8GB
-            };
-        };
-        
-        // This will cause CPU overlap with app1
-        app2 {
-            id = <2>;
-            resources {
-                cpus = <6 7 8 9 10 11>;  // Overlaps with app1
-                memory-base = <0x300000000>;
-                memory-bytes = <0x200000000>;  // 8GB
-            };
-        };
-        
-        // This will cause memory overflow
-        app3 {
-            id = <3>;
-            resources {
-                cpus = <12 13 14 15>;
-                memory-base = <0x500000000>;  // Beyond memory pool
-                memory-bytes = <0x200000000>;  // 8GB
-            };
         };
     };
 };

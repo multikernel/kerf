@@ -60,11 +60,17 @@ class DeviceTreeParser:
             with open(dtb_path, 'rb') as f:
                 dtb_data = f.read()
             
-            self.fdt = libfdt.Fdt(dtb_data)
-            
-            return self._build_global_tree()
+            return self.parse_dtb_from_bytes(dtb_data)
         except Exception as e:
             raise ParseError(f"Failed to parse DTB file {dtb_path}: {e}")
+    
+    def parse_dtb_from_bytes(self, dtb_data: bytes) -> GlobalDeviceTree:
+        """Parse DTB from bytes into GlobalDeviceTree model."""
+        try:
+            self.fdt = libfdt.Fdt(dtb_data)
+            return self._build_global_tree()
+        except Exception as e:
+            raise ParseError(f"Failed to parse DTB from bytes: {e}")
     
     def _build_global_tree(self) -> GlobalDeviceTree:
         """Build GlobalDeviceTree from parsed FDT."""

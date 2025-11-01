@@ -45,3 +45,13 @@ class ResourceExhaustionError(ValidationError):
 class InvalidReferenceError(ValidationError):
     """Raised when invalid device references are found."""
     pass
+
+
+class KernelInterfaceError(KerfError):
+    """Raised when kernel interface operations fail."""
+    pass
+
+
+class ResourceError(KerfError):
+    """Raised when resource allocation operations fail."""
+    pass

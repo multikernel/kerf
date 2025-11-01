@@ -1,8 +1,15 @@
+/*
+ * NUMA Topology Baseline Example
+ *
+ * Baseline defines hardware resources with NUMA topology information.
+ * Usage: kerf init --input=numa_topology.dts --apply
+ */
+
 /multikernel-v1/;
 
 / {
     compatible = "linux,multikernel-host";
-    
+
     resources {
         cpus {
             total = <64>;
@@ -143,79 +150,4 @@
             };
         };
     };
-    
-    instances {
-        // NUMA-local web server on socket 0
-        web-server {
-            id = <1>;
-            resources {
-                cpus = <4 5 6 7 8 9 10 11>;  // NUMA node 0
-                memory-base = <0x0 0x800000000>;
-                memory-bytes = <0x0 0x200000000>;  // 8GB
-                numa-nodes = <0>;
-                cpu-affinity = "compact";
-                memory-policy = "local";
-                devices = <&eth0_vf1>, <&nvme0_ns2>;
-            };
-        };
-        
-        // NUMA-local database on socket 1
-        database {
-            id = <2>;
-            resources {
-                cpus = <36 37 38 39 40 41 42 43 44 45 46 47>;  // NUMA node 2
-                memory-base = <0x0 0x1400000000>;
-                memory-bytes = <0x0 0x400000000>;  // 16GB
-                numa-nodes = <2>;
-                cpu-affinity = "compact";
-                memory-policy = "local";
-                devices = <&eth1_vf1>, <&nvme1_ns2>;
-            };
-        };
-        
-        // NUMA-aware compute workload
-        compute {
-            id = <3>;
-            resources {
-                cpus = <12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27>;  // NUMA nodes 1
-                memory-base = <0x0 0xA00000000>;
-                memory-bytes = <0x0 0x400000000>;  // 16GB
-                numa-nodes = <1>;
-                cpu-affinity = "compact";
-                memory-policy = "local";
-            };
-        };
-        
-        // NUMA-interleaved workload
-        analytics {
-            id = <4>;
-            resources {
-                cpus = <28 29 30 31 32 33 34 35 48 49 50 51 52 53 54 55>;  // Cross-socket
-                memory-base = <0x0 0x1800000000>;
-                memory-bytes = <0x0 0x400000000>;  // 16GB
-                numa-nodes = <1 2 3>;
-                cpu-affinity = "spread";
-                memory-policy = "interleave";
-            };
-        };
-        
-        // High-performance computing with NUMA optimization
-        hpc-workload {
-            id = <5>;
-            resources {
-                cpus = <56 57 58 59 60 61 62 63>;  // NUMA node 3
-                memory-base = <0x0 0x1C00000000>;
-                memory-bytes = <0x0 0x200000000>;  // 8GB
-                numa-nodes = <3>;
-                cpu-affinity = "compact";
-                memory-policy = "local";
-            };
-        };
-    };
-    
-    // Device references
-    eth0_vf1: ethernet-vf@1 { parent = <&eth0>; vf-id = <1>; };
-    eth1_vf1: ethernet-vf@1 { parent = <&eth1>; vf-id = <1>; };
-    nvme0_ns2: nvme-ns@2 { parent = <&nvme0>; namespace-id = <2>; };
-    nvme1_ns2: nvme-ns@2 { parent = <&nvme1>; namespace-id = <2>; };
 };

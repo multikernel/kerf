@@ -20,3 +20,51 @@ A comprehensive multikernel management system designed to orchestrate and manage
 
 __version__ = "0.1.0"
 __author__ = "Cong Wang"
+
+# Export main runtime components for easy access
+from .runtime import DeviceTreeManager
+from .baseline import BaselineManager
+from .dtc.overlay import OverlayGenerator
+from .exceptions import (
+    KerfError,
+    ValidationError,
+    ParseError,
+    ResourceConflictError,
+    ResourceExhaustionError,
+    InvalidReferenceError,
+    KernelInterfaceError,
+    ResourceError,
+)
+from .resources import (
+    get_available_cpus,
+    get_allocated_cpus,
+    get_allocated_memory_regions,
+    find_available_memory_base,
+    validate_cpu_allocation,
+    validate_memory_allocation,
+    find_next_instance_id,
+)
+
+__all__ = [
+    # Core classes
+    'DeviceTreeManager',
+    'BaselineManager',
+    'OverlayGenerator',
+    # Exceptions
+    'KerfError',
+    'ValidationError',
+    'ParseError',
+    'ResourceConflictError',
+    'ResourceExhaustionError',
+    'InvalidReferenceError',
+    'KernelInterfaceError',
+    'ResourceError',
+    # Resource utilities
+    'get_available_cpus',
+    'get_allocated_cpus',
+    'get_allocated_memory_regions',
+    'find_available_memory_base',
+    'validate_cpu_allocation',
+    'validate_memory_allocation',
+    'find_next_instance_id',
+]

@@ -1,8 +1,15 @@
 /*
- * System Baseline Device Tree Example
+ * Baseline Device Tree Example
  *
- * Baseline defines hardware resources only (no instances).
- * Usage: kerf init --input=system.dts --apply
+ * This file defines the hardware resources available for allocation to
+ * kernel instances. It contains ONLY resources - no instances.
+ *
+ * Usage:
+ *   kerf init --input=baseline.dts --apply
+ *
+ * Instances are created at runtime via overlays:
+ *   kerf create --name=web-server --cpus=4-7 --memory=2GB
+ *   kerf create --name=database --cpus=8-15 --memory=8GB
  */
 
 /multikernel-v1/;
@@ -44,3 +51,4 @@
         };
     };
 };
+
