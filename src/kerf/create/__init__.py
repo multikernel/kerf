@@ -13,27 +13,6 @@
 # limitations under the License.
 
 """
-Command-line interface for kerf.
+Create kernel instance command.
 """
 
-import click
-from .load.main import load
-from .init.main import init
-from .create.main import create
-
-
-@click.group()
-@click.version_option(version="0.1.0", prog_name="kerf")
-def main():
-    """kerf: Multikernel Management System - Device Tree Foundation."""
-    pass
-
-
-# Add subcommands
-main.add_command(init)
-main.add_command(load)
-main.add_command(create)
-
-
-if __name__ == '__main__':
-    main()

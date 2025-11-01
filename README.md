@@ -147,14 +147,26 @@ kerf load --kernel=/boot/vmlinuz --initrd=/boot/initrd.img \
 # Load kernel with multikernel ID
 kerf load -k /boot/vmlinuz -i /boot/initrd.img -c "console=ttyS0" \
           --id=2 --verbose
+
+# Create kernel instance with explicit CPU allocation
+kerf create web-server --cpus=4-7 --memory=2GB
+
+# Create instance with auto-allocated CPU count
+kerf create database --cpu-count=8 --memory=16GB
+
+# Create with topology-aware auto-allocation
+kerf create compute --cpu-count=16 --memory=32GB --numa-nodes=0,1 --cpu-affinity=spread --memory-policy=interleave
+
+# Validate instance creation without applying
+kerf create test-instance --cpu-count=4 --memory=2GB --dry-run
 ```
 
 ### Modular Architecture
 The `kerf` system is designed with a modular architecture that supports incremental development:
 
 - **`kerf init`**: Initialize baseline device tree (resources only) (current)
+- **`kerf create`**: Create a kernel instance (current)
 - **`kerf load`**: Kernel loading via kexec_file_load syscall (current)
-- **`kerf create`**: Create a kernel instance (future)
 - **`kerf exec`**: Kernel execution (future)
 - **`kerf update`**: Update a kernel instance (future)
 - **`kerf kill`**: Kill a kernel instance (future)
@@ -470,25 +482,42 @@ kerf init --input=baseline.dts --apply
 #   ✓ Baseline applied to kernel successfully
 #   Baseline: /sys/fs/multikernel/device_tree
 
+# Step 3: Create kernel instances via overlays
+kerf create web-server --cpus=4-7 --memory=2GB
+kerf create database --cpus=8-15 --memory=8GB
+
 # Kernel now has baseline configuration:
 # - Resources defined and available for allocation
-# - No instances yet (created via overlays)
-# - Ready for instance creation via 'kerf create' (future)
+# - Instances created via overlays
+# - Ready for kernel loading via 'kerf load'
 ```
 
-### Workflow: Dynamic Updates (Future)
+### Workflow: Dynamic Updates
 
 ```bash
 # Create new kernel instance via overlay
-kerf create --name=web-server --cpus=4-7 --memory=2GB
+# Instance name is a positional argument (can appear anywhere after 'create')
+kerf create web-server --cpus=4-7 --memory=2GB
 # This applies an overlay adding the instance to the device tree
 
-# Update instance resources via overlay
-kerf update --name=database --cpus=8-19 --memory=8GB
+# Instance name can also appear after options
+kerf create --cpus=8-15 --memory=8GB database
+
+# Create with explicit CPU allocation (CPU 8)
+kerf create compute --cpus=8 --memory=16GB
+
+# Create with auto-allocated CPU count (topology-aware)
+kerf create compute --cpu-count=8 --memory=16GB --numa-nodes=0 --cpu-affinity=compact --memory-policy=local
+
+# Validate before applying (dry-run, auto-allocate 4 CPUs)
+kerf create web-server --cpu-count=4 --memory=2GB --dry-run
+
+# Update instance resources via overlay (future)
+kerf update database --cpus=8-19 --memory=8GB
 # This applies an overlay updating the instance configuration
 
-# Delete instance via overlay removal
-kerf delete --name=compute
+# Delete instance via overlay removal (future)
+kerf delete compute
 # This removes the overlay transaction, reverting the change
 ```
 
@@ -716,7 +745,7 @@ The `examples/` directory contains sample baseline Device Tree Source (DTS) file
 - **`system.dts`** - Example baseline with various device configurations
 - **`conflict_example.dts`** - Intentionally invalid baseline demonstrating common validation errors
 
-**Note**: All baseline files contain **only** hardware resources - no instances. Instances are created dynamically via overlays using future `kerf create` commands.
+**Note**: All baseline files contain **only** hardware resources - no instances. Instances are created dynamically via overlays using `kerf create` command.
 
 ## CPU and NUMA Topology Support
 
