@@ -4,7 +4,7 @@
 
 `kerf` is a comprehensive multikernel management system designed to orchestrate and manage multiple kernel instances on a single host. Starting with advanced device tree compilation and validation, `kerf` provides the foundation for complete multikernel lifecycle management.
 
-Unlike standard tools that only perform basic format conversion, `kerf` understands multikernel semantics and **always validates** resource allocations, detects conflicts, and extracts instance-specific device trees from global configurations. The system is architected to evolve into a complete multikernel runtime environment.
+Unlike standard tools that only perform basic format conversion, `kerf` understands multikernel semantics and **always validates** resource allocations and detects conflicts. The system is architected to evolve into a complete multikernel runtime environment.
 
 ## Vision & Roadmap
 
@@ -15,7 +15,6 @@ Unlike standard tools that only perform basic format conversion, `kerf` understa
 2. **Over-Allocation**: The sum of all allocations might exceed available resources
 3. **Invalid References**: Instances might reference non-existent hardware or devices reserved for the host
 4. **Atomicity**: All allocations should be validated together before deployment
-5. **Instance Extraction**: Each spawned kernel needs a device tree showing only its allocated resources, not the entire system
 
 ### Future Phases: Complete Multikernel Runtime
 The `kerf` system is designed to evolve into a comprehensive multikernel management platform:
@@ -35,60 +34,97 @@ The current device tree foundation provides the critical infrastructure needed f
 
 The `kerf` system is built on foundational principles that support both current device tree capabilities and future multikernel runtime features:
 
-1. **Single Source of Truth**: One global DTS describes the entire system - hardware inventory, host reservations, and all spawn kernel allocations
-2. **Multiple Binary Outputs**: kerf compiles one DTS into multiple DTB files (global + per-instance)
-3. **Mandatory Validation**: Every operation validates the configuration - validation is not optional
-4. **Fail-Fast**: Catch resource conflicts immediately, never produce invalid output
-5. **Instance Isolation**: Generate minimal, instance-specific device trees that show only what each kernel should see
-6. **Extensible Architecture**: Designed to support future kernel loading, execution, and management capabilities
-7. **Developer-Friendly**: Clear error messages with suggestions for fixing problems
-8. **Runtime-Ready**: Current design anticipates future kernel execution and lifecycle management needs
+1. **Single Source of Truth**: Baseline DTS describes hardware resources available for allocation
+2. **Mandatory Validation**: Every operation validates the configuration - validation is not optional
+3. **Fail-Fast**: Catch resource conflicts immediately, never produce invalid output
+4. **Overlay-based Management**: Dynamic instance changes are managed via device tree overlays
+5. **Extensible Architecture**: Designed to support future kernel loading, execution, and management capabilities
+6. **Developer-Friendly**: Clear error messages with suggestions for fixing problems
+7. **Runtime-Ready**: Current design anticipates future kernel execution and lifecycle management needs
 
 ### Compilation Model
 
-**Default compilation (one-to-one):**
+**Baseline initialization:**
 ```
-Input: Single Global DTS
+Input: Baseline DTS (resources only)
          │
          ▼
     ┌─────────┐
     │ kerf    │ ← Always validates
-    │ Compiler│
+    │  init   │
     └─────────┘
          │
          ▼
-    global.dtb
-    (complete)
+    Baseline DTB
+    (resources only)
+    → /sys/fs/multikernel/device_tree
 ```
 
-**Instance extraction:**
+**Overlay-based dynamic changes:**
 ```
-Input: Global DTB
+Current State              Modified State
+(Baseline + Overlays)      (After change)
+         │                       │
+         ├───────────────────────┤
+         │                       │
+         ▼                       ▼
+    ┌─────────┐             ┌─────────┐
+    │ Compute │             │ Compute │
+    │   Delta │             │  Delta  │
+    └─────────┘             └─────────┘
+         │                       │
+         └───────────┬───────────┘
+                     │
+                     ▼
+              ┌─────────────┐
+              │ kerf        │ ← Validates full state
+              │ (create/    │   before generating overlay
+              │  update/    │
+              │  delete)    │
+              └─────────────┘
+                     │
+                     ▼
+                 DTBO Overlay
+                     │
+                     ▼
+    → /sys/fs/multikernel/overlays/new
+                     │
+                     ▼
+              Applied Overlay
+    → /sys/fs/multikernel/overlays/tx_XXX/
+```
+
+**Complete system state:**
+```
+Baseline DTB (static)
          │
-         ▼
-    ┌─────────┐
-    │ kerf    │ ← Validates before extraction
-    │ Extract │
-    └─────────┘
-         │
-         ├──────────────┬──────────────┬──────────────┐
-         ▼              ▼              ▼              ▼
-    instance1.dtb   instance2.dtb   instance3.dtb   ...
-    (minimal)       (minimal)       (minimal)
+         ├─── Overlay tx_101 (instance: web-server)
+         ├─── Overlay tx_102 (instance: database)
+         └─── Overlay tx_103 (update: web-server resources)
+                    │
+                    ▼
+         Effective Device Tree
+    (Baseline + All Applied Overlays)
+                    │
+                    ▼
+         Kernel Instance Views
+    /sys/fs/multikernel/instances/*
 ```
 
 **Key Points:**
-- **Default: One DTS input → One DTB output** (global device tree)
-- **Instance extraction is explicit**: Only when `--extract` or `--extract-all` is specified
-- **Validation is mandatory**: Always validates during compilation and before extraction
-- **Single source of truth**: Global DTB is the authoritative configuration
+- **Baseline contains only resources**: Hardware inventory available for allocation, loaded once via `kerf init`
+- **Instances created via overlays**: Dynamic instance lifecycle managed through device tree overlays (DTBO)
+- **Overlay generation**: Computes delta between current and modified state, generates minimal DTBO
+- **Transactional overlays**: Each overlay is a transaction with rollback support via `rmdir`
+- **Validation is mandatory**: Always validates full state (baseline + all overlays) before applying
+- **Single source of truth**: Baseline DTB is the authoritative resource configuration, overlays add instances dynamically
 
 ## Current Capabilities
 
-### Device Tree Compilation & Validation
+### Device Tree Management & Validation
 - **Advanced Validation**: Comprehensive resource conflict detection and validation
-- **Instance Extraction**: Generate minimal, instance-specific device trees
-- **Format Support**: DTS to DTB compilation with multiple output formats
+- **Baseline Management**: Initialize and manage baseline device tree containing hardware resources
+- **Format Support**: DTS to DTB compilation for baseline configuration
 - **Error Reporting**: Detailed error messages with actionable suggestions
 - **Resource Analysis**: Complete resource utilization reporting
 - **CPU & NUMA Topology**: Full support for CPU topology and NUMA-aware resource allocation
@@ -286,7 +322,6 @@ DTS: /instances/compute                  →  /sys/kernel/multikernel/instances/
 
 **All `kerf` operations perform validation automatically:**
 - Compiling DTS to DTB → validates
-- Extracting an instance → validates first
 - Converting formats → validates
 - Generating reports → validates first
 
@@ -356,61 +391,6 @@ ERROR: Dangling phandle reference: eth0_vf99 not defined
 WARNING: 12 CPUs (43% of memory pool) are unallocated
 ```
 
-## Instance Extraction
-
-### Purpose
-
-From a global device tree containing all system information, `kerf` extracts a minimal device tree for each spawn kernel instance that contains:
-- Only the CPUs allocated to that instance
-- Only the memory region assigned to that instance
-- Only the devices accessible by that instance
-- Configuration and build hints specific to that instance
-
-### Extraction Process
-
-1. **Validate Global DTS/DTB**: Mandatory validation before extraction
-2. **Locate Instance Node**: Find `/instances/{name}` node
-3. **Extract Resources**: Read CPU, memory, and device allocations
-4. **Build Minimal DTB**: Create new device tree with:
-   - `/chosen` node with resource assignments
-   - Device nodes for allocated hardware only
-   - Configuration hints from instance config
-5. **Generate Binary**: Output instance-specific DTB file
-
-### Instance DTB Structure
-
-**Example: web-server.dtb (extracted from global)**
-
-```dts
-/multikernel-v1/;
-
-/ {
-    compatible = "linux,multikernel-instance";
-    
-    chosen {
-        // Resource assignments for this instance only
-        linux,multikernel-cpus = <4 5 6 7>;
-        linux,multikernel-memory-base = <0x80000000>;
-        linux,multikernel-memory-size = <0x80000000>;
-        linux,multikernel-instance-id = <1>;
-        linux,multikernel-instance-name = "web-server";
-    };
-    
-    // Only devices allocated to this instance
-    ethernet@0 {
-        compatible = "intel,i40e";
-        reg = <0x0 0x1000>;
-        vf-id = <1>;  // This is VF1 assigned to web-server
-    };
-    
-};
-```
-
-**Key characteristics:**
-- Contains **only** resources for this instance
-- No knowledge of other instances
-- No global hardware inventory
-- Minimal and focused
 
 ## Command-Line Interface
 
