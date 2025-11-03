@@ -125,24 +125,12 @@ class BaselineManager:
                 f"Failed to generate baseline device tree blob: {e}"
             ) from e
         
-        # Atomic write: write to temp file then rename
-        temp_path = self.baseline_path.parent / f"{self.baseline_path.name}.tmp"
-        
+        # The kernfs write operation is handled atomically by the kernel
         try:
-            # Ensure parent directory exists
-            self.baseline_path.parent.mkdir(parents=True, exist_ok=True)
-            
-            # Write to temporary file
-            with open(temp_path, 'wb') as f:
+            with open(self.baseline_path, 'wb') as f:
                 f.write(dtb_data)
             
-            # Atomic rename
-            temp_path.replace(self.baseline_path)
-            
         except OSError as e:
-            # Clean up temp file on error
-            if temp_path.exists():
-                temp_path.unlink()
             raise KernelInterfaceError(
                 f"Failed to write baseline to {self.baseline_path}: {e}"
             ) from e
