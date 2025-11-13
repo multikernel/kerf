@@ -21,6 +21,8 @@ contain only resources (no instances).
 """
 
 import sys
+import os
+import ctypes
 from pathlib import Path
 import click
 
@@ -29,6 +31,76 @@ from ..dtc.parser import DeviceTreeParser
 from ..dtc.validator import MultikernelValidator
 from ..dtc.reporter import ValidationReporter
 from ..exceptions import ValidationError, KernelInterfaceError, ParseError
+
+
+MULTIKERNEL_MOUNT_POINT = "/sys/fs/multikernel"
+
+def is_multikernel_mounted() -> bool:
+    mount_point = Path(MULTIKERNEL_MOUNT_POINT)
+    if not mount_point.exists():
+        return False
+    
+    try:
+        with open('/proc/mounts', 'r') as f:
+            for line in f:
+                parts = line.split()
+                if len(parts) >= 2 and parts[1] == MULTIKERNEL_MOUNT_POINT:
+                    return True
+    except (OSError, IOError):
+        pass
+    
+    return False
+
+
+def mount_multikernel_fs(verbose: bool = False) -> None:
+    if is_multikernel_mounted():
+        if verbose:
+            click.echo(f"✓ Multikernel filesystem already mounted at {MULTIKERNEL_MOUNT_POINT}")
+        return
+    
+    mount_point = Path(MULTIKERNEL_MOUNT_POINT)
+    try:
+        mount_point.mkdir(parents=True, exist_ok=True)
+    except OSError as e:
+        raise KernelInterfaceError(
+            f"Failed to create mount point {MULTIKERNEL_MOUNT_POINT}: {e}"
+        )
+    
+    libc = ctypes.CDLL(None, use_errno=True)
+    
+    # mount() signature: int mount(const char *source, const char *target,
+    #                              const char *filesystemtype, unsigned long mountflags,
+    #                              const void *data);
+    libc.mount.argtypes = [
+        ctypes.c_char_p,  # source
+        ctypes.c_char_p,  # target
+        ctypes.c_char_p,  # filesystemtype
+        ctypes.c_ulong,   # mountflags
+        ctypes.c_void_p   # data
+    ]
+    libc.mount.restype = ctypes.c_int
+
+    source = b"none"
+    target = MULTIKERNEL_MOUNT_POINT.encode('utf-8')
+    fstype = b"multikernel"
+    mountflags = 0
+    data = None
+    
+    if verbose:
+        click.echo(f"Mounting multikernel filesystem at {MULTIKERNEL_MOUNT_POINT}...")
+    
+    result = libc.mount(source, target, fstype, mountflags, data)
+    
+    if result != 0:
+        errno = ctypes.get_errno()
+        error_msg = os.strerror(errno)
+        raise KernelInterfaceError(
+            f"Failed to mount multikernel filesystem: {error_msg} (errno: {errno})\n"
+            f"Make sure the multikernel kernel module is loaded and you have root privileges."
+        )
+    
+    if verbose:
+        click.echo(f"✓ Successfully mounted multikernel filesystem")
 
 
 @click.command()
@@ -126,6 +198,8 @@ def init(input: str, apply: bool, dry_run: bool, report: bool, format: str, verb
         # Apply to kernel if requested
         if apply and not dry_run:
             try:
+                mount_multikernel_fs(verbose=verbose)
+
                 baseline_mgr.write_baseline(tree)
                 click.echo("✓ Baseline applied to kernel successfully")
                 click.echo(f"  Baseline: /sys/fs/multikernel/device_tree")
