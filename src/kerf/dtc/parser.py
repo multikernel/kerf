@@ -174,7 +174,7 @@ class DeviceTreeParser:
     
     def _parse_device_info(self, node_offset: int, name: str) -> DeviceInfo:
         """Parse individual device information."""
-        compatible = self.fdt.getprop(node_offset, 'compatible').as_string()
+        compatible = self.fdt.getprop(node_offset, 'compatible').as_str()
         
         # Parse optional properties
         pci_id = None
@@ -186,7 +186,7 @@ class DeviceTreeParser:
         available_ns = None
         
         try:
-            pci_id = self.fdt.getprop(node_offset, 'pci-id').as_string()
+            pci_id = self.fdt.getprop(node_offset, 'pci-id').as_str()
         except libfdt.FdtException:
             pass
         
@@ -962,7 +962,7 @@ class DeviceTreeParser:
         # Parse memory type
         memory_type = "dram"
         try:
-            memory_type = self.fdt.getprop(node_offset, 'memory-type').as_string()
+            memory_type = self.fdt.getprop(node_offset, 'memory-type').as_str()
         except libfdt.FdtException:
             pass
         
