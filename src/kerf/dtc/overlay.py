@@ -112,7 +112,16 @@ class OverlayGenerator:
             fdt_sw.property_string('instance-name', name)
             fdt_sw.property_u32('id', instance.id)
             fdt_sw.begin_node('resources')
-            fdt_sw.property_u64('memory-bytes', instance.resources.memory_bytes)
+
+            memory_bytes_u32 = instance.resources.memory_bytes
+            if memory_bytes_u32 > 0xFFFFFFFF:
+                # If larger than u32 max, we might need to handle differently
+                # For now, raise an error
+                raise ValidationError(
+                    f"Memory size {memory_bytes_u32} bytes exceeds u32 maximum. "
+                    "Kernel expects memory-bytes as u32 (4 bytes)."
+                )
+            fdt_sw.property_u32('memory-bytes', memory_bytes_u32)
             
             import struct
             cpus_data = struct.pack('>' + 'I' * len(instance.resources.cpus), *instance.resources.cpus)
