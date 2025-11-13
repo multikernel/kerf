@@ -79,16 +79,32 @@ class DeviceTreeParser:
     
     def _build_global_tree(self) -> GlobalDeviceTree:
         """Build GlobalDeviceTree from parsed FDT."""
-        root = self.fdt.path_offset('/')
+        try:
+            root = self.fdt.path_offset('/')
+        except libfdt.FdtException as e:
+            raise ParseError(f"Failed to access root node: {e}")
         
         # Parse hardware inventory
-        hardware = self._parse_hardware_inventory()
+        try:
+            hardware = self._parse_hardware_inventory()
+        except ParseError:
+            raise
+        except libfdt.FdtException as e:
+            raise ParseError(f"Failed to parse hardware inventory: FDT error - {e}")
+        except Exception as e:
+            raise ParseError(f"Failed to parse hardware inventory: {e}")
         
         # Parse instances
-        instances = self._parse_instances()
+        try:
+            instances = self._parse_instances()
+        except Exception as e:
+            raise ParseError(f"Failed to parse instances: {e}")
         
         # Parse device references
-        device_refs = self._parse_device_references()
+        try:
+            device_refs = self._parse_device_references()
+        except Exception as e:
+            raise ParseError(f"Failed to parse device references: {e}")
         
         return GlobalDeviceTree(
             hardware=hardware,
@@ -100,14 +116,24 @@ class DeviceTreeParser:
         """Parse hardware inventory from /resources."""
         try:
             resources_node = self.fdt.path_offset('/resources')
-        except libfdt.FdtException:
-            raise ParseError("Missing /resources node")
+        except libfdt.FdtException as e:
+            raise ParseError(f"Missing /resources node: {e}")
         
         # Parse CPU information
-        cpus = self._parse_cpu_allocation(resources_node)
+        try:
+            cpus = self._parse_cpu_allocation(resources_node)
+        except ParseError:
+            raise
+        except libfdt.FdtException as e:
+            raise ParseError(f"Error parsing CPU allocation: {e}")
         
         # Parse memory information
-        memory = self._parse_memory_allocation(resources_node)
+        try:
+            memory = self._parse_memory_allocation(resources_node)
+        except ParseError:
+            raise
+        except libfdt.FdtException as e:
+            raise ParseError(f"Error parsing memory allocation: {e}")
         
         # Parse topology section
         topology = self._parse_topology(resources_node)
@@ -129,9 +155,20 @@ class DeviceTreeParser:
         except libfdt.FdtException:
             raise ParseError("Missing /resources/cpus node")
         
-        total = self.fdt.getprop(cpus_node, 'total').as_uint32()
-        host_reserved = self.fdt.getprop(cpus_node, 'host-reserved').as_uint32_list()
-        available = self.fdt.getprop(cpus_node, 'available').as_uint32_list()
+        try:
+            total = self.fdt.getprop(cpus_node, 'total').as_uint32()
+        except libfdt.FdtException:
+            raise ParseError("Missing 'total' property in /resources/cpus")
+        
+        try:
+            host_reserved = self.fdt.getprop(cpus_node, 'host-reserved').as_uint32_list()
+        except libfdt.FdtException:
+            raise ParseError("Missing 'host-reserved' property in /resources/cpus")
+        
+        try:
+            available = self.fdt.getprop(cpus_node, 'available').as_uint32_list()
+        except libfdt.FdtException:
+            raise ParseError("Missing 'available' property in /resources/cpus")
         
         return CPUAllocation(
             total=total,
@@ -146,10 +183,25 @@ class DeviceTreeParser:
         except libfdt.FdtException:
             raise ParseError("Missing /resources/memory node")
         
-        total_bytes = self.fdt.getprop(memory_node, 'total-bytes').as_uint64()
-        host_reserved_bytes = self.fdt.getprop(memory_node, 'host-reserved-bytes').as_uint64()
-        memory_pool_base = self.fdt.getprop(memory_node, 'memory-pool-base').as_uint64()
-        memory_pool_bytes = self.fdt.getprop(memory_node, 'memory-pool-bytes').as_uint64()
+        try:
+            total_bytes = self.fdt.getprop(memory_node, 'total-bytes').as_uint64()
+        except libfdt.FdtException:
+            raise ParseError("Missing 'total-bytes' property in /resources/memory")
+        
+        try:
+            host_reserved_bytes = self.fdt.getprop(memory_node, 'host-reserved-bytes').as_uint64()
+        except libfdt.FdtException:
+            raise ParseError("Missing 'host-reserved-bytes' property in /resources/memory")
+        
+        try:
+            memory_pool_base = self.fdt.getprop(memory_node, 'memory-pool-base').as_uint64()
+        except libfdt.FdtException:
+            raise ParseError("Missing 'memory-pool-base' property in /resources/memory")
+        
+        try:
+            memory_pool_bytes = self.fdt.getprop(memory_node, 'memory-pool-bytes').as_uint64()
+        except libfdt.FdtException:
+            raise ParseError("Missing 'memory-pool-bytes' property in /resources/memory")
         
         return MemoryAllocation(
             total_bytes=total_bytes,
@@ -177,7 +229,11 @@ class DeviceTreeParser:
             except ParseError:
                 # Skip nodes that don't have required properties (not valid devices)
                 pass
-            offset = self.fdt.next_subnode(offset)
+            try:
+                offset = self.fdt.next_subnode(offset)
+            except libfdt.FdtException:
+                # No more subnodes
+                break
         
         return devices
     
@@ -307,46 +363,63 @@ class DeviceTreeParser:
     
     
     def _parse_device_references(self) -> Dict[str, Dict]:
-        """Parse device reference nodes (phandle targets)."""
-        
+        """Parse device reference nodes (phandle targets) from DTB."""
         device_references = {}
         
-        # Find all device references in the DTS content
-        # These are typically defined as separate nodes that reference hardware devices
-        import re
+        # When parsing from DTB, device references are nodes at the root level
+        # that match the pattern of device references (e.g., eth0_vf1, nvme0_ns2)
+        try:
+            root = self.fdt.path_offset('/')
+        except libfdt.FdtException:
+            return device_references
         
-        # Look for device reference patterns in the DTS content
-        # Pattern: device_name_vf_id: type@id { ... } or device_name_ns_id: type@id { ... }
-        device_ref_pattern = r'(\w+_vf\d+|\w+_ns\d+):\s*\w+-\w+@\d+\s*\{([^}]+)\}'
-        
-        # Search through the entire DTS content for device references
-        matches = re.finditer(device_ref_pattern, self.dts_content, re.DOTALL)
-        
-        for match in matches:
-            ref_name = match.group(1)  # e.g., eth0_vf1
-            ref_content = match.group(2)
-            
-            # Parse the device reference properties
-            device_ref = {}
-            
-            # Parse parent device reference
-            parent_match = re.search(r'parent\s*=\s*<&([^>]+)>', ref_content)
-            if parent_match:
-                device_ref['parent'] = parent_match.group(1)
-            
-            # Parse VF ID if it's a VF reference
-            if '_vf' in ref_name:
-                vf_id_match = re.search(r'vf-id\s*=\s*<(\d+)>', ref_content)
-                if vf_id_match:
-                    device_ref['vf_id'] = int(vf_id_match.group(1))
-            
-            # Parse namespace ID if it's a namespace reference
-            if '_ns' in ref_name:
-                ns_id_match = re.search(r'namespace-id\s*=\s*<(\d+)>', ref_content)
-                if ns_id_match:
-                    device_ref['namespace_id'] = int(ns_id_match.group(1))
-            
-            device_references[ref_name] = device_ref
+        # Iterate through root-level nodes to find device references
+        # Device references are typically named like: eth0_vf1, nvme0_ns2, etc.
+        # Skip known nodes like 'resources' and 'instances'
+        try:
+            offset = self.fdt.first_subnode(root)
+            while offset >= 0:
+                name = self.fdt.get_name(offset)
+                
+                # Skip known structural nodes
+                if name in ('resources', 'instances'):
+                    offset = self.fdt.next_subnode(offset)
+                    continue
+                
+                # Check if this looks like a device reference (contains _vf or _ns)
+                if '_vf' in name or '_ns' in name:
+                    device_ref = {}
+                    
+                    # Parse parent property
+                    try:
+                        parent = self.fdt.getprop(offset, 'parent').as_str()
+                        device_ref['parent'] = parent
+                    except libfdt.FdtException:
+                        pass
+                    
+                    # Parse vf-id if it's a VF reference
+                    if '_vf' in name:
+                        try:
+                            vf_id = self.fdt.getprop(offset, 'vf-id').as_uint32()
+                            device_ref['vf_id'] = vf_id
+                        except libfdt.FdtException:
+                            pass
+                    
+                    # Parse namespace-id if it's a namespace reference
+                    if '_ns' in name:
+                        try:
+                            ns_id = self.fdt.getprop(offset, 'namespace-id').as_uint32()
+                            device_ref['namespace_id'] = ns_id
+                        except libfdt.FdtException:
+                            pass
+                    
+                    if device_ref:  # Only add if we found at least one property
+                        device_references[name] = device_ref
+                
+                offset = self.fdt.next_subnode(offset)
+        except libfdt.FdtException:
+            # If we can't iterate subnodes, just return empty dict
+            pass
         
         return device_references
     
