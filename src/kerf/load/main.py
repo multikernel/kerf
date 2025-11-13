@@ -68,7 +68,8 @@ def kexec_file_load(
     kernel_fd: int,
     initrd_fd: int,
     cmdline: str,
-    flags: int
+    flags: int,
+    debug: bool = False
 ) -> int:
     """
     Call kexec_file_load syscall.
@@ -85,16 +86,24 @@ def kexec_file_load(
     Raises:
         OSError: If syscall fails
     """
-    libc = ctypes.CDLL(None)
+    libc = ctypes.CDLL(None, use_errno=True)
     syscall_fn = libc.syscall
     
     syscall_num = get_kexec_file_load_syscall()
     
     # Prepare cmdline
-    cmdline_bytes = cmdline.encode('utf-8') if cmdline else b''
-    cmdline_len = len(cmdline_bytes)
-    # Use None for NULL pointer if cmdline is empty, otherwise create pointer
-    cmdline_ptr = ctypes.c_char_p(cmdline_bytes) if cmdline_len > 0 else None
+    # kexec_file_load expects: cmdline_len is length INCLUDING null terminator
+    #                         cmdline is pointer to null-terminated string (or NULL)
+    # Note: kexec-tools uses strlen(cmdline) + 1 for cmdline_len
+    cmdline_buf = None
+    if cmdline:
+        cmdline_bytes = cmdline.encode('utf-8')
+        cmdline_buf = ctypes.create_string_buffer(cmdline_bytes)
+        cmdline_len = len(cmdline_bytes) + 1
+        cmdline_ptr = cmdline_buf
+    else:
+        cmdline_len = 0
+        cmdline_ptr = None
     
     # syscall signature: long syscall(long number, ...)
     # kexec_file_load: long kexec_file_load(int kernel_fd, int initrd_fd,
@@ -106,11 +115,21 @@ def kexec_file_load(
         ctypes.c_int,       # kernel_fd
         ctypes.c_int,       # initrd_fd
         ctypes.c_ulong,     # cmdline_len
-        ctypes.c_char_p,    # cmdline
+        ctypes.c_char_p,    # cmdline (c_char_p handles None as NULL)
         ctypes.c_ulong      # flags
     ]
     syscall_fn.restype = ctypes.c_long
     
+    if debug:
+        click.echo(f"DEBUG: syscall_num={syscall_num}, kernel_fd={kernel_fd}, initrd_fd={initrd_fd}, cmdline_len={cmdline_len}, flags=0x{flags:x}", err=True)
+        click.echo(f"DEBUG: KEXEC_MULTIKERNEL=0x{KEXEC_MULTIKERNEL:x}, KEXEC_MK_ID_MASK=0x{KEXEC_MK_ID_MASK:x}, KEXEC_MK_ID_SHIFT={KEXEC_MK_ID_SHIFT}", err=True)
+        if cmdline:
+            click.echo(f"DEBUG: cmdline='{cmdline}', cmdline_ptr={cmdline_ptr}", err=True)
+            # Verify the buffer content
+            click.echo(f"DEBUG: cmdline_buf.value={cmdline_buf.value!r}, len={len(cmdline_buf.value)}", err=True)
+        else:
+            click.echo("DEBUG: cmdline_ptr=NULL", err=True)
+
     result = syscall_fn(
         syscall_num,
         kernel_fd,
@@ -119,22 +138,30 @@ def kexec_file_load(
         cmdline_ptr,
         flags
     )
-    
+
+    if debug:
+        click.echo(f"DEBUG: syscall returned: {result}", err=True)
+
     if result < 0:
         # Get errno
         errno_value = ctypes.get_errno()
+        if errno_value == 0:
+            # If errno is 0 but result is negative, use -result as errno
+            # This handles cases where the syscall returns -errno directly
+            errno_value = -result
         raise OSError(errno_value, os.strerror(errno_value))
     
     return result
 
 
 @click.command()
+@click.pass_context
 @click.option('--kernel', '-k', required=True, help='Path to kernel image file')
 @click.option('--initrd', '-i', help='Path to initrd image file (optional)')
 @click.option('--cmdline', '-c', help='Boot command line parameters')
 @click.option('--id', type=int, required=True, help='Multikernel instance ID (1-511)')
 @click.option('--verbose', '-v', is_flag=True, help='Verbose output')
-def load(kernel: str, initrd: Optional[str], cmdline: Optional[str],
+def load(ctx: click.Context, kernel: str, initrd: Optional[str], cmdline: Optional[str],
          id: int, verbose: bool):
     """
     Load kernel image and initrd using kexec_file_load syscall.
@@ -185,11 +212,13 @@ def load(kernel: str, initrd: Optional[str], cmdline: Optional[str],
             sys.exit(2)  # Invalid command-line arguments
         
         # Always enable multikernel mode
-        flags = KEXEC_MULTIKERNEL | KEXEC_MK_ID(id)
+        mk_id_flags = KEXEC_MK_ID(id)
+        flags = KEXEC_MULTIKERNEL | mk_id_flags
         
         if verbose:
             click.echo(f"Multikernel mode enabled with ID: {id}")
-        
+            click.echo(f"Flags: KEXEC_MULTIKERNEL=0x{KEXEC_MULTIKERNEL:x}, KEXEC_MK_ID({id})=0x{mk_id_flags:x}, combined=0x{flags:x}")
+
         # Prepare command line (default to empty string if not provided)
         cmdline_str = cmdline if cmdline else ''
         
@@ -219,7 +248,8 @@ def load(kernel: str, initrd: Optional[str], cmdline: Optional[str],
             if verbose:
                 click.echo("Calling kexec_file_load syscall...")
             
-            result = kexec_file_load(kernel_fd, initrd_fd, cmdline_str, flags)
+            debug = ctx.obj.get('debug', False) if ctx and ctx.obj else False
+            result = kexec_file_load(kernel_fd, initrd_fd, cmdline_str, flags, debug=debug)
             
             if verbose:
                 click.echo(f"✓ Kernel loaded successfully (result: {result})")
