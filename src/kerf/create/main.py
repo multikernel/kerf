@@ -515,6 +515,7 @@ def create(
         def create_instance_operation(current):
             """Operation function to create instance in device tree."""
             import copy
+            nonlocal memory_base_addr  # Allow modification of outer scope variable
             
             # Check if instance already exists
             if name in current.instances:
