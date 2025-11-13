@@ -69,6 +69,11 @@ class DeviceTreeParser:
         try:
             self.fdt = libfdt.Fdt(dtb_data)
             return self._build_global_tree()
+        except libfdt.FdtException as e:
+            error_msg = f"FDT error: {e}"
+            if hasattr(e, 'err'):
+                error_msg += f" (error code: {e.err})"
+            raise ParseError(f"Failed to parse DTB from bytes: {error_msg}")
         except Exception as e:
             raise ParseError(f"Failed to parse DTB from bytes: {e}")
     
@@ -166,15 +171,23 @@ class DeviceTreeParser:
         offset = self.fdt.first_subnode(devices_node)
         while offset >= 0:
             name = self.fdt.get_name(offset)
-            device_info = self._parse_device_info(offset, name)
-            devices[name] = device_info
+            try:
+                device_info = self._parse_device_info(offset, name)
+                devices[name] = device_info
+            except ParseError:
+                # Skip nodes that don't have required properties (not valid devices)
+                pass
             offset = self.fdt.next_subnode(offset)
         
         return devices
     
     def _parse_device_info(self, node_offset: int, name: str) -> DeviceInfo:
         """Parse individual device information."""
-        compatible = self.fdt.getprop(node_offset, 'compatible').as_str()
+        # Compatible is required for devices
+        try:
+            compatible = self.fdt.getprop(node_offset, 'compatible').as_str()
+        except libfdt.FdtException:
+            raise ParseError(f"Device '{name}' is missing required 'compatible' property")
         
         # Parse optional properties
         pci_id = None
