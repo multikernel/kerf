@@ -20,6 +20,7 @@ import click
 from .load.main import load
 from .init.main import init
 from .create.main import create
+from .exec.main import exec_cmd
 
 
 @click.group()
@@ -36,6 +37,7 @@ def main(ctx, debug):
 main.add_command(init)
 main.add_command(load)
 main.add_command(create)
+main.add_command(exec_cmd)
 
 
 if __name__ == '__main__':
