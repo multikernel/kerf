@@ -87,243 +87,144 @@ class InstanceExtractor:
         return fdt_data
     
     def _create_comprehensive_fdt(self, tree: GlobalDeviceTree) -> bytes:
-        """Create a comprehensive FDT with all parsed data."""
-        import struct
+        """Create a comprehensive FDT with all parsed data using libfdt FdtSw."""
+        # Use libfdt's FdtSw (FDT source writer) to properly build the DTB
+        # This ensures correct structure, size calculations, and string handling
+        # FdtSw automatically resizes the buffer as needed
         
-        # Calculate sizes needed for all the data
-        # This is a production-ready implementation that creates a proper DTB
+        fdt_sw = libfdt.FdtSw()
+        fdt_sw.finish_reservemap()
         
-        # Estimate sizes
-        header_size = 40
-        mem_rsv_size = 16  # Two 8-byte entries (terminator)
+        fdt_sw.begin_node('')
+        fdt_sw.property_string('compatible', 'linux,multikernel-host')
         
-        # Calculate structure size needed
-        struct_size = 0
+        fdt_sw.begin_node('resources')
+        self._add_cpu_section_sw(fdt_sw, tree.hardware.cpus)
+        self._add_memory_section_sw(fdt_sw, tree.hardware.memory)
         
-        # Root node: FDT_BEGIN_NODE + name + FDT_END_NODE
-        struct_size += 4 + 1 + 4  # Root node
+        if tree.hardware.devices:
+            self._add_devices_section_sw(fdt_sw, tree.hardware.devices)
         
-        # Compatible property
-        struct_size += 4 + 4 + len("linux,multikernel-host") + 1  # Property + length + value + null term
+        fdt_sw.end_node()  # End resources
         
-        # Global section
-        struct_size += 4 + 6 + 4  # FDT_BEGIN_NODE + "global" + FDT_END_NODE
-        struct_size += 4 + 8 + 4  # FDT_BEGIN_NODE + "hardware" + FDT_END_NODE
+        if tree.instances:
+            self._add_instances_section_sw(fdt_sw, tree.instances)
         
-        # CPU section
-        struct_size += 4 + 4 + 4  # FDT_BEGIN_NODE + "cpus" + FDT_END_NODE
-        struct_size += 4 + 4 + 4  # total property
-        struct_size += 4 + 4 + 4 * len(tree.hardware.cpus.host_reserved)  # host-reserved property
-        struct_size += 4 + 4 + 4 * len(tree.hardware.cpus.available)  # available property
+        if tree.device_references:
+            self._add_device_references_sw(fdt_sw, tree.device_references)
         
-        # Memory section
-        struct_size += 4 + 6 + 4  # FDT_BEGIN_NODE + "memory" + FDT_END_NODE
-        struct_size += 4 + 4 + 8  # total-bytes property
-        struct_size += 4 + 4 + 8  # host-reserved-bytes property
-        struct_size += 4 + 4 + 8  # memory-pool-base property
-        struct_size += 4 + 4 + 8  # memory-pool-bytes property
+        fdt_sw.end_node()
         
-        # Devices section
-        struct_size += 4 + 7 + 4  # FDT_BEGIN_NODE + "devices" + FDT_END_NODE
-        for name, device in tree.hardware.devices.items():
-            struct_size += 4 + len(name) + 1 + 4  # Device node
-            struct_size += 4 + 4 + len(device.compatible) + 1  # compatible property
-            if device.pci_id:
-                struct_size += 4 + 4 + len(device.pci_id) + 1  # pci-id property
-            if device.sriov_vfs is not None:
-                struct_size += 4 + 4 + 4  # sriov-vfs property
-            if device.host_reserved_vf is not None:
-                struct_size += 4 + 4 + 4  # host-reserved-vf property
-            if device.available_vfs:
-                struct_size += 4 + 4 + 4 * len(device.available_vfs)  # available-vfs property
-            if device.namespaces is not None:
-                struct_size += 4 + 4 + 4  # namespaces property
-            if device.host_reserved_ns is not None:
-                struct_size += 4 + 4 + 4  # host-reserved-ns property
-            if device.available_ns:
-                struct_size += 4 + 4 + 4 * len(device.available_ns)  # available-ns property
-        
-        # Instances section
-        struct_size += 4 + 9 + 4  # FDT_BEGIN_NODE + "instances" + FDT_END_NODE
-        for name, instance in tree.instances.items():
-            struct_size += 4 + len(name) + 1 + 4  # Instance node
-            struct_size += 4 + 4 + 4  # id property
-            
-            # Resources section
-            struct_size += 4 + 8 + 4  # FDT_BEGIN_NODE + "resources" + FDT_END_NODE
-            struct_size += 4 + 4 + 4 * len(instance.resources.cpus)  # cpus property
-            struct_size += 4 + 4 + 8  # memory-base property
-            struct_size += 4 + 4 + 8  # memory-bytes property
-            if instance.resources.devices:
-                struct_size += 4 + 4 + len(" ".join(instance.resources.devices)) + 1  # devices property
-            
-        
-        # Device references section
-        for name, device_ref in tree.device_references.items():
-            struct_size += 4 + len(name) + 1 + 4  # Device reference node
-            struct_size += 4 + 4 + 4  # parent property (phandle)
-            if hasattr(device_ref, 'vf_id') and device_ref.vf_id is not None:
-                struct_size += 4 + 4 + 4  # vf-id property
-            if hasattr(device_ref, 'namespace_id') and device_ref.namespace_id is not None:
-                struct_size += 4 + 4 + 4  # namespace-id property
-        
-        struct_size += 4  # FDT_END
-        
-        # Calculate total size
-        strings_size = 0  # We'll use inline strings
-        totalsize = header_size + mem_rsv_size + struct_size + strings_size
-        
-        # Create FDT data
-        fdt_data = bytearray(totalsize)
-        
-        # Calculate offsets
-        off_mem_rsvmap = header_size
-        off_dt_struct = off_mem_rsvmap + mem_rsv_size
-        off_dt_strings = off_dt_struct + struct_size
-        
-        # FDT header
-        header = struct.pack('>IIIIIIIIII', 
-                           0xd00dfeed,      # magic
-                           totalsize,       # totalsize
-                           off_dt_struct,   # off_dt_struct
-                           off_dt_strings,  # off_dt_strings
-                           off_mem_rsvmap,  # off_mem_rsvmap
-                           17,              # version
-                           16,              # last_comp_version
-                           0,               # boot_cpuid_phys
-                           strings_size,    # size_dt_strings
-                           struct_size)     # size_dt_struct
-        
-        fdt_data[:len(header)] = header
-        
-        # Memory reservation block (empty)
-        fdt_data[off_mem_rsvmap:off_mem_rsvmap+16] = b'\x00' * 16
-        
-        # Build structure block
-        struct_data = bytearray()
-        
-        # Root node
-        struct_data.extend(struct.pack('>I', 0x00000001))  # FDT_BEGIN_NODE
-        struct_data.extend(b'\x00')  # Root node name (empty)
-        struct_data.extend(struct.pack('>I', 0x00000003))  # FDT_PROP
-        struct_data.extend(struct.pack('>I', len("linux,multikernel-host")))  # Property length
-        struct_data.extend(b'compatible\x00')  # Property name
-        struct_data.extend(b'linux,multikernel-host\x00')  # Property value
-        struct_data.extend(b'\x00')  # Padding
-        
-        # Add all the hardware and instance data
-        self._build_fdt_structure(struct_data, tree)
-        
-        # End marker
-        struct_data.extend(struct.pack('>I', 0x00000002))  # FDT_END_NODE
-        struct_data.extend(struct.pack('>I', 0x00000009))  # FDT_END
-        
-        # Copy structure data
-        fdt_data[off_dt_struct:off_dt_struct+len(struct_data)] = struct_data
-        
-        return bytes(fdt_data)
+        dtb = fdt_sw.as_fdt()
+        dtb.pack()
+        return dtb.as_bytearray()
     
-    def _build_fdt_structure(self, struct_data: bytearray, tree: GlobalDeviceTree):
-        """Build the FDT structure data."""
+    def _add_cpu_section_sw(self, fdt_sw, cpus):
+        """Add CPU section using FdtSw."""
+        fdt_sw.begin_node('cpus')
+        fdt_sw.property_u32('total', cpus.total)
+        
         import struct
+        host_reserved_data = struct.pack('>' + 'I' * len(cpus.host_reserved), *cpus.host_reserved)
+        fdt_sw.property('host-reserved', host_reserved_data)
         
-        # Global section
-        struct_data.extend(struct.pack('>I', 0x00000001))  # FDT_BEGIN_NODE
-        struct_data.extend(b'global\x00')
+        available_data = struct.pack('>' + 'I' * len(cpus.available), *cpus.available)
+        fdt_sw.property('available', available_data)
         
-        # Hardware section
-        struct_data.extend(struct.pack('>I', 0x00000001))  # FDT_BEGIN_NODE
-        struct_data.extend(b'hardware\x00')
+        fdt_sw.end_node()
+    
+    def _add_memory_section_sw(self, fdt_sw, memory):
+        """Add memory section using FdtSw."""
+        fdt_sw.begin_node('memory')
+        fdt_sw.property_u64('total-bytes', memory.total_bytes)
+        fdt_sw.property_u64('host-reserved-bytes', memory.host_reserved_bytes)
+        fdt_sw.property_u64('memory-pool-base', memory.memory_pool_base)
+        fdt_sw.property_u64('memory-pool-bytes', memory.memory_pool_bytes)
+        fdt_sw.end_node()
+    
+    def _add_devices_section_sw(self, fdt_sw, devices):
+        """Add devices section using FdtSw."""
+        fdt_sw.begin_node('devices')
         
-        # CPU section
-        struct_data.extend(struct.pack('>I', 0x00000001))  # FDT_BEGIN_NODE
-        struct_data.extend(b'cpus\x00')
-        
-        # Total CPUs
-        struct_data.extend(struct.pack('>I', 0x00000003))  # FDT_PROP
-        struct_data.extend(struct.pack('>I', 4))  # Property length
-        struct_data.extend(b'total\x00')  # Property name
-        struct_data.extend(struct.pack('>I', tree.hardware.cpus.total))  # Property value
-        
-        # Host reserved CPUs
-        host_reserved_data = struct.pack('>' + 'I' * len(tree.hardware.cpus.host_reserved), 
-                                       *tree.hardware.cpus.host_reserved)
-        struct_data.extend(struct.pack('>I', 0x00000003))  # FDT_PROP
-        struct_data.extend(struct.pack('>I', len(host_reserved_data)))  # Property length
-        struct_data.extend(b'host-reserved\x00')  # Property name
-        struct_data.extend(host_reserved_data)  # Property value
-        
-        # Available CPUs
-        available_data = struct.pack('>' + 'I' * len(tree.hardware.cpus.available), 
-                                   *tree.hardware.cpus.available)
-        struct_data.extend(struct.pack('>I', 0x00000003))  # FDT_PROP
-        struct_data.extend(struct.pack('>I', len(available_data)))  # Property length
-        struct_data.extend(b'available\x00')  # Property name
-        struct_data.extend(available_data)  # Property value
-        
-        struct_data.extend(struct.pack('>I', 0x00000002))  # FDT_END_NODE (cpus)
-        
-        # Memory section
-        struct_data.extend(struct.pack('>I', 0x00000001))  # FDT_BEGIN_NODE
-        struct_data.extend(b'memory\x00')
-        
-        # Memory properties
-        for prop_name, prop_value in [
-            ('total-bytes', tree.hardware.memory.total_bytes),
-            ('host-reserved-bytes', tree.hardware.memory.host_reserved_bytes),
-            ('memory-pool-base', tree.hardware.memory.memory_pool_base),
-            ('memory-pool-bytes', tree.hardware.memory.memory_pool_bytes)
-        ]:
-            struct_data.extend(struct.pack('>I', 0x00000003))  # FDT_PROP
-            struct_data.extend(struct.pack('>I', 8))  # Property length
-            struct_data.extend(f'{prop_name}\x00'.encode())  # Property name
-            struct_data.extend(struct.pack('>Q', prop_value))  # Property value
-        
-        struct_data.extend(struct.pack('>I', 0x00000002))  # FDT_END_NODE (memory)
-        struct_data.extend(struct.pack('>I', 0x00000002))  # FDT_END_NODE (hardware)
-        struct_data.extend(struct.pack('>I', 0x00000002))  # FDT_END_NODE (global)
-        
-        # Instances section
-        struct_data.extend(struct.pack('>I', 0x00000001))  # FDT_BEGIN_NODE
-        struct_data.extend(b'instances\x00')
-        
-        for name, instance in tree.instances.items():
-            struct_data.extend(struct.pack('>I', 0x00000001))  # FDT_BEGIN_NODE
-            struct_data.extend(f'{name}\x00'.encode())
+        for name, device_info in devices.items():
+            fdt_sw.begin_node(name)
+            fdt_sw.property_string('compatible', device_info.compatible)
             
-            # Instance ID
-            struct_data.extend(struct.pack('>I', 0x00000003))  # FDT_PROP
-            struct_data.extend(struct.pack('>I', 4))  # Property length
-            struct_data.extend(b'id\x00')  # Property name
-            struct_data.extend(struct.pack('>I', instance.id))  # Property value
+            if device_info.pci_id:
+                fdt_sw.property_string('pci-id', device_info.pci_id)
             
-            # Resources section
-            struct_data.extend(struct.pack('>I', 0x00000001))  # FDT_BEGIN_NODE
-            struct_data.extend(b'resources\x00')
+            if device_info.sriov_vfs is not None:
+                fdt_sw.property_u32('sriov-vfs', device_info.sriov_vfs)
             
-            # CPU resources
-            cpus_data = struct.pack('>' + 'I' * len(instance.resources.cpus), 
-                                  *instance.resources.cpus)
-            struct_data.extend(struct.pack('>I', 0x00000003))  # FDT_PROP
-            struct_data.extend(struct.pack('>I', len(cpus_data)))  # Property length
-            struct_data.extend(b'cpus\x00')  # Property name
-            struct_data.extend(cpus_data)  # Property value
+            if device_info.host_reserved_vf is not None:
+                fdt_sw.property_u32('host-reserved-vf', device_info.host_reserved_vf)
             
-            # Memory resources
-            for prop_name, prop_value in [
-                ('memory-base', instance.resources.memory_base),
-                ('memory-bytes', instance.resources.memory_bytes)
-            ]:
-                struct_data.extend(struct.pack('>I', 0x00000003))  # FDT_PROP
-                struct_data.extend(struct.pack('>I', 8))  # Property length
-                struct_data.extend(f'{prop_name}\x00'.encode())  # Property name
-                struct_data.extend(struct.pack('>Q', prop_value))  # Property value
+            if device_info.available_vfs:
+                import struct
+                vfs_data = struct.pack('>' + 'I' * len(device_info.available_vfs), *device_info.available_vfs)
+                fdt_sw.property('available-vfs', vfs_data)
             
-            struct_data.extend(struct.pack('>I', 0x00000002))  # FDT_END_NODE (resources)
+            if device_info.namespaces is not None:
+                fdt_sw.property_u32('namespaces', device_info.namespaces)
             
-            struct_data.extend(struct.pack('>I', 0x00000002))  # FDT_END_NODE (instance)
+            if device_info.host_reserved_ns is not None:
+                fdt_sw.property_u32('host-reserved-ns', device_info.host_reserved_ns)
+            
+            if device_info.available_ns:
+                import struct
+                ns_data = struct.pack('>' + 'I' * len(device_info.available_ns), *device_info.available_ns)
+                fdt_sw.property('available-ns', ns_data)
+            
+            fdt_sw.end_node()
         
-        struct_data.extend(struct.pack('>I', 0x00000002))  # FDT_END_NODE (instances)
+        fdt_sw.end_node()
+    
+    def _add_instances_section_sw(self, fdt_sw, instances):
+        """Add instances section using FdtSw."""
+        fdt_sw.begin_node('instances')
+        
+        for name, instance in instances.items():
+            fdt_sw.begin_node(name)
+            fdt_sw.property_u32('id', instance.id)
+            
+            fdt_sw.begin_node('resources')
+            
+            import struct
+            cpus_data = struct.pack('>' + 'I' * len(instance.resources.cpus), *instance.resources.cpus)
+            fdt_sw.property('cpus', cpus_data)
+            
+            fdt_sw.property_u64('memory-base', instance.resources.memory_base)
+            fdt_sw.property_u64('memory-bytes', instance.resources.memory_bytes)
+            
+            if instance.resources.devices:
+                fdt_sw.property_string('devices', ' '.join(instance.resources.devices))
+            
+            fdt_sw.end_node()  # End resources
+            fdt_sw.end_node()  # End instance
+        
+        fdt_sw.end_node()  # End instances
+    
+    def _add_device_references_sw(self, fdt_sw, device_references):
+        """Add device references using FdtSw."""
+        for name, device_ref in device_references.items():
+            fdt_sw.begin_node(name)
+            
+            if isinstance(device_ref, dict):
+                if 'parent' in device_ref and device_ref['parent']:
+                    fdt_sw.property_string('parent', device_ref['parent'])
+                if 'vf_id' in device_ref and device_ref['vf_id'] is not None:
+                    fdt_sw.property_u32('vf-id', device_ref['vf_id'])
+                if 'namespace_id' in device_ref and device_ref['namespace_id'] is not None:
+                    fdt_sw.property_u32('namespace-id', device_ref['namespace_id'])
+            else:
+                if hasattr(device_ref, 'parent') and device_ref.parent:
+                    fdt_sw.property_string('parent', device_ref.parent)
+                if hasattr(device_ref, 'vf_id') and device_ref.vf_id is not None:
+                    fdt_sw.property_u32('vf-id', device_ref.vf_id)
+                if hasattr(device_ref, 'namespace_id') and device_ref.namespace_id is not None:
+                    fdt_sw.property_u32('namespace-id', device_ref.namespace_id)
+            
+            fdt_sw.end_node()
     
     def _add_resources_section(self, parent_offset: int, tree: GlobalDeviceTree):
         """Add resources section to DTB."""
