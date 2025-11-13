@@ -1124,23 +1124,23 @@ class DeviceTreeParser:
             
             # Get properties for this node
             try:
-                prop_offset = self.fdt.first_property_offset(node_offset)
+                prop_offset = self.fdt.first_property_offset(node_offset, libfdt.QUIET_NOTFOUND)
                 while prop_offset >= 0:
                     try:
                         prop = self.fdt.get_property_by_offset(prop_offset)
                         prop_name = prop.name
-                        prop_data = prop.data
+                        prop_data = bytes(prop)
                         
                         # Convert property to DTS format
                         prop_line = self._property_to_dts(prop_name, prop_data, indent + '    ')
                         if prop_line:
                             lines.append(prop_line)
                     except Exception as e:
-                        # Skip problematic properties
-                        pass
+                        # Skip problematic properties but log for debugging
+                        lines.append(f'{indent}    // Error reading property: {e}')
                     
                     try:
-                        prop_offset = self.fdt.next_property_offset(prop_offset)
+                        prop_offset = self.fdt.next_property_offset(prop_offset, libfdt.QUIET_NOTFOUND)
                     except:
                         break
             except Exception as e:
