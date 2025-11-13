@@ -359,6 +359,43 @@ def parse_device_list(device_spec: Optional[str]) -> List[str]:
     return devices
 
 
+def dump_overlay_for_debug(
+    manager: DeviceTreeManager,
+    current,
+    modified,
+    instance_name: str,
+    suffix: str = ""
+) -> None:
+    """
+    Dump overlay DTS source to stdout for debugging when --debug is enabled.
+
+    Args:
+        manager: DeviceTreeManager instance
+        current: Current device tree state
+        modified: Modified device tree state
+        instance_name: Name of the instance being created
+        suffix: Optional suffix for display (e.g., "_dryrun")
+    """
+    dtbo_data = manager.overlay_gen.generate_overlay(current, modified)
+
+    try:
+        from ..dtc.parser import DeviceTreeParser
+        import libfdt
+        
+        fdt = libfdt.Fdt(dtbo_data)
+        parser = DeviceTreeParser()
+        parser.fdt = fdt
+        dts_lines = parser._fdt_to_dts_recursive(0, 0)
+        dts_content = '\n'.join(dts_lines)
+        
+        click.echo(f"Debug: Overlay DTS source for '{instance_name}'{suffix}:")
+        click.echo("─" * 70)
+        click.echo(dts_content)
+        click.echo("─" * 70)
+    except Exception as e:
+        click.echo(f"Debug: Failed to convert overlay to DTS: {e}", err=True)
+
+
 @click.command(context_settings={'allow_extra_args': True})
 @click.pass_context
 @click.argument('name', required=False)
@@ -508,6 +545,8 @@ def create(
                 click.echo(f"Error: Instance ID must be in range 1-511, got {id}", err=True)
                 sys.exit(2)
         
+        debug = ctx.obj.get('debug', False) if ctx and ctx.obj else False
+
         # Initialize manager
         manager = DeviceTreeManager()
         
@@ -618,6 +657,11 @@ def create(
                 if instance.resources.devices:
                     click.echo(f"  Devices: {', '.join(instance.resources.devices)}")
                 click.echo(f"  Instance ID: {instance.id}")
+
+                if debug:
+                    dump_overlay_for_debug(manager, current, modified, name, suffix="_dryrun")
+                    click.echo()  # Add blank line after debug output
+
                 click.echo("\n✓ Instance would be created (dry-run mode)")
                 click.echo("  Remove --dry-run to apply overlay to kernel")
             except (ResourceError, ValidationError) as e:
@@ -629,6 +673,11 @@ def create(
             return
         
         try:
+            if debug:
+                current = manager.read_current_state()
+                modified = create_instance_operation(current)
+                dump_overlay_for_debug(manager, current, modified, name)
+
             tx_id = manager.apply_operation(create_instance_operation)
             
             click.echo(f"✓ Created instance '{name}' (transaction {tx_id})")
