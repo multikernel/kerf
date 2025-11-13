@@ -125,8 +125,8 @@ class DeviceTreeParser:
             raise ParseError("Missing /resources/cpus node")
         
         total = self.fdt.getprop(cpus_node, 'total').as_uint32()
-        host_reserved = list(self.fdt.getprop(cpus_node, 'host-reserved').as_uint32_array())
-        available = list(self.fdt.getprop(cpus_node, 'available').as_uint32_array())
+        host_reserved = self.fdt.getprop(cpus_node, 'host-reserved').as_uint32_list()
+        available = self.fdt.getprop(cpus_node, 'available').as_uint32_list()
         
         return CPUAllocation(
             total=total,
@@ -201,7 +201,7 @@ class DeviceTreeParser:
             pass
         
         try:
-            available_vfs = list(self.fdt.getprop(node_offset, 'available-vfs').as_uint32_array())
+            available_vfs = self.fdt.getprop(node_offset, 'available-vfs').as_uint32_list()
         except libfdt.FdtException:
             pass
         
@@ -216,7 +216,7 @@ class DeviceTreeParser:
             pass
         
         try:
-            available_ns = list(self.fdt.getprop(node_offset, 'available-ns').as_uint32_array())
+            available_ns = self.fdt.getprop(node_offset, 'available-ns').as_uint32_list()
         except libfdt.FdtException:
             pass
         
@@ -272,7 +272,7 @@ class DeviceTreeParser:
         except libfdt.FdtException:
             raise ParseError(f"Missing resources node for instance")
         
-        cpus = list(self.fdt.getprop(resources_node, 'cpus').as_uint32_array())
+        cpus = self.fdt.getprop(resources_node, 'cpus').as_uint32_list()
         memory_base = self.fdt.getprop(resources_node, 'memory-base').as_uint64()
         memory_bytes = self.fdt.getprop(resources_node, 'memory-bytes').as_uint64()
         
@@ -947,14 +947,14 @@ class DeviceTreeParser:
         # Parse CPUs
         cpus = []
         try:
-            cpus = list(self.fdt.getprop(node_offset, 'cpus').as_uint32_array())
+            cpus = self.fdt.getprop(node_offset, 'cpus').as_uint32_list()
         except libfdt.FdtException:
             pass
         
         # Parse distance matrix (optional)
         distance_matrix = {}
         try:
-            distances = list(self.fdt.getprop(node_offset, 'distance-matrix').as_uint32_array())
+            distances = self.fdt.getprop(node_offset, 'distance-matrix').as_uint32_list()
             # Simple distance matrix parsing - would need more sophisticated logic for full matrix
         except libfdt.FdtException:
             pass
