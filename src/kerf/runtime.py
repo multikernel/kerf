@@ -150,7 +150,11 @@ class DeviceTreeManager:
         self.baseline_path = Path(baseline_path or self.DEFAULT_BASELINE_PATH)
         self.overlays_dir = Path(overlays_dir or self.DEFAULT_OVERLAYS_DIR)
         self.overlays_new = self.overlays_dir / "new"
-        self.lock_file = self.overlays_dir.parent / ".kerf.lock"
+
+        lock_dir = Path("/var/run")
+        if not lock_dir.exists() or not os.access(lock_dir, os.W_OK):
+            lock_dir = Path("/tmp")
+        self.lock_file = lock_dir / "kerf.lock"
         
         self.parser = DeviceTreeParser()
         self.overlay_gen = OverlayGenerator()
