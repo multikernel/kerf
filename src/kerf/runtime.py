@@ -341,6 +341,31 @@ class DeviceTreeManager:
                     "Overlay written but kernel did not create transaction directory"
                 )
             
+            # Verify transaction succeeded by checking status
+            tx_dir = self.overlays_dir / f"tx_{tx_id}"
+            status_file = tx_dir / "status"
+            
+            if status_file.exists():
+                try:
+                    with open(status_file, 'r') as f:
+                        status = f.read().strip()
+                    if status not in ("applied", "success", "ok"):
+                        error_msg = f"Overlay transaction {tx_id} failed with status: '{status}'"
+                        instance_file = tx_dir / "instance"
+                        if instance_file.exists():
+                            try:
+                                with open(instance_file, 'r') as f:
+                                    instance_name = f.read().strip()
+                                error_msg += f" (instance: {instance_name})"
+                            except OSError:
+                                pass
+                        
+                        raise KernelInterfaceError(error_msg)
+                except OSError:
+                    # If we can't read status, assume it might still be processing
+                    # But warn that we couldn't verify
+                    pass
+            
             return tx_id
             
         except OSError as e:
