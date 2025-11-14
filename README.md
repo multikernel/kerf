@@ -1,3 +1,5 @@
+![Kerf Logo](logo.png)
+
 # Kerf: Multikernel Management System
 
 ## Overview
