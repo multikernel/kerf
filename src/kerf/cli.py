@@ -23,6 +23,7 @@ from .create.main import create
 from .exec.main import exec_cmd
 from .unload.main import unload
 from .delete.main import delete
+from .show.main import show
 
 
 @click.group()
@@ -42,6 +43,7 @@ main.add_command(create)
 main.add_command(exec_cmd)
 main.add_command(unload)
 main.add_command(delete)
+main.add_command(show)
 
 
 if __name__ == '__main__':
