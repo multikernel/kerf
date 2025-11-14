@@ -200,19 +200,6 @@ The current device tree foundation provides essential building blocks for future
 
 These foundational capabilities are essential for safe and reliable multikernel execution, making `kerf` the ideal platform for building comprehensive multikernel management systems.
 
-## Future Roadmap
-
-### Phase 2: Kernel Loading & Execution
-- **Kernel Image Management**: Load and manage multiple kernel images
-- **Instance Boot**: Start kernel instances with validated device trees
-- **Resource Binding**: Bind allocated resources to running instances
-- **Instance Monitoring**: Basic health monitoring of running instances
-
-### Phase 3: Advanced Management
-- **Dynamic Resource Allocation**: Runtime resource reallocation
-- **Instance Migration**: Move instances between hosts
-- **Advanced Security**: Enhanced isolation and security policies
-- **Orchestration APIs**: High-level management interfaces
 
 ## Global Device Tree Format
 
@@ -224,7 +211,7 @@ The baseline device tree contains only the **Resources** section, which describe
 2. **Instances** (`/instances`): Resource assignments for each spawn kernel (added via overlays)
 3. **Device References**: Linkage between instances and hardware devices (added via overlays)
 
-### Baseline Example (Resources Only)
+### Baseline Example
 
 The baseline DTS file contains only hardware resources. Instances are created dynamically via overlays using `kerf create`.
 
