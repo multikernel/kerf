@@ -22,57 +22,12 @@ The instance must not have a kernel loaded (must be in EMPTY or READY state).
 import sys
 import copy
 from typing import Optional
-from pathlib import Path
 import click
 
 from ..runtime import DeviceTreeManager
 from ..models import InstanceState
 from ..exceptions import ResourceError, ValidationError, KernelInterfaceError, ParseError
-
-
-def get_instance_id_from_name(name: str) -> Optional[int]:
-    """
-    Get instance ID from instance name by reading /sys/fs/multikernel/instances/{name}/id.
-    
-    Args:
-        name: Instance name
-    
-    Returns:
-        Instance ID if found, None otherwise
-    """
-    id_path = Path(f'/sys/fs/multikernel/instances/{name}/id')
-    
-    if not id_path.exists():
-        return None
-    
-    try:
-        with open(id_path, 'r') as f:
-            instance_id = int(f.read().strip())
-            return instance_id
-    except (OSError, IOError, ValueError):
-        return None
-
-
-def get_instance_status(name: str) -> Optional[str]:
-    """
-    Get instance status from kernel filesystem.
-    
-    Args:
-        name: Instance name
-    
-    Returns:
-        Status string if found, None otherwise
-    """
-    status_path = Path(f'/sys/fs/multikernel/instances/{name}/status')
-    
-    if not status_path.exists():
-        return None
-    
-    try:
-        with open(status_path, 'r') as f:
-            return f.read().strip()
-    except (OSError, IOError):
-        return None
+from ..utils import get_instance_id_from_name, get_instance_status
 
 
 @click.command(name='delete')

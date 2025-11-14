@@ -24,6 +24,7 @@ import platform
 from pathlib import Path
 from typing import Optional
 from ..models import InstanceState
+from ..utils import get_instance_id_from_name
 
 
 # KEXEC flags definitions
@@ -124,29 +125,6 @@ def kexec_file_unload(
         raise OSError(errno_value, os.strerror(errno_value))
     
     return result
-
-
-def get_instance_id_from_name(name: str) -> Optional[int]:
-    """
-    Get instance ID from instance name by reading /sys/fs/multikernel/instances/{name}/id.
-    
-    Args:
-        name: Instance name
-    
-    Returns:
-        Instance ID if found, None otherwise
-    """
-    id_path = Path(f'/sys/fs/multikernel/instances/{name}/id')
-    
-    if not id_path.exists():
-        return None
-    
-    try:
-        with open(id_path, 'r') as f:
-            instance_id = int(f.read().strip())
-            return instance_id
-    except (OSError, IOError, ValueError):
-        return None
 
 
 @click.command(name='unload')
