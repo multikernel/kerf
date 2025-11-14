@@ -129,6 +129,21 @@ class OverlayGenerator:
             
             fragment_index += 1
         
+        # For each deleted instance, add a fragment with instance-remove
+        for name in deleted_instances:
+            # Fragment node: fragment@<index>
+            fdt_sw.begin_node(f'fragment@{fragment_index}')
+            
+            fdt_sw.property_string('target-path', '/')
+            fdt_sw.begin_node('__overlay__')
+            fdt_sw.begin_node('instance-remove')
+            fdt_sw.property_string('instance-name', name)
+            fdt_sw.end_node()  # End instance-remove
+            fdt_sw.end_node()  # End __overlay__
+            fdt_sw.end_node()  # End fragment
+            
+            fragment_index += 1
+        
         fdt_sw.end_node()  # End root
         
         dtb = fdt_sw.as_fdt()

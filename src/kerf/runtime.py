@@ -108,7 +108,7 @@ from .dtc.parser import DeviceTreeParser
 from .dtc.overlay import OverlayGenerator
 from .dtc.validator import MultikernelValidator
 from .baseline import BaselineManager
-from .models import GlobalDeviceTree
+from .models import GlobalDeviceTree, OverlayInstanceData
 from .exceptions import ValidationError, ParseError, KernelInterfaceError
 
 
@@ -237,8 +237,10 @@ class DeviceTreeManager:
         applied_overlays = self.read_applied_overlays()
         for tx_id, dtbo_data in applied_overlays:
             try:
+                self.parser._last_overlay_data = None
                 overlay_tree = self.parser.parse_dtb_from_bytes(dtbo_data)
-                effective = self._merge_overlay(effective, overlay_tree)
+                overlay_data = self.parser.get_last_overlay_data()
+                effective = self._merge_overlay(effective, overlay_tree, overlay_data)
             except ParseError:
                 continue
         
@@ -247,7 +249,8 @@ class DeviceTreeManager:
     def _merge_overlay(
         self,
         base: GlobalDeviceTree,
-        overlay: GlobalDeviceTree
+        overlay: GlobalDeviceTree,
+        overlay_data: Optional['OverlayInstanceData'] = None
     ) -> GlobalDeviceTree:
         """
         Merge overlay into base tree.
@@ -258,6 +261,7 @@ class DeviceTreeManager:
         Args:
             base: Base device tree (baseline + previous overlays)
             overlay: Overlay device tree (instance changes only)
+            overlay_data: Optional overlay-specific data (removals) from parser
             
         Returns:
             Merged device tree
@@ -266,17 +270,36 @@ class DeviceTreeManager:
         
         merged = copy.deepcopy(base)
         
-        # Validate overlay doesn't modify resources
-        if base.hardware != overlay.hardware:
+        # Overlays must not modify hardware resources (they have empty hardware by design)
+        overlay_has_hardware = (
+            overlay.hardware.cpus.total > 0 or
+            overlay.hardware.memory.total_bytes > 0 or
+            (overlay.hardware.devices and len(overlay.hardware.devices) > 0)
+        )
+        
+        if overlay_has_hardware:
             raise ValidationError(
                 "Overlay cannot modify hardware resources. "
                 "Resources are defined in baseline only. "
                 "Use 'kerf baseline update' to change resources."
             )
         
-        # Overlay instances merge into base (add or replace)
-        if overlay.instances:
-            for name, instance in overlay.instances.items():
+        removals = set()
+        if overlay_data:
+            removals = overlay_data.removals
+        
+        for instance_name in removals:
+            if instance_name in merged.instances:
+                del merged.instances[instance_name]
+        
+        instances_to_merge = {}
+        if overlay_data and overlay_data.instances:
+            instances_to_merge = overlay_data.instances
+        elif overlay.instances:
+            instances_to_merge = overlay.instances
+        
+        if instances_to_merge:
+            for name, instance in instances_to_merge.items():
                 merged.instances[name] = copy.deepcopy(instance)
         
         return merged

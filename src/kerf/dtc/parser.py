@@ -20,7 +20,8 @@ import libfdt
 from typing import Dict, List, Optional, Tuple, Any
 from ..models import (
     GlobalDeviceTree, HardwareInventory, CPUAllocation, MemoryAllocation,
-    DeviceInfo, Instance, InstanceResources, TopologySection, NUMANode
+    DeviceInfo, Instance, InstanceResources, TopologySection, NUMANode,
+    OverlayInstanceData
 )
 from ..exceptions import ParseError
 
@@ -30,6 +31,7 @@ class DeviceTreeParser:
     
     def __init__(self):
         self.fdt = None
+        self._last_overlay_data: Optional[OverlayInstanceData] = None
     
     def parse_dts(self, dts_content: str) -> GlobalDeviceTree:
         """Parse DTS content into GlobalDeviceTree model."""
@@ -84,27 +86,72 @@ class DeviceTreeParser:
         except libfdt.FdtException as e:
             raise ParseError(f"Failed to access root node: {e}")
         
-        # Parse hardware inventory
+        is_overlay = False
         try:
-            hardware = self._parse_hardware_inventory()
-        except ParseError:
-            raise
-        except libfdt.FdtException as e:
-            raise ParseError(f"Failed to parse hardware inventory: FDT error - {e}")
-        except Exception as e:
-            raise ParseError(f"Failed to parse hardware inventory: {e}")
+            compatible = self.fdt.getprop(root, 'compatible')
+            if compatible:
+                compatible_str = compatible.as_str().rstrip('\0')
+                if compatible_str == 'linux,multikernel-overlay':
+                    is_overlay = True
+        except libfdt.FdtException:
+            pass
         
-        # Parse instances
+        # Fallback: detect overlays by fragment nodes (for compatibility with overlays missing compatible property)
+        if not is_overlay:
+            try:
+                offset = self.fdt.first_subnode(root)
+                while offset >= 0:
+                    if self.fdt.get_name(offset).startswith('fragment@'):
+                        is_overlay = True
+                        break
+                    try:
+                        offset = self.fdt.next_subnode(offset)
+                    except libfdt.FdtException:
+                        break
+            except libfdt.FdtException:
+                pass
+        
+        if not is_overlay:
+            try:
+                hardware = self._parse_hardware_inventory()
+            except ParseError:
+                raise
+            except libfdt.FdtException as e:
+                raise ParseError(f"Failed to parse hardware inventory: FDT error - {e}")
+            except Exception as e:
+                raise ParseError(f"Failed to parse hardware inventory: {e}")
+        else:
+            # Overlays have empty hardware (resources are in baseline only)
+            from ..models import HardwareInventory, CPUAllocation, MemoryAllocation
+            hardware = HardwareInventory(
+                cpus=CPUAllocation(total=0, host_reserved=[], available=[]),
+                memory=MemoryAllocation(
+                    total_bytes=0,
+                    host_reserved_bytes=0,
+                    memory_pool_base=0,
+                    memory_pool_bytes=0
+                ),
+                topology=None,
+                devices={}
+            )
+        
         try:
-            instances = self._parse_instances()
+            if is_overlay:
+                overlay_data = self._parse_overlay_instances()
+                self._last_overlay_data = overlay_data
+                instances = overlay_data.instances
+            else:
+                instances = self._parse_instances()
+                self._last_overlay_data = None
         except Exception as e:
             raise ParseError(f"Failed to parse instances: {e}")
         
-        # Parse device references
-        try:
-            device_refs = self._parse_device_references()
-        except Exception as e:
-            raise ParseError(f"Failed to parse device references: {e}")
+        device_refs = {}
+        if not is_overlay:
+            try:
+                device_refs = self._parse_device_references()
+            except Exception as e:
+                raise ParseError(f"Failed to parse device references: {e}")
         
         return GlobalDeviceTree(
             hardware=hardware,
@@ -319,6 +366,113 @@ class DeviceTreeParser:
             offset = self.fdt.next_subnode(offset)
         
         return instances
+    
+    def _parse_overlay_instances(self) -> OverlayInstanceData:
+        """Parse instance definitions from overlay fragments (fragment@X/__overlay__/instance-create)."""
+        instances = {}
+        removals = set()
+        
+        try:
+            root = self.fdt.path_offset('/')
+        except libfdt.FdtException:
+            return OverlayInstanceData(instances=instances, removals=removals)
+        
+        try:
+            offset = self.fdt.first_subnode(root)
+            while offset >= 0:
+                name = self.fdt.get_name(offset)
+                
+                if name.startswith('fragment@'):
+                    try:
+                        overlay_node = self.fdt.subnode_offset(offset, '__overlay__')
+                        
+                        try:
+                            instance_create_node = self.fdt.subnode_offset(overlay_node, 'instance-create')
+                            instance = self._parse_instance_create(instance_create_node)
+                            instances[instance.name] = instance
+                        except libfdt.FdtException:
+                            try:
+                                instance_remove_node = self.fdt.subnode_offset(overlay_node, 'instance-remove')
+                                instance_name_prop = self.fdt.getprop(instance_remove_node, 'instance-name')
+                                instance_name = instance_name_prop.as_str()
+                                removals.add(instance_name)
+                            except libfdt.FdtException:
+                                pass
+                    except libfdt.FdtException:
+                        pass
+                
+                try:
+                    offset = self.fdt.next_subnode(offset)
+                except libfdt.FdtException:
+                    break
+        except libfdt.FdtException:
+            pass
+        
+        return OverlayInstanceData(instances=instances, removals=removals)
+    
+    def get_last_overlay_data(self) -> Optional[OverlayInstanceData]:
+        """Get the overlay data from the last parsed overlay (if any)."""
+        return self._last_overlay_data
+    
+    def _parse_instance_create(self, node_offset: int) -> Instance:
+        """Parse instance from instance-create node in overlay."""
+        try:
+            instance_name_prop = self.fdt.getprop(node_offset, 'instance-name')
+            instance_name = instance_name_prop.as_str()
+        except libfdt.FdtException:
+            raise ParseError("Missing 'instance-name' property in instance-create")
+        
+        try:
+            instance_id = self.fdt.getprop(node_offset, 'id').as_uint32()
+        except libfdt.FdtException:
+            raise ParseError("Missing 'id' property in instance-create")
+        
+        resources = self._parse_instance_resources_from_overlay(node_offset)
+        
+        return Instance(
+            name=instance_name,
+            id=instance_id,
+            resources=resources
+        )
+    
+    def _parse_instance_resources_from_overlay(self, node_offset: int) -> InstanceResources:
+        """Parse instance resources from overlay instance-create node."""
+        try:
+            resources_node = self.fdt.subnode_offset(node_offset, 'resources')
+        except libfdt.FdtException:
+            raise ParseError("Missing resources node in instance-create")
+        
+        try:
+            cpus_prop = self.fdt.getprop(resources_node, 'cpus')
+            cpus = cpus_prop.as_uint32_list()
+        except libfdt.FdtException:
+            raise ParseError("Missing 'cpus' property in resources")
+        
+        try:
+            memory_bytes = self.fdt.getprop(resources_node, 'memory-bytes').as_uint64()
+        except libfdt.FdtException:
+            raise ParseError("Missing 'memory-bytes' property in resources")
+        
+        memory_base = 0
+        try:
+            memory_base = self.fdt.getprop(resources_node, 'memory-base').as_uint64()
+        except libfdt.FdtException:
+            pass
+        
+        devices = []
+        try:
+            devices_prop = self.fdt.getprop(resources_node, 'devices')
+            devices_str = devices_prop.as_str()
+            devices = [d.strip() for d in devices_str.split() if d.strip()]
+        except libfdt.FdtException:
+            pass
+        
+        return InstanceResources(
+            cpus=cpus,
+            memory_base=memory_base,
+            memory_bytes=memory_bytes,
+            devices=devices
+        )
     
     def _parse_instance(self, node_offset: int, name: str) -> Instance:
         """Parse individual instance definition."""

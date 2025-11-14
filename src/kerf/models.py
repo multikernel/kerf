@@ -178,6 +178,13 @@ class HardwareInventory:
 
 
 @dataclass
+class OverlayInstanceData:
+    """Instance data parsed from an overlay (both creates and removals)."""
+    instances: Dict[str, Instance]
+    removals: Set[str]
+
+
+@dataclass
 class GlobalDeviceTree:
     """Global device tree representation."""
     hardware: HardwareInventory
