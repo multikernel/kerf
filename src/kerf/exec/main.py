@@ -23,6 +23,7 @@ import ctypes
 import platform
 from pathlib import Path
 from typing import Optional
+from ..models import InstanceState
 
 
 LINUX_REBOOT_MAGIC1 = 0xfee1dead
@@ -221,13 +222,13 @@ def exec_cmd(name: Optional[str], id: Optional[int], verbose: bool):
                 status = f.read().strip()
  
             status_lower = status.lower()
-            if status_lower != 'loaded':
+            if status_lower != InstanceState.LOADED.value:
                 click.echo(
                     f"Error: Kernel image not loaded for instance '{instance_name}' (ID: {instance_id})",
                     err=True
                 )
                 click.echo(
-                    f"Current status: '{status}' (expected: 'loaded')",
+                    f"Current status: '{status}' (expected: '{InstanceState.LOADED.value}')",
                     err=True
                 )
                 click.echo(

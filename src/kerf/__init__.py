@@ -25,6 +25,7 @@ __author__ = "Cong Wang"
 from .runtime import DeviceTreeManager
 from .baseline import BaselineManager
 from .dtc.overlay import OverlayGenerator
+from .models import InstanceState
 from .exceptions import (
     KerfError,
     ValidationError,
@@ -50,6 +51,8 @@ __all__ = [
     'DeviceTreeManager',
     'BaselineManager',
     'OverlayGenerator',
+    # Models
+    'InstanceState',
     # Exceptions
     'KerfError',
     'ValidationError',

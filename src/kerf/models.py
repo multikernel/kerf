@@ -30,6 +30,24 @@ class WorkloadType(Enum):
     NETWORK = "network"
 
 
+class InstanceState(Enum):
+    """
+    Instance state enum matching kernel mk_instance_state.
+    
+    States:
+    - EMPTY: Instance directory exists but no DTB
+    - READY: DTB loaded, resources reserved
+    - LOADED: Kernel loaded, ready to start
+    - ACTIVE: Kernel running
+    - FAILED: Error occurred
+    """
+    EMPTY = "empty"
+    READY = "ready"
+    LOADED = "loaded"
+    ACTIVE = "active"
+    FAILED = "failed"
+
+
 @dataclass
 class InstanceConfig:
     """Configuration for a kernel instance."""
