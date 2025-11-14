@@ -133,11 +133,8 @@ Baseline DTB (static)
 
 ### Command Line Interface
 ```bash
-# Initialize baseline device tree (resources only)
+# Initialize baseline device tree
 kerf init --input=baseline.dts --apply
-
-# Validate baseline with detailed report
-kerf init --input=baseline.dts --report --format=text
 
 # Validate baseline (dry-run, no kernel update)
 kerf init --input=baseline.dts --verbose
@@ -145,10 +142,6 @@ kerf init --input=baseline.dts --verbose
 # Load kernel image with initrd and boot parameters
 kerf load --kernel=/boot/vmlinuz --initrd=/boot/initrd.img \
           --cmdline="root=/dev/sda1 ro" --id=1
-
-# Load kernel with multikernel ID
-kerf load -k /boot/vmlinuz -i /boot/initrd.img -c "console=ttyS0" \
-          --id=2 --verbose
 
 # Create kernel instance with explicit CPU allocation
 kerf create web-server --cpus=4-7 --memory=2GB
@@ -161,6 +154,24 @@ kerf create compute --cpu-count=16 --memory=32GB --numa-nodes=0,1 --cpu-affinity
 
 # Validate instance creation without applying
 kerf create test-instance --cpu-count=4 --memory=2GB --dry-run
+
+# Show all kernel instances
+kerf show
+
+# Show specific instance information
+kerf show web-server --verbose
+
+# Boot a kernel instance (requires loaded kernel)
+kerf exec web-server
+kerf exec --id=1
+
+# Unload kernel image from an instance
+kerf unload web-server
+kerf unload --id=1 --verbose
+
+# Delete a kernel instance (must be unloaded first)
+kerf delete web-server
+kerf delete --id=1 --dry-run
 ```
 
 ### Modular Architecture
@@ -169,10 +180,12 @@ The `kerf` system is designed with a modular architecture that supports incremen
 - **`kerf init`**: Initialize baseline device tree (resources only) (current)
 - **`kerf create`**: Create a kernel instance (current)
 - **`kerf load`**: Kernel loading via kexec_file_load syscall (current)
-- **`kerf exec`**: Kernel execution (future)
+- **`kerf exec`**: Kernel execution via reboot syscall with MULTIKERNEL command (current)
+- **`kerf unload`**: Unload kernel image from a multikernel instance (current)
+- **`kerf delete`**: Delete a kernel instance (current)
+- **`kerf show`**: Show kernel instance information (current)
 - **`kerf update`**: Update a kernel instance (future)
 - **`kerf kill`**: Kill a kernel instance (future)
-- **`kerf delete`**: Delete a kernel instance (future)
 
 This modular design allows users to adopt `kerf` incrementally, starting with device tree validation and expanding to full multikernel management as features become available.
 
@@ -205,13 +218,15 @@ These foundational capabilities are essential for safe and reliable multikernel 
 
 ### Structure Overview
 
-The global device tree contains three main sections that map directly to the kernfs hierarchy:
+The baseline device tree contains only the **Resources** section, which describes all physical hardware available for allocation. Instances and device references are added dynamically via overlays when using `kerf create`.
 
-1. **Resources** (`/resources`): Complete description of all physical resources
-2. **Instances** (`/instances`): Resource assignments for each spawn kernel
-3. **Device References**: Linkage between instances and hardware devices
+1. **Resources** (`/resources`): Complete description of all physical resources (baseline only)
+2. **Instances** (`/instances`): Resource assignments for each spawn kernel (added via overlays)
+3. **Device References**: Linkage between instances and hardware devices (added via overlays)
 
-### Complete Example
+### Baseline Example (Resources Only)
+
+The baseline DTS file contains only hardware resources. Instances are created dynamically via overlays using `kerf create`.
 
 ```dts
 /multikernel-v1/;
@@ -219,7 +234,6 @@ The global device tree contains three main sections that map directly to the ker
 / {
     compatible = "linux,multikernel-host";
     
-    // ========== MAPS TO /sys/kernel/multikernel/device_tree ==========
     resources {
         cpus {
             total = <32>;
@@ -252,63 +266,6 @@ The global device tree contains three main sections that map directly to the ker
                 available-ns = <2 3 4>;
             };
         };
-    };
-    
-    // ========== MAPS TO /sys/kernel/multikernel/instances/ ==========
-    instances {
-        // Maps to /sys/kernel/multikernel/instances/web-server/
-        web-server {
-            id = <1>;
-            
-            resources {
-                cpus = <4 5 6 7>;
-                memory-base = <0x80000000>;
-                memory-bytes = <0x80000000>;  // 2GB
-                devices = <&eth0_vf1>;
-            };
-            
-        };
-        
-        // Maps to /sys/kernel/multikernel/instances/database/
-        database {
-            id = <2>;
-            
-            resources {
-                cpus = <8 9 10 11 12 13 14 15>;
-                memory-base = <0x100000000>;
-                memory-bytes = <0x200000000>;  // 8GB
-                devices = <&eth0_vf2>, <&nvme0_ns2>;
-            };
-            
-        };
-        
-        // Maps to /sys/kernel/multikernel/instances/compute/
-        compute {
-            id = <3>;
-            
-            resources {
-                cpus = <16 17 18 19 20 21 22 23>;
-                memory-base = <0x300000000>;
-                memory-bytes = <0x100000000>;  // 4GB
-            };
-            
-        };
-    };
-    
-    // ========== DEVICE REFERENCES (phandle targets) ==========
-    eth0_vf1: ethernet-vf@1 {
-        parent = <&eth0>;
-        vf-id = <1>;
-    };
-    
-    eth0_vf2: ethernet-vf@2 {
-        parent = <&eth0>;
-        vf-id = <2>;
-    };
-    
-    nvme0_ns2: nvme-ns@2 {
-        parent = <&nvme0>;
-        namespace-id = <2>;
     };
 };
 ```
@@ -349,13 +306,6 @@ DTS: /instances/compute                  →  /sys/kernel/multikernel/instances/
 3. No CPU can be allocated to multiple instances
 4. CPU lists should be explicitly enumerated
 
-**Error Examples:**
-```
-ERROR: Instance database: CPU 35 does not exist (hardware has 0-31)
-ERROR: Instance web-server: CPU 2 is reserved for host kernel
-ERROR: Instance web-server and compute: CPU overlap detected (CPUs 8-11)
-```
-
 ### Memory Allocation Validation
 
 **Rules:**
@@ -364,13 +314,6 @@ ERROR: Instance web-server and compute: CPU overlap detected (CPUs 8-11)
 3. Sum of all allocations must not exceed memory pool size
 4. Memory base addresses must be page-aligned (4KB = 0x1000)
 
-**Error Examples:**
-```
-ERROR: Instance database: Memory [0x50000000-0x60000000] outside memory pool
-ERROR: Instance web-server and database: Memory overlap [0x100000000-0x120000000]
-ERROR: Total memory allocation (16GB) exceeds memory pool (14GB)
-WARNING: Instance compute: Memory base 0x80000001 not page-aligned
-```
 
 ### Device Allocation Validation
 
@@ -381,14 +324,6 @@ WARNING: Instance compute: Memory base 0x80000001 not page-aligned
 4. SR-IOV VF numbers must be within available range
 5. Namespace IDs must be within available range
 
-**Error Examples:**
-```
-ERROR: Instance database: Reference to non-existent device 'nvme1'
-ERROR: Instance web-server and compute: Both allocated eth0:vf2
-ERROR: Instance database: VF ID 10 exceeds available VFs (1-7)
-ERROR: Instance database: Namespace 1 is reserved for host kernel
-```
-
 ### Global Resource Validation
 
 **Rules:**
@@ -396,14 +331,6 @@ ERROR: Instance database: Namespace 1 is reserved for host kernel
 2. Instance IDs must be unique
 3. All phandle references must resolve
 4. Hardware inventory must be complete and consistent
-
-**Error Examples:**
-```
-ERROR: Duplicate instance name: "web-server" appears twice
-ERROR: Duplicate instance ID: 2 assigned to both database and compute
-ERROR: Dangling phandle reference: eth0_vf99 not defined
-WARNING: 12 CPUs (43% of memory pool) are unallocated
-```
 
 
 ## Command-Line Interface
@@ -573,130 +500,6 @@ ERROR: Baseline must not contain instances. Instances should be created via over
 Exit code: 1
 ```
 
-## Error Messages and Suggestions
-
-### Design Principles
-
-Error messages should be:
-1. **Clear**: Explain what's wrong in simple terms
-2. **Actionable**: Suggest how to fix the problem
-3. **Contextual**: Show relevant configuration and file locations
-4. **Non-judgmental**: Help, don't blame
-5. **Educational**: Help users understand multikernel constraints
-
-### Error Message Format
-
-```
-ERROR: <Instance>: <Problem Category>
-  <Detailed explanation>
-  Current state: <What is currently configured>
-  Conflict/Issue: <What's wrong with it>
-  
-  Suggestion: <Primary fix recommendation>
-  Alternative: <Alternative fix if applicable>
-  
-  In file <filename>:
-    Line <N>: <relevant source line>
-```
-
-### Detailed Error Examples
-
-**CPU Overlap Error:**
-```
-ERROR: database: CPU allocation conflict with web-server
-  Instance web-server uses CPUs: 4-11
-  Instance database requested CPUs: 8-15
-  Overlapping CPUs: 8, 9, 10, 11
-  
-  Suggestion: Change database to use CPUs 12-19
-  Alternative: Reduce web-server allocation to CPUs 4-7
-  
-  In file system.dts:
-    Line 35: web-server { cpus = <4 5 6 7 8 9 10 11>; }
-    Line 58: database { cpus = <8 9 10 11 12 13 14 15>; }
-```
-
-**Memory Overflow Error:**
-```
-ERROR: compute: Memory allocation exceeds memory pool
-  Memory pool range: 0x80000000 - 0x400000000 (14GB available)
-  Instance compute requested: 0x400000000 - 0x500000000 (4GB)
-  Overflow: Exceeds pool end by 4GB (0x100000000 bytes)
-  
-  Suggestion: Change memory-base to 0x300000000
-  Note: This would place memory at end of memory pool
-  
-  In file system.dts:
-    Line 78: memory-base = <0x400000000>;
-    
-  Context:
-    Memory pool ends at: 0x400000000
-    Requested start: 0x400000000 (exactly at pool end)
-    Requested size: 0x100000000
-    Would end at: 0x500000000 (outside pool)
-```
-
-**Device Not Found Error:**
-```
-ERROR: database: Invalid device reference
-  Requested device: nvme1:ns1
-  Available storage devices: nvme0
-  Available namespaces on nvme0: ns2, ns3, ns4
-  Note: Namespace ns1 is reserved for host kernel
-  
-  Suggestion: Change device reference to nvme0:ns2
-  
-  In file system.dts:
-    Line 64: devices = <&nvme1_ns1>;
-    
-  Did you mean:
-    - nvme0:ns2 (available)
-    - nvme0:ns3 (available)
-    - nvme0:ns4 (available)
-```
-
-**Memory Overlap Error:**
-```
-ERROR: database and compute: Memory region overlap detected
-  database memory: 0x100000000 - 0x300000000 (8GB)
-  compute memory:  0x280000000 - 0x380000000 (4GB)
-  Overlapping region: 0x280000000 - 0x300000000 (2GB overlap)
-  
-  Suggestion: Move compute memory to 0x300000000
-  Alternative: Reduce database memory size to 6GB (end at 0x280000000)
-  
-  In file system.dts:
-    Line 62: database { memory-base = <0x100000000>; memory-bytes = <0x200000000>; }
-    Line 82: compute { memory-base = <0x280000000>; memory-bytes = <0x100000000>; }
-```
-
-**Duplicate Instance Name Error:**
-```
-ERROR: Duplicate instance name: "web-server"
-  Instance name "web-server" appears multiple times in configuration
-  Found at:
-    Line 28: instances { web-server { id = <1>; ... } }
-    Line 95: instances { web-server { id = <4>; ... } }
-  
-  Suggestion: Rename the second instance to "web-server-2" or another unique name
-  Note: Instance names must be unique across the entire system
-```
-
-**Misaligned Memory Error:**
-```
-WARNING: web-server: Memory base address not page-aligned
-  Requested base: 0x80000001
-  Page size: 4KB (0x1000)
-  Alignment requirement: Address must be multiple of 0x1000
-  
-  Suggestion: Use base address 0x80000000 (already aligned)
-  Note: Misaligned addresses may cause performance issues or boot failures
-  
-  In file system.dts:
-    Line 38: memory-base = <0x80000001>;
-```
-
-
 ## Dependencies
 
 ### Required Dependencies
@@ -784,19 +587,6 @@ resources {
                 memory-size = <0x0 0x800000000>;  // 16GB
                 cpus = <16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31>;
             };
-        };
-    };
-};
-
-instances {
-    web-server {
-        resources {
-            cpus = <4 5 6 7 8 9 10 11>;  // NUMA node 0
-            memory-base = <0x0 0x800000000>;
-            memory-bytes = <0x0 0x200000000>;  // 8GB
-            numa-nodes = <0>;
-            cpu-affinity = "compact";
-            memory-policy = "local";
         };
     };
 };
