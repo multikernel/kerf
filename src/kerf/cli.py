@@ -21,6 +21,7 @@ from .load.main import load
 from .init.main import init
 from .create.main import create
 from .exec.main import exec_cmd
+from .unload.main import unload
 
 
 @click.group()
@@ -38,6 +39,7 @@ main.add_command(init)
 main.add_command(load)
 main.add_command(create)
 main.add_command(exec_cmd)
+main.add_command(unload)
 
 
 if __name__ == '__main__':
