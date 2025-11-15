@@ -56,17 +56,14 @@ class MultikernelValidator:
         """Format enhanced error message with context and suggestions."""
         lines = []
         
-        # Main error line
         lines.append(f"{instance_name}: {error_type}")
         lines.append(f"  {problem}")
         lines.append(f"  Current state: {current_state}")
         
-        # Suggestions
         lines.append(f"  Suggestion: {suggestion}")
         if alternative:
             lines.append(f"  Alternative: {alternative}")
         
-        # File context
         if pattern and self.dts_content:
             line_num = self._find_line_number(pattern)
             if line_num > 0:
@@ -82,19 +79,11 @@ class MultikernelValidator:
         self.warnings.clear()
         self.suggestions.clear()
         
-        # Validate hardware inventory
         self._validate_hardware_inventory(tree)
-        
-        # Validate instances
         self._validate_instances(tree)
-        
-        # Validate resource allocations
         self._validate_resource_allocations(tree)
-        
-        # Validate device references
         self._validate_device_references(tree)
         
-        # Generate resource usage summary
         usage = self._calculate_resource_usage(tree)
         self._validate_resource_limits(usage, tree)
         
@@ -226,7 +215,6 @@ class MultikernelValidator:
 
     def _validate_hardware_inventory(self, tree: GlobalDeviceTree):
         """Validate hardware inventory consistency and against running system."""
-        # Validate CPU allocation
         cpus = tree.hardware.cpus
         if cpus.total <= 0:
             self.errors.append("Hardware inventory: Total CPU count must be positive")
@@ -234,7 +222,6 @@ class MultikernelValidator:
         if not cpus.available:
             self.errors.append("Hardware inventory: No CPUs available for spawn kernels")
         
-        # Check for CPU overlap between host and available
         host_set = set(cpus.host_reserved)
         available_set = set(cpus.available)
         overlap = host_set.intersection(available_set)
@@ -283,7 +270,6 @@ class MultikernelValidator:
         else:
             self.warnings.append("Could not determine CPU to physical ID mapping from /proc/cpuinfo - skipping CPU validation")
 
-        # Validate memory allocation
         memory = tree.hardware.memory
         if memory.total_bytes <= 0:
             self.errors.append("Hardware inventory: Total memory must be positive")
@@ -332,31 +318,21 @@ class MultikernelValidator:
         instance_ids = set()
         
         for name, instance in tree.instances.items():
-            # Check for duplicate names (check the instance.name field, not the dict key)
             if instance.name in instance_names:
                 self.errors.append(f"Duplicate instance name: '{instance.name}' appears multiple times")
             instance_names.add(instance.name)
             
-            # Check for duplicate IDs
             if instance.id in instance_ids:
                 self.errors.append(f"Duplicate instance ID: {instance.id} assigned to multiple instances")
             instance_ids.add(instance.id)
             
-            # Validate instance-specific properties
             self._validate_instance_resources(instance, tree)
     
     def _validate_instance_resources(self, instance, tree: GlobalDeviceTree):
         """Validate resources for a specific instance."""
-        # Validate CPU allocation
         self._validate_cpu_allocation(instance, tree)
-        
-        # Validate memory allocation
         self._validate_memory_allocation(instance, tree)
-        
-        # Validate device allocation
         self._validate_device_allocation(instance, tree)
-        
-        # Validate topology constraints
         self._validate_topology_constraints(instance, tree)
     
     def _validate_cpu_allocation(self, instance, tree: GlobalDeviceTree):
@@ -364,7 +340,6 @@ class MultikernelValidator:
         cpus = tree.hardware.cpus
         instance_cpus = set(instance.resources.cpus)
         
-        # Check if CPUs exist in hardware inventory
         for cpu in instance_cpus:
             if cpu < 0 or cpu >= cpus.total:
                 error_msg = self._format_error_with_context(
@@ -378,7 +353,6 @@ class MultikernelValidator:
                 )
                 self.errors.append(error_msg)
         
-        # Check if CPUs are available (not host-reserved)
         host_reserved = set(cpus.host_reserved)
         reserved_cpus = instance_cpus.intersection(host_reserved)
         if reserved_cpus:
@@ -394,7 +368,6 @@ class MultikernelValidator:
             )
             self.errors.append(error_msg)
         
-        # Check for CPU conflicts with other instances
         for other_name, other_instance in tree.instances.items():
             if other_name == instance.name:
                 continue
@@ -424,7 +397,6 @@ class MultikernelValidator:
         memory = tree.hardware.memory
         instance_memory = instance.resources
         
-        # Check if memory region is within memory pool
         memory_start = instance_memory.memory_base
         memory_end = memory_start + instance_memory.memory_bytes
         
@@ -454,7 +426,6 @@ class MultikernelValidator:
             )
             self.errors.append(error_msg)
         
-        # Check for memory alignment
         if memory_start % 0x1000 != 0:
             self.warnings.append(
                 f"Instance {instance.name}: Memory base {hex(memory_start)} not page-aligned\n"
@@ -462,7 +433,6 @@ class MultikernelValidator:
                 f"  Suggestion: Use base address {hex((memory_start // 0x1000) * 0x1000)}"
             )
         
-        # Check for memory conflicts with other instances
         for other_name, other_instance in tree.instances.items():
             if other_name == instance.name:
                 continue
@@ -470,7 +440,6 @@ class MultikernelValidator:
             other_start = other_instance.resources.memory_base
             other_end = other_start + other_instance.resources.memory_bytes
             
-            # Check for overlap
             if not (memory_end <= other_start or other_end <= memory_start):
                 overlap_start = max(memory_start, other_start)
                 overlap_end = min(memory_end, other_end)
@@ -487,7 +456,6 @@ class MultikernelValidator:
         """Validate device allocation for an instance."""
 
         for device_ref in instance.resources.devices:
-            # Parse device reference (e.g., "eth0_vf1" -> device "eth0", VF "1")
             if '_vf' in device_ref:
                 device_name = device_ref.split('_vf')[0]
                 vf_id = int(device_ref.split('_vf')[1])
@@ -539,7 +507,6 @@ class MultikernelValidator:
     
     def _validate_resource_allocations(self, tree: GlobalDeviceTree):
         """Validate overall resource allocation limits."""
-        # Calculate total allocations
         total_cpus_allocated = 0
         total_memory_allocated = 0
         
@@ -547,14 +514,12 @@ class MultikernelValidator:
             total_cpus_allocated += len(instance.resources.cpus)
             total_memory_allocated += instance.resources.memory_bytes
         
-        # Check CPU limits
         available_cpus = len(tree.hardware.cpus.available)
         if total_cpus_allocated > available_cpus:
             self.errors.append(
                 f"Total CPU allocation ({total_cpus_allocated}) exceeds available CPUs ({available_cpus})"
             )
         
-        # Check memory limits
         if total_memory_allocated > tree.hardware.memory.memory_pool_bytes:
             self.errors.append(
                 f"Total memory allocation ({total_memory_allocated} bytes) "
@@ -565,13 +530,11 @@ class MultikernelValidator:
         """Validate device references and phandles."""
         
         for name, device_ref in tree.device_references.items():
-            # Validate that the parent device exists
             if hasattr(device_ref, 'parent') and device_ref.parent:
                 parent_name = device_ref.parent.replace('&', '').replace(':', '')
                 if parent_name not in tree.hardware.devices:
                     self.errors.append(f"Device reference '{name}': Parent device '{parent_name}' not found in hardware inventory")
             
-            # Validate device-specific properties
             if hasattr(device_ref, 'vf_id') and device_ref.vf_id is not None:
                 if hasattr(device_ref, 'parent') and device_ref.parent:
                     parent_name = device_ref.parent.replace('&', '').replace(':', '')
@@ -604,14 +567,13 @@ class MultikernelValidator:
     
     def _validate_resource_limits(self, usage: ResourceUsage, tree: GlobalDeviceTree):
         """Validate resource limits and generate warnings."""
-        # Check for unallocated resources
         unallocated_cpus = usage.cpus_total - usage.cpus_allocated
         if unallocated_cpus > 0:
             percentage = (unallocated_cpus / usage.cpus_total) * 100
             self.warnings.append(
                 f"Resource utilization: {unallocated_cpus} CPUs ({percentage:.1f}% of memory pool) remain unallocated"
             )
-        
+
         unallocated_memory = usage.memory_total - usage.memory_allocated
         if unallocated_memory > 0:
             percentage = (unallocated_memory / usage.memory_total) * 100
@@ -623,15 +585,10 @@ class MultikernelValidator:
         """Validate NUMA and CPU topology constraints for an instance."""
         resources = instance.resources
         
-        # Validate NUMA node constraints
         if resources.numa_nodes and tree.hardware.topology and tree.hardware.topology.numa_nodes:
             self._validate_numa_constraints(instance, tree)
-        
-        # Validate CPU affinity constraints
         if resources.cpu_affinity:
             self._validate_cpu_affinity_constraints(instance, tree)
-        
-        # Validate memory policy constraints
         if resources.memory_policy:
             self._validate_memory_policy_constraints(instance, tree)
     
@@ -642,15 +599,13 @@ class MultikernelValidator:
         
         if not topology or not topology.numa_nodes:
             return
-        
-        # Check if specified NUMA nodes exist
+
         for numa_node in resources.numa_nodes:
             if numa_node not in topology.numa_nodes:
                 self.errors.append(
                     f"Instance {instance.name}: NUMA node {numa_node} does not exist in hardware topology"
                 )
-        
-        # Check if CPUs are in the specified NUMA nodes
+
         if resources.numa_nodes:
             for cpu in resources.cpus:
                 cpu_numa_node = topology.get_numa_node_for_cpu(cpu)
@@ -666,17 +621,14 @@ class MultikernelValidator:
         """Validate CPU affinity constraints for an instance."""
         resources = instance.resources
         cpus = resources.cpus
-        
+
         if resources.cpu_affinity == "compact":
-            # For compact affinity, CPUs should be from the same NUMA node and preferably same core
             self._validate_compact_affinity(instance, tree)
         elif resources.cpu_affinity == "spread":
-            # For spread affinity, CPUs should be distributed across different NUMA nodes
             self._validate_spread_affinity(instance, tree)
         elif resources.cpu_affinity == "local":
-            # For local affinity, CPUs should be from the same NUMA node as memory
             self._validate_local_affinity(instance, tree)
-    
+
     def _validate_compact_affinity(self, instance, tree: GlobalDeviceTree):
         """Validate compact CPU affinity."""
         resources = instance.resources
@@ -684,8 +636,7 @@ class MultikernelValidator:
         
         if not tree.hardware.topology or not tree.hardware.topology.numa_nodes:
             return
-        
-        # Check if CPUs are from the same NUMA node
+
         numa_nodes = set()
         for cpu in cpus:
             numa_node = tree.hardware.topology.get_numa_node_for_cpu(cpu)
@@ -696,8 +647,7 @@ class MultikernelValidator:
             self.warnings.append(
                 f"Instance {instance.name}: Compact CPU affinity requested but CPUs span multiple NUMA nodes: {sorted(numa_nodes)}"
             )
-        
-        # Check if CPUs are from the same core (for SMT)
+
         if tree.hardware.cpus.topology:
             cores = set()
             for cpu in cpus:
@@ -717,7 +667,6 @@ class MultikernelValidator:
         if not tree.hardware.topology or not tree.hardware.topology.numa_nodes:
             return
         
-        # Check if CPUs are distributed across different NUMA nodes
         numa_nodes = set()
         for cpu in cpus:
             numa_node = tree.hardware.topology.get_numa_node_for_cpu(cpu)
@@ -736,8 +685,7 @@ class MultikernelValidator:
         
         if not tree.hardware.topology or not tree.hardware.topology.numa_nodes:
             return
-        
-        # Find the NUMA node for the memory allocation
+
         memory_numa_node = None
         memory_base = resources.memory_base
         
@@ -745,14 +693,13 @@ class MultikernelValidator:
             if node.memory_base <= memory_base < node.memory_base + node.memory_size:
                 memory_numa_node = node_id
                 break
-        
+
         if memory_numa_node is None:
             self.warnings.append(
                 f"Instance {instance.name}: Could not determine NUMA node for memory allocation at {hex(memory_base)}"
             )
             return
         
-        # Check if CPUs are from the same NUMA node as memory
         cpu_numa_nodes = set()
         for cpu in cpus:
             numa_node = tree.hardware.topology.get_numa_node_for_cpu(cpu)
@@ -768,17 +715,14 @@ class MultikernelValidator:
     def _validate_memory_policy_constraints(self, instance, tree: GlobalDeviceTree):
         """Validate memory policy constraints for an instance."""
         resources = instance.resources
-        
+
         if resources.memory_policy == "local":
-            # For local memory policy, memory should be allocated from the same NUMA node as CPUs
             self._validate_local_memory_policy(instance, tree)
         elif resources.memory_policy == "interleave":
-            # For interleave policy, memory should be distributed across multiple NUMA nodes
             self._validate_interleave_memory_policy(instance, tree)
         elif resources.memory_policy == "bind":
-            # For bind policy, memory should be bound to specific NUMA nodes
             self._validate_bind_memory_policy(instance, tree)
-    
+
     def _validate_local_memory_policy(self, instance, tree: GlobalDeviceTree):
         """Validate local memory policy."""
         resources = instance.resources
@@ -786,7 +730,6 @@ class MultikernelValidator:
         if not tree.hardware.topology or not tree.hardware.topology.numa_nodes:
             return
         
-        # Find the NUMA node for the memory allocation
         memory_numa_node = None
         memory_base = resources.memory_base
         
@@ -802,7 +745,6 @@ class MultikernelValidator:
             )
             return
         
-        # Check if CPUs are from the same NUMA node
         cpu_numa_nodes = set()
         for cpu in resources.cpus:
             numa_node = tree.hardware.topology.get_numa_node_for_cpu(cpu)
@@ -814,7 +756,7 @@ class MultikernelValidator:
                 f"Instance {instance.name}: Local memory policy requested but CPUs are from NUMA nodes "
                 f"{sorted(cpu_numa_nodes)} while memory is on NUMA node {memory_numa_node}"
             )
-    
+
     def _validate_interleave_memory_policy(self, instance, tree: GlobalDeviceTree):
         """Validate interleave memory policy."""
         # For interleave policy, we would typically check if memory is distributed
@@ -832,7 +774,6 @@ class MultikernelValidator:
             )
             return
         
-        # Check if specified NUMA nodes exist
         if tree.hardware.topology and tree.hardware.topology.numa_nodes:
             for numa_node in resources.numa_nodes:
                 if numa_node not in tree.hardware.topology.numa_nodes:
