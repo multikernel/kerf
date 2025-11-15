@@ -133,11 +133,11 @@ Baseline DTB (static)
 
 ### Command Line Interface
 ```bash
-# Initialize baseline device tree
-kerf init --input=baseline.dts --apply
+# Initialize baseline device tree (applies by default)
+kerf init --input=baseline.dts
 
-# Validate baseline (dry-run, no kernel update)
-kerf init --input=baseline.dts --verbose
+# Validate baseline without applying (dry-run)
+kerf init --input=baseline.dts --dry-run
 
 # Load kernel image with initrd and boot parameters
 kerf load --kernel=/boot/vmlinuz --initrd=/boot/initrd.img \
@@ -325,11 +325,11 @@ DTS: /instances/compute                  →  /sys/kernel/multikernel/instances/
 ### Basic Commands
 
 ```bash
-# Initialize baseline device tree (resources only)
-kerf init --input=baseline.dts --apply
+# Initialize baseline device tree
+kerf init --input=baseline.dts
 
 # Validate baseline without applying
-kerf init --input=baseline.dts
+kerf init --input=baseline.dts --dry-run
 
 # Generate detailed validation report
 kerf init --input=baseline.dts --report
@@ -392,7 +392,7 @@ vim baseline.dts
 # Baseline contains only /resources - no instances
 
 # Step 2: Initialize baseline device tree
-kerf init --input=baseline.dts --apply
+kerf init --input=baseline.dts
 # Output:
 #   ✓ Baseline validation passed
 #   ✓ Baseline applied to kernel successfully
@@ -443,7 +443,7 @@ kerf delete compute
 ### Successful Baseline Validation
 
 ```
-$ kerf init --input=baseline.dts --apply --report
+$ kerf init --input=baseline.dts --report
 
 Multikernel Device Tree Validation Report
 ==========================================

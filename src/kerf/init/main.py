@@ -105,13 +105,12 @@ def mount_multikernel_fs(verbose: bool = False) -> None:
 
 @click.command()
 @click.option('--input', '-i', required=True, help='Input DTS or DTB file containing resources only')
-@click.option('--apply', is_flag=True, help='Apply baseline to kernel immediately')
 @click.option('--dry-run', is_flag=True, help='Validate without applying')
 @click.option('--report', is_flag=True, help='Generate detailed validation report')
 @click.option('--format', type=click.Choice(['text', 'json', 'yaml']), 
               default='text', help='Report format (default: text)')
 @click.option('--verbose', '-v', is_flag=True, help='Verbose output')
-def init(input: str, apply: bool, dry_run: bool, report: bool, format: str, verbose: bool):
+def init(input: str, dry_run: bool, report: bool, format: str, verbose: bool):
     """
     Initialize baseline device tree configuration.
     
@@ -119,13 +118,16 @@ def init(input: str, apply: bool, dry_run: bool, report: bool, format: str, verb
     available for allocation. The baseline must contain ONLY resources
     (no instances). Instances are created via 'kerf create' using overlays.
     
+    By default, the baseline is applied to the kernel after validation.
+    Use --dry-run to validate without applying.
+    
     Example:
     
-        # Validate baseline without applying
+        # Validate and apply to kernel (default behavior)
         kerf init --input=hardware.dts
         
-        # Validate and apply to kernel
-        kerf init --input=hardware.dts --apply
+        # Validate baseline without applying
+        kerf init --input=hardware.dts --dry-run
     """
     try:
         input_path = Path(input)
@@ -148,7 +150,6 @@ def init(input: str, apply: bool, dry_run: bool, report: bool, format: str, verb
             click.echo("Supported formats: .dts, .dtb", err=True)
             sys.exit(2)
         
-        # Validate baseline structure
         baseline_mgr = BaselineManager()
         
         try:
@@ -156,19 +157,17 @@ def init(input: str, apply: bool, dry_run: bool, report: bool, format: str, verb
         except ValidationError as e:
             click.echo(f"Error: Invalid baseline configuration: {e}", err=True)
             click.echo("\nBaseline must contain:", err=True)
-            click.echo("  ✓ /resources (hardware inventory)", err=True)
-            click.echo("  ✗ /instances (must be empty or absent)", err=True)
+            click.echo("   /resources (hardware inventory)", err=True)
+            click.echo("   /instances (must be empty or absent)", err=True)
             click.echo("\nInstances should be created via 'kerf create'", err=True)
             sys.exit(1)
         
-        # Validate resources are valid
         validator = MultikernelValidator()
         if input_path.suffix == '.dts':
             validator.set_dts_context(dts_content, str(input_path))
         
         validation_result = validator.validate(tree)
         
-        # Generate report if requested
         if report:
             reporter = ValidationReporter()
             report_text = reporter.generate_report(validation_result, tree, verbose, format)
@@ -177,7 +176,6 @@ def init(input: str, apply: bool, dry_run: bool, report: bool, format: str, verb
                 sys.exit(1)
             return
         
-        # Show validation results
         if not validation_result.is_valid:
             click.echo("Validation failed:", err=True)
             for error in validation_result.errors:
@@ -195,8 +193,10 @@ def init(input: str, apply: bool, dry_run: bool, report: bool, format: str, verb
                 for warning in validation_result.warnings:
                     click.echo(f"  ⚠ {warning}")
         
-        # Apply to kernel if requested
-        if apply and not dry_run:
+        if dry_run:
+            click.echo(" Baseline validation passed")
+            click.echo(" Baseline would be applied (dry-run mode)")
+        else:
             try:
                 mount_multikernel_fs(verbose=verbose)
 
@@ -206,11 +206,6 @@ def init(input: str, apply: bool, dry_run: bool, report: bool, format: str, verb
             except KernelInterfaceError as e:
                 click.echo(f"Error: Failed to apply baseline: {e}", err=True)
                 sys.exit(1)
-        elif apply:
-            click.echo("✓ Baseline would be applied (dry-run mode)")
-        else:
-            click.echo("✓ Baseline validation passed")
-            click.echo("  Use --apply to write baseline to kernel")
         
     except ParseError as e:
         click.echo(f"Error: Failed to parse input file: {e}", err=True)
