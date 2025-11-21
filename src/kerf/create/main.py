@@ -557,11 +557,12 @@ def create(
             """Operation function to create instance in device tree."""
             import copy
             nonlocal memory_base_addr  # Allow modification of outer scope variable
-            
-            # Check if instance already exists
-            if name in current.instances:
+
+            if manager.has_instance(name):
                 raise ResourceError(f"Instance '{name}' already exists")
-            
+            if name in current.instances:
+                pass
+
             # Create modified state
             modified = copy.deepcopy(current)
             

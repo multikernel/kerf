@@ -588,12 +588,16 @@ class DeviceTreeManager:
     
     def has_instance(self, name: str) -> bool:
         """
-        Check if an instance exists in the current effective state.
-        
+        Check if an instance exists in the kernel filesystem.
+
+        This checks the actual kernel state (/sys/fs/multikernel/instances/),
+        not just overlays, to avoid false positives from stale overlays.
+
         Args:
             name: Instance name to check
-            
+
         Returns:
-            True if instance exists, False otherwise
+            True if instance exists in kernel, False otherwise
         """
-        return name in self.get_instance_names()
+        instance_dir = Path(f'/sys/fs/multikernel/instances/{name}')
+        return instance_dir.exists() and instance_dir.is_dir()
