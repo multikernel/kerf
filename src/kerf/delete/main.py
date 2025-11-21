@@ -258,7 +258,6 @@ def delete(ctx: click.Context, name: Optional[str], id: Optional[int], verbose: 
             sys.exit(1)
         except KernelInterfaceError as e:
             click.echo(f"Error: Kernel interface error: {e}", err=True)
-            click.echo("\nIs the multikernel kernel module loaded?", err=True)
             if verbose:
                 import traceback
                 traceback.print_exc()

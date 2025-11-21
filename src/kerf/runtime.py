@@ -364,8 +364,7 @@ class DeviceTreeManager:
         try:
             if not self.overlays_new.exists():
                 raise KernelInterfaceError(
-                    f"Overlay interface not found: {self.overlays_new}. "
-                    "Is the multikernel kernel module loaded?"
+                    f"Overlay interface not found: {self.overlays_new}"
                 )
             
             with open(self.overlays_new, 'wb') as f:
