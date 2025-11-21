@@ -340,17 +340,19 @@ def parse_memory_base(base_spec: str) -> int:
 
 def parse_device_list(device_spec: Optional[str]) -> List[str]:
     """
-    Parse device specification string into list of device references.
+    Parse device specification string into list of device names.
     
     Supports formats:
-    - "eth0_vf1" (single device)
-    - "eth0_vf1,nvme0_ns2" (comma-separated)
+    - "enp9s0_dev" (single device name)
+    - "enp9s0_dev,nvme0" (comma-separated device names)
+    
+    Device names must match device node names in the baseline DTB.
     
     Args:
-        device_spec: Device specification string or None
+        device_spec: Device specification string or None (device names, comma-separated)
         
     Returns:
-        List of device reference strings
+        List of device name strings (e.g., ["enp9s0_dev", "nvme0"])
     """
     if not device_spec:
         return []
@@ -411,7 +413,7 @@ def dump_overlay_for_debug(
               help='Memory allocation policy: local (same NUMA as CPUs), interleave (across NUMA nodes), or bind (specific NUMA nodes)')
 @click.option('--memory', '-m', required=True, help='Memory allocation (e.g., "2GB", "2048MB", or bytes)')
 @click.option('--memory-base', help='Memory base address (hex: 0x80000000 or decimal, auto-assigned if not specified)')
-@click.option('--devices', '-d', help='Device references (comma-separated, e.g., "eth0_vf1,nvme0_ns2")')
+@click.option('--devices', '-d', help='Device names (comma-separated, e.g., "enp9s0_dev,nvme0"). Device names must match device node names in the baseline DTB.')
 @click.option('--dry-run', is_flag=True, help='Validate without applying to kernel')
 @click.option('--verbose', '-v', is_flag=True, help='Verbose output')
 def create(
@@ -451,7 +453,7 @@ def create(
         kerf create database --cpus=8-15 --memory=8GB --memory-base=0x100000000
         
         # Create instance with devices
-        kerf create compute --cpus=16-23 --memory=4GB --devices=eth0_vf2
+        kerf create compute --cpus=16-23 --memory=4GB --devices=enp9s0_dev
         
         # Create instance with explicit single CPU
         kerf create web-server --cpus=4 --memory=2GB

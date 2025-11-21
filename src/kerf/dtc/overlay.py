@@ -120,7 +120,8 @@ class OverlayGenerator:
             fdt_sw.property('cpus', cpus_data)
             
             if instance.resources.devices:
-                fdt_sw.property_string('devices', ' '.join(instance.resources.devices))
+                device_names_str = ' '.join(instance.resources.devices)
+                fdt_sw.property_string('device-names', device_names_str)
             
             fdt_sw.end_node()  # End resources
             fdt_sw.end_node()  # End instance-create

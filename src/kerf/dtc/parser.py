@@ -461,9 +461,10 @@ class DeviceTreeParser:
         
         devices = []
         try:
-            devices_prop = self.fdt.getprop(resources_node, 'devices')
-            devices_str = devices_prop.as_str()
-            devices = [d.strip() for d in devices_str.split() if d.strip()]
+            device_names_prop = self.fdt.getprop(resources_node, 'device-names')
+            device_names_str = device_names_prop.as_str()
+            if device_names_str:
+                devices = [d.strip() for d in device_names_str.split() if d.strip()]
         except libfdt.FdtException:
             pass
         
@@ -499,12 +500,12 @@ class DeviceTreeParser:
         memory_base = self.fdt.getprop(resources_node, 'memory-base').as_uint64()
         memory_bytes = self.fdt.getprop(resources_node, 'memory-bytes').as_uint64()
         
-        # Parse device references
         devices = []
         try:
-            devices_prop = self.fdt.getprop(resources_node, 'devices')
-            # Parse device references as phandle references
-            devices = []
+            device_names_prop = self.fdt.getprop(resources_node, 'device-names')
+            device_names_str = device_names_prop.as_str()
+            if device_names_str:
+                devices = [d.strip() for d in device_names_str.split() if d.strip()]
         except libfdt.FdtException:
             pass
         
