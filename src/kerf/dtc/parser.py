@@ -241,7 +241,10 @@ class DeviceTreeParser:
             raise ParseError("Missing 'host-reserved-bytes' property in /resources/memory")
         
         try:
-            memory_pool_base = self.fdt.getprop(memory_node, 'memory-pool-base').as_uint64()
+            memory_pool_base_prop = self.fdt.getprop(memory_node, 'memory-pool-base')
+            if len(memory_pool_base_prop) != 8:
+                raise ParseError(f"Invalid 'memory-pool-base' property size: {len(memory_pool_base_prop)} bytes (expected 8 bytes)")
+            memory_pool_base = memory_pool_base_prop.as_uint64()
         except libfdt.FdtException:
             raise ParseError("Missing 'memory-pool-base' property in /resources/memory")
         
