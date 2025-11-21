@@ -176,7 +176,10 @@ class DeviceTreeManager:
     
     def read_applied_overlays(self) -> List[Tuple[str, bytes]]:
         """
-        Read all applied overlays from kernel.
+        Read all successfully applied overlays from kernel.
+
+        Only includes transactions with status "applied", "success", or "ok".
+        Failed transactions are excluded to ensure accurate resource tracking.
         
         Returns:
             List of (transaction_id, dtbo_data) tuples
@@ -196,7 +199,17 @@ class DeviceTreeManager:
             
             tx_id = match.group(1)
             dtbo_path = tx_dir / "dtbo"
-            
+
+            status_file = tx_dir / "status"
+            if status_file.exists():
+                try:
+                    with open(status_file, 'r') as f:
+                        status = f.read().strip()
+                    if status not in ("applied", "success", "ok"):
+                        continue
+                except OSError:
+                    continue
+
             if dtbo_path.exists():
                 try:
                     with open(dtbo_path, 'rb') as f:
