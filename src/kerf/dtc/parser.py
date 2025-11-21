@@ -713,13 +713,12 @@ class DeviceTreeParser:
             return devices
         
         # Parse device definitions with proper brace matching
-        device_pattern = r'(\w+):\s*(\w+)@(\w+)\s*\{'
+        # Format: name { ... }  (e.g., enp9s0_dev { ... })
+        device_pattern = r'(\w+)\s*\{'
         matches = list(re.finditer(device_pattern, devices_text))
         
         for match in matches:
-            device_name = match.group(1)  # e.g., eth0
-            device_type = match.group(2)   # e.g., ethernet
-            device_id = match.group(3)    # e.g., 0
+            device_name = match.group(1)
             
             # Find the matching closing brace for this device
             device_start = match.end() - 1  # Position of opening brace
