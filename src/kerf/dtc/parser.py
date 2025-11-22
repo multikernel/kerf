@@ -297,6 +297,8 @@ class DeviceTreeParser:
         
         # Parse optional properties
         pci_id = None
+        vendor_id = None
+        device_id = None
         sriov_vfs = None
         host_reserved_vf = None
         available_vfs = None
@@ -309,6 +311,16 @@ class DeviceTreeParser:
         except libfdt.FdtException:
             pass
         
+        try:
+            vendor_id = self.fdt.getprop(node_offset, 'vendor-id').as_uint32()
+        except libfdt.FdtException:
+            pass
+
+        try:
+            device_id = self.fdt.getprop(node_offset, 'device-id').as_uint32()
+        except libfdt.FdtException:
+            pass
+
         try:
             sriov_vfs = self.fdt.getprop(node_offset, 'sriov-vfs').as_uint32()
         except libfdt.FdtException:
@@ -343,6 +355,8 @@ class DeviceTreeParser:
             name=name,
             compatible=compatible,
             pci_id=pci_id,
+            vendor_id=vendor_id,
+            device_id=device_id,
             sriov_vfs=sriov_vfs,
             host_reserved_vf=host_reserved_vf,
             available_vfs=available_vfs,
@@ -754,6 +768,8 @@ class DeviceTreeParser:
         
         # Parse optional properties
         pci_id = None
+        vendor_id = None
+        device_id = None
         sriov_vfs = None
         host_reserved_vf = None
         available_vfs = None
@@ -765,6 +781,14 @@ class DeviceTreeParser:
         if pci_id_match:
             pci_id = pci_id_match.group(1)
         
+        vendor_id_match = re.search(r'vendor-id\s*=\s*<([^>]+)>', content)
+        if vendor_id_match:
+            vendor_id = self._parse_hex_value(vendor_id_match.group(1))
+
+        device_id_match = re.search(r'device-id\s*=\s*<([^>]+)>', content)
+        if device_id_match:
+            device_id = self._parse_hex_value(device_id_match.group(1))
+
         sriov_vfs_match = re.search(r'sriov-vfs\s*=\s*<(\d+)>', content)
         if sriov_vfs_match:
             sriov_vfs = int(sriov_vfs_match.group(1))
@@ -793,6 +817,8 @@ class DeviceTreeParser:
             name=name,
             compatible=compatible,
             pci_id=pci_id,
+            vendor_id=vendor_id,
+            device_id=device_id,
             sriov_vfs=sriov_vfs,
             host_reserved_vf=host_reserved_vf,
             available_vfs=available_vfs,

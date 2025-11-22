@@ -112,6 +112,8 @@ class DeviceInfo:
     name: str
     compatible: str
     pci_id: Optional[str] = None
+    vendor_id: Optional[int] = None
+    device_id: Optional[int] = None
     sriov_vfs: Optional[int] = None
     host_reserved_vf: Optional[int] = None
     available_vfs: Optional[List[int]] = None

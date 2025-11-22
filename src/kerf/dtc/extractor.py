@@ -153,6 +153,12 @@ class InstanceExtractor:
             if device_info.pci_id:
                 fdt_sw.property_string('pci-id', device_info.pci_id)
             
+            if device_info.vendor_id is not None:
+                fdt_sw.property_u32('vendor-id', device_info.vendor_id)
+
+            if device_info.device_id is not None:
+                fdt_sw.property_u32('device-id', device_info.device_id)
+
             if device_info.sriov_vfs is not None:
                 fdt_sw.property_u32('sriov-vfs', device_info.sriov_vfs)
             
