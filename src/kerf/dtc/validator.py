@@ -234,8 +234,9 @@ class MultikernelValidator:
             system_cpu_count = len(system_physical_ids)
 
             if cpus.total > system_cpu_count:
-                self.errors.append(
-                    f"Hardware inventory: Total CPU count ({cpus.total}) exceeds system physical CPU count ({system_cpu_count})"
+                self.warnings.append(
+                    f"Hardware inventory: Total CPU count ({cpus.total}) exceeds system physical CPU count ({system_cpu_count}). "
+                    f"This may indicate CPUs were hot-unplugged after baseline was created."
                 )
 
             all_cpu_ids = set()
@@ -256,16 +257,18 @@ class MultikernelValidator:
                 
                 if invalid_processors:
                     valid_processors = sorted(processor_to_physical.keys())
-                    self.errors.append(
+                    self.warnings.append(
                         f"Hardware inventory: CPU IDs (logical processors) {sorted(invalid_processors)} do not exist in system. "
-                        f"Available logical processors: {valid_processors}"
+                        f"Available logical processors: {valid_processors}. "
+                        f"This may indicate CPUs were hot-unplugged after baseline was created."
                     )
                 
                 invalid_physical_ids = physical_ids_used - system_physical_ids
                 if invalid_physical_ids:
-                    self.errors.append(
+                    self.warnings.append(
                         f"Hardware inventory: Physical CPU IDs {sorted(invalid_physical_ids)} do not exist in system. "
-                        f"Available physical CPU IDs: {sorted(system_physical_ids)}"
+                        f"Available physical CPU IDs: {sorted(system_physical_ids)}. "
+                        f"This may indicate CPUs were hot-unplugged after baseline was created."
                     )
         else:
             self.warnings.append("Could not determine CPU to physical ID mapping from /proc/cpuinfo - skipping CPU validation")
