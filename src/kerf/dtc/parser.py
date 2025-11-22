@@ -198,24 +198,16 @@ class DeviceTreeParser:
     def _parse_cpu_allocation(self, resources_node: int) -> CPUAllocation:
         """Parse CPU allocation from resources node."""
         try:
-            cpus_node = self.fdt.subnode_offset(resources_node, 'cpus')
+            cpus_prop = self.fdt.getprop(resources_node, 'cpus')
+            available = cpus_prop.as_uint32_list()
         except libfdt.FdtException:
-            raise ParseError("Missing /resources/cpus node")
+            raise ParseError("Missing 'cpus' property in /resources")
         
-        try:
-            total = self.fdt.getprop(cpus_node, 'total').as_uint32()
-        except libfdt.FdtException:
-            raise ParseError("Missing 'total' property in /resources/cpus")
-        
-        try:
-            host_reserved = self.fdt.getprop(cpus_node, 'host-reserved').as_uint32_list()
-        except libfdt.FdtException:
-            raise ParseError("Missing 'host-reserved' property in /resources/cpus")
-        
-        try:
-            available = self.fdt.getprop(cpus_node, 'available').as_uint32_list()
-        except libfdt.FdtException:
-            raise ParseError("Missing 'available' property in /resources/cpus")
+        if available:
+            total = max(available) + 1
+        else:
+            total = 0
+        host_reserved = []
         
         return CPUAllocation(
             total=total,
@@ -226,32 +218,23 @@ class DeviceTreeParser:
     def _parse_memory_allocation(self, resources_node: int) -> MemoryAllocation:
         """Parse memory allocation from resources node."""
         try:
-            memory_node = self.fdt.subnode_offset(resources_node, 'memory')
-        except libfdt.FdtException:
-            raise ParseError("Missing /resources/memory node")
-        
-        try:
-            total_bytes = self.fdt.getprop(memory_node, 'total-bytes').as_uint64()
-        except libfdt.FdtException:
-            raise ParseError("Missing 'total-bytes' property in /resources/memory")
-        
-        try:
-            host_reserved_bytes = self.fdt.getprop(memory_node, 'host-reserved-bytes').as_uint64()
-        except libfdt.FdtException:
-            raise ParseError("Missing 'host-reserved-bytes' property in /resources/memory")
-        
-        try:
-            memory_pool_base_prop = self.fdt.getprop(memory_node, 'memory-pool-base')
+            memory_pool_base_prop = self.fdt.getprop(resources_node, 'memory-base')
             if len(memory_pool_base_prop) != 8:
-                raise ParseError(f"Invalid 'memory-pool-base' property size: {len(memory_pool_base_prop)} bytes (expected 8 bytes)")
+                raise ParseError(f"Invalid 'memory-base' property size: {len(memory_pool_base_prop)} bytes (expected 8 bytes)")
             memory_pool_base = memory_pool_base_prop.as_uint64()
         except libfdt.FdtException:
-            raise ParseError("Missing 'memory-pool-base' property in /resources/memory")
-        
+            raise ParseError("Missing 'memory-base' property in /resources")
+
         try:
-            memory_pool_bytes = self.fdt.getprop(memory_node, 'memory-pool-bytes').as_uint64()
+            memory_pool_bytes_prop = self.fdt.getprop(resources_node, 'memory-bytes')
+            if len(memory_pool_bytes_prop) != 8:
+                raise ParseError(f"Invalid 'memory-bytes' property size: {len(memory_pool_bytes_prop)} bytes (expected 8 bytes)")
+            memory_pool_bytes = memory_pool_bytes_prop.as_uint64()
         except libfdt.FdtException:
-            raise ParseError("Missing 'memory-pool-bytes' property in /resources/memory")
+            raise ParseError("Missing 'memory-bytes' property in /resources")
+
+        total_bytes = memory_pool_base + memory_pool_bytes
+        host_reserved_bytes = 0
         
         return MemoryAllocation(
             total_bytes=total_bytes,
@@ -618,34 +601,50 @@ class DeviceTreeParser:
             devices=devices
         )
     
+    def _extract_resources_section(self, dts_content: str) -> Optional[str]:
+        """Extract the resources section content with proper brace matching."""
+        import re
+
+        resources_start = re.search(r'resources\s*\{', dts_content)
+        if not resources_start:
+            return None
+
+        start_pos = resources_start.end() - 1
+        brace_count = 0
+        end_pos = start_pos
+
+        for i, char in enumerate(dts_content[start_pos:], start_pos):
+            if char == '{':
+                brace_count += 1
+            elif char == '}':
+                brace_count -= 1
+                if brace_count == 0:
+                    end_pos = i
+                    break
+        
+        if brace_count == 0:
+            return dts_content[start_pos+1:end_pos]
+        else:
+            return None
+    
     def _parse_cpus_from_dts(self, dts_content: str) -> CPUAllocation:
         """Parse CPU allocation from DTS content."""
         import re
         
-        # Find CPU section
-        cpu_section = re.search(r'cpus\s*\{([^}]+)\}', dts_content, re.DOTALL)
-        if not cpu_section:
-            raise ParseError("Missing CPU section in DTS")
+        resources_text = self._extract_resources_section(dts_content)
+        if not resources_text:
+            raise ParseError("Missing /resources section in DTS")
         
-        cpu_text = cpu_section.group(1)
+        cpus_match = re.search(r'cpus\s*=\s*<([^>]+)>', resources_text)
+        if not cpus_match:
+            raise ParseError("Missing 'cpus' property in /resources")
         
-        # Parse total CPUs
-        total_match = re.search(r'total\s*=\s*<(\d+)>', cpu_text)
-        if not total_match:
-            raise ParseError("Missing 'total' in CPU section")
-        total = int(total_match.group(1))
-        
-        # Parse host-reserved CPUs
-        host_reserved_match = re.search(r'host-reserved\s*=\s*<([^>]+)>', cpu_text)
-        if not host_reserved_match:
-            raise ParseError("Missing 'host-reserved' in CPU section")
-        host_reserved = [int(x.strip()) for x in host_reserved_match.group(1).split()]
-        
-        # Parse available CPUs
-        available_match = re.search(r'available\s*=\s*<([^>]+)>', cpu_text)
-        if not available_match:
-            raise ParseError("Missing 'available' in CPU section")
-        available = [int(x.strip()) for x in available_match.group(1).split()]
+        available = [int(x.strip()) for x in cpus_match.group(1).split()]
+        if available:
+            total = max(available) + 1
+        else:
+            total = 0
+        host_reserved = []
         
         # Parse CPU topology if present
         topology = self._parse_cpu_topology_from_dts(dts_content)
@@ -661,36 +660,23 @@ class DeviceTreeParser:
         """Parse memory allocation from DTS content."""
         import re
         
-        # Find memory section
-        memory_section = re.search(r'memory\s*\{([^}]+)\}', dts_content, re.DOTALL)
-        if not memory_section:
-            raise ParseError("Missing memory section in DTS")
+        resources_text = self._extract_resources_section(dts_content)
+        if not resources_text:
+            raise ParseError("Missing /resources section in DTS")
         
-        memory_text = memory_section.group(1)
+        memory_base_match = re.search(r'memory-base\s*=\s*<([^>]+)>', resources_text)
+        if not memory_base_match:
+            raise ParseError("Missing 'memory-base' property in /resources")
         
-        # Parse total bytes
-        total_bytes_match = re.search(r'total-bytes\s*=\s*<([^>]+)>', memory_text)
-        if not total_bytes_match:
-            raise ParseError("Missing 'total-bytes' in memory section")
-        total_bytes = self._parse_hex_value(total_bytes_match.group(1))
+        memory_bytes_match = re.search(r'memory-bytes\s*=\s*<([^>]+)>', resources_text)
+        if not memory_bytes_match:
+            raise ParseError("Missing 'memory-bytes' property in /resources")
         
-        # Parse host-reserved bytes
-        host_reserved_bytes_match = re.search(r'host-reserved-bytes\s*=\s*<([^>]+)>', memory_text)
-        if not host_reserved_bytes_match:
-            raise ParseError("Missing 'host-reserved-bytes' in memory section")
-        host_reserved_bytes = self._parse_hex_value(host_reserved_bytes_match.group(1))
-        
-        # Parse memory pool base
-        memory_pool_base_match = re.search(r'memory-pool-base\s*=\s*<([^>]+)>', memory_text)
-        if not memory_pool_base_match:
-            raise ParseError("Missing 'memory-pool-base' in memory section")
-        memory_pool_base = self._parse_hex_value(memory_pool_base_match.group(1))
-        
-        # Parse memory pool bytes
-        memory_pool_bytes_match = re.search(r'memory-pool-bytes\s*=\s*<([^>]+)>', memory_text)
-        if not memory_pool_bytes_match:
-            raise ParseError("Missing 'memory-pool-bytes' in memory section")
-        memory_pool_bytes = self._parse_hex_value(memory_pool_bytes_match.group(1))
+        memory_pool_base = self._parse_hex_value(memory_base_match.group(1))
+        memory_pool_bytes = self._parse_hex_value(memory_bytes_match.group(1))
+
+        total_bytes = memory_pool_base + memory_pool_bytes
+        host_reserved_bytes = 0
         
         return MemoryAllocation(
             total_bytes=total_bytes,
@@ -705,17 +691,19 @@ class DeviceTreeParser:
         
         devices = {}
         
-        # Find devices section with proper brace matching
-        devices_start = re.search(r'devices\s*\{', dts_content)
+        resources_text = self._extract_resources_section(dts_content)
+        if not resources_text:
+            return devices
+        
+        devices_start = re.search(r'devices\s*\{', resources_text)
         if not devices_start:
             return devices
         
-        # Find the matching closing brace for the devices section
-        start_pos = devices_start.end() - 1  # Position of opening brace
+        start_pos = devices_start.end() - 1
         brace_count = 0
         end_pos = start_pos
         
-        for i, char in enumerate(dts_content[start_pos:], start_pos):
+        for i, char in enumerate(resources_text[start_pos:], start_pos):
             if char == '{':
                 brace_count += 1
             elif char == '}':
@@ -724,11 +712,11 @@ class DeviceTreeParser:
                     end_pos = i
                     break
         
-        if brace_count == 0:
-            devices_text = dts_content[start_pos+1:end_pos]
-        else:
+        if brace_count != 0:
             return devices
         
+        devices_text = resources_text[start_pos+1:end_pos]
+
         # Parse device definitions with proper brace matching
         # Format: name { ... }  (e.g., enp9s0_dev { ... })
         device_pattern = r'(\w+)\s*\{'

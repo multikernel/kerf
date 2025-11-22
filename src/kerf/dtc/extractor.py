@@ -99,8 +99,8 @@ class InstanceExtractor:
         fdt_sw.property_string('compatible', 'linux,multikernel-host')
         
         fdt_sw.begin_node('resources')
-        self._add_cpu_section_sw(fdt_sw, tree.hardware.cpus)
-        self._add_memory_section_sw(fdt_sw, tree.hardware.memory)
+        self._add_cpu_properties_sw(fdt_sw, tree.hardware.cpus)
+        self._add_memory_properties_sw(fdt_sw, tree.hardware.memory)
         
         if tree.hardware.devices:
             self._add_devices_section_sw(fdt_sw, tree.hardware.devices)
@@ -119,28 +119,16 @@ class InstanceExtractor:
         dtb.pack()
         return dtb.as_bytearray()
     
-    def _add_cpu_section_sw(self, fdt_sw, cpus):
-        """Add CPU section using FdtSw."""
-        fdt_sw.begin_node('cpus')
-        fdt_sw.property_u32('total', cpus.total)
-        
+    def _add_cpu_properties_sw(self, fdt_sw, cpus):
+        """Add CPU properties directly to resources node."""
         import struct
-        host_reserved_data = struct.pack('>' + 'I' * len(cpus.host_reserved), *cpus.host_reserved)
-        fdt_sw.property('host-reserved', host_reserved_data)
-        
         available_data = struct.pack('>' + 'I' * len(cpus.available), *cpus.available)
-        fdt_sw.property('available', available_data)
-        
-        fdt_sw.end_node()
+        fdt_sw.property('cpus', available_data)
     
-    def _add_memory_section_sw(self, fdt_sw, memory):
-        """Add memory section using FdtSw."""
-        fdt_sw.begin_node('memory')
-        fdt_sw.property_u64('total-bytes', memory.total_bytes)
-        fdt_sw.property_u64('host-reserved-bytes', memory.host_reserved_bytes)
-        fdt_sw.property_u64('memory-pool-base', memory.memory_pool_base)
-        fdt_sw.property_u64('memory-pool-bytes', memory.memory_pool_bytes)
-        fdt_sw.end_node()
+    def _add_memory_properties_sw(self, fdt_sw, memory):
+        """Add memory properties directly to resources node."""
+        fdt_sw.property_u64('memory-base', memory.memory_pool_base)
+        fdt_sw.property_u64('memory-bytes', memory.memory_pool_bytes)
     
     def _add_devices_section_sw(self, fdt_sw, devices):
         """Add devices section using FdtSw."""
