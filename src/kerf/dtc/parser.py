@@ -1379,18 +1379,25 @@ class DeviceTreeParser:
         # FDT strings are null-terminated and padded to 4-byte alignment
         try:
             null_pos = data.find(b'\x00')
-            if null_pos >= 0:
+            if null_pos > 0:
                 string_part = data[:null_pos]
-                if string_part and all(32 <= b < 127 or b in (9, 10, 13) for b in string_part):
-                    try:
-                        string_data = string_part.decode('utf-8')
-                        return f'{indent}{name} = "{string_data}";'
-                    except UnicodeDecodeError:
-                        pass
+                if string_part:
+                    is_printable = True
+                    for b in string_part:
+                        if not (32 <= b < 127 or b in (9, 10, 13)):
+                            is_printable = False
+                            break
+                    
+                    if is_printable:
+                        try:
+                            string_data = string_part.decode('utf-8', errors='strict')
+                            if len(string_data) > 0 and len(string_data) < 256:
+                                return f'{indent}{name} = "{string_data}";'
+                        except (UnicodeDecodeError, ValueError):
+                            pass
         except Exception:
             pass
 
-        # Try to interpret as different data types
         if len(data) == 4:
             # 32-bit integer
             value = int.from_bytes(data, byteorder='big')
@@ -1408,11 +1415,25 @@ class DeviceTreeParser:
                 values.append(hex(value))
             return f'{indent}{name} = <{" ".join(values)}>;'
         else:
-            # Non-aligned data - try as string or hex
-            try:
-                string_data = data.rstrip(b'\x00').decode('utf-8')
-                return f'{indent}{name} = "{string_data}";'
-            except UnicodeDecodeError:
-                # Fall back to hex representation
-                hex_data = ' '.join(f'{b:02x}' for b in data)
-                return f'{indent}{name} = [{hex_data}];'
+            # Non-aligned data - try as string first
+            # Remove trailing nulls and padding
+            cleaned_data = data.rstrip(b'\x00')
+            if cleaned_data:
+                # Check if it looks like a string
+                is_string = True
+                for b in cleaned_data:
+                    if b < 32 and b not in (9, 10, 13):  # Not printable and not whitespace
+                        is_string = False
+                        break
+                
+                if is_string:
+                    try:
+                        string_data = cleaned_data.decode('utf-8')
+                        if len(string_data) > 0:
+                            return f'{indent}{name} = "{string_data}";'
+                    except UnicodeDecodeError:
+                        pass
+            
+            # Fall back to hex representation
+            hex_data = ' '.join(f'{b:02x}' for b in data)
+            return f'{indent}{name} = [{hex_data}];'

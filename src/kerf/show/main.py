@@ -279,16 +279,27 @@ def display_instance_info(instance_info: Dict[str, Optional[str]],
     # Device tree source
     if 'device_tree_source' in instance_info and instance_info['device_tree_source']:
         dts = instance_info['device_tree_source']
-        click.echo(f"\n  Device Tree:")
-        # Format DTS with proper indentation
-        dts_lines = dts.split('\n')
-        for line in dts_lines:
-            if line.strip():
-                click.echo(f"    {line}")
+        try:
+            if isinstance(dts, bytes):
+                dts = dts.decode('utf-8', errors='replace')
+            elif not isinstance(dts, str):
+                dts = str(dts)
+            
+            if dts.strip().startswith('/dts-v1/') or dts.strip().startswith('/'):
+                click.echo(f"\n  Device Tree:")
+                dts_lines = dts.split('\n')
+                for line in dts_lines:
+                    if line.strip():
+                        click.echo(f"    {line}")
+            else:
+                pass
+        except (UnicodeDecodeError, AttributeError):
+            pass
     
-    # Other fields
     other_fields = {k: v for k, v in instance_info.items() 
-                   if k not in ['name', 'id', 'status', 'device_tree_source'] and v}
+                   if k not in ['name', 'id', 'status', 'device_tree_source'] and v
+                   and isinstance(v, str) and len(v) < 1000  # Skip very long or binary data
+                   and not any(ord(c) < 32 and c not in '\t\n\r' for c in v[:100])}  # Skip binary
     if other_fields:
         click.echo(f"\n  Additional Info:")
         for key, value in other_fields.items():
