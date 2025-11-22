@@ -358,13 +358,23 @@ class DeviceTreeParser:
             return instances
         
         # Iterate through instance nodes
-        offset = self.fdt.first_subnode(instances_node)
-        while offset >= 0:
-            name = self.fdt.get_name(offset)
-            instance = self._parse_instance(offset, name)
-            instances[name] = instance
-            offset = self.fdt.next_subnode(offset)
-        
+        try:
+            offset = self.fdt.first_subnode(instances_node)
+            while offset >= 0:
+                name = self.fdt.get_name(offset)
+                try:
+                    instance = self._parse_instance(offset, name)
+                    instances[name] = instance
+                except Exception as e:
+                    raise ParseError(f"Failed to parse instance '{name}': {e}") from e
+
+                try:
+                    offset = self.fdt.next_subnode(offset)
+                except libfdt.FdtException:
+                    break
+        except libfdt.FdtException as e:
+            raise ParseError(f"Error iterating instance nodes: {e}") from e
+
         return instances
     
     def _parse_overlay_instances(self) -> OverlayInstanceData:
@@ -478,8 +488,11 @@ class DeviceTreeParser:
     def _parse_instance(self, node_offset: int, name: str) -> Instance:
         """Parse individual instance definition."""
         # Parse instance ID
-        instance_id = self.fdt.getprop(node_offset, 'id').as_uint32()
-        
+        try:
+            instance_id = self.fdt.getprop(node_offset, 'id').as_uint32()
+        except libfdt.FdtException as e:
+            raise ParseError(f"Missing 'id' property for instance '{name}': {e}") from e
+
         # Parse resources
         resources = self._parse_instance_resources(node_offset)
         
@@ -493,13 +506,24 @@ class DeviceTreeParser:
         """Parse instance resource allocation."""
         try:
             resources_node = self.fdt.subnode_offset(node_offset, 'resources')
-        except libfdt.FdtException:
-            raise ParseError(f"Missing resources node for instance")
-        
-        cpus = self.fdt.getprop(resources_node, 'cpus').as_uint32_list()
-        memory_base = self.fdt.getprop(resources_node, 'memory-base').as_uint64()
-        memory_bytes = self.fdt.getprop(resources_node, 'memory-bytes').as_uint64()
-        
+        except libfdt.FdtException as e:
+            raise ParseError(f"Missing resources node for instance: {e}") from e
+
+        try:
+            cpus = self.fdt.getprop(resources_node, 'cpus').as_uint32_list()
+        except libfdt.FdtException as e:
+            raise ParseError(f"Missing 'cpus' property in instance resources: {e}") from e
+
+        try:
+            memory_base = self.fdt.getprop(resources_node, 'memory-base').as_uint64()
+        except libfdt.FdtException as e:
+            raise ParseError(f"Missing 'memory-base' property in instance resources: {e}") from e
+
+        try:
+            memory_bytes = self.fdt.getprop(resources_node, 'memory-bytes').as_uint64()
+        except libfdt.FdtException as e:
+            raise ParseError(f"Missing 'memory-bytes' property in instance resources: {e}") from e
+
         devices = []
         try:
             device_names_prop = self.fdt.getprop(resources_node, 'device-names')
