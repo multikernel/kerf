@@ -62,10 +62,46 @@ def get_allocated_cpus(tree: GlobalDeviceTree) -> Set[int]:
     return allocated
 
 
+def get_allocated_memory_regions_from_iomem() -> List[tuple[int, int]]:
+    """
+    Get list of allocated memory regions from /proc/iomem.
+
+    Reads actual memory allocations from the kernel (source of truth).
+    Expected format: "40000000-463fffff : mk-instance-1-web-server-region-0"
+
+    Returns:
+        List of (base_address, size_bytes) tuples
+    """
+    regions = []
+    try:
+        from pathlib import Path
+        import re
+        iomem_path = Path('/proc/iomem')
+        if not iomem_path.exists():
+            return regions
+        
+        with open(iomem_path, 'r') as f:
+            for line in f:
+                if 'mk-instance-' in line:
+                    match = re.search(r'([0-9a-fA-F]+)-([0-9a-fA-F]+)', line)
+                    if match:
+                        base = int(match.group(1), 16)
+                        end = int(match.group(2), 16)
+                        size = end - base + 1  # Inclusive range
+                        regions.append((base, size))
+    except (OSError, IOError, ValueError):
+        pass
+
+    return regions
+
 def get_allocated_memory_regions(tree: GlobalDeviceTree) -> List[tuple[int, int]]:
     """
     Get list of allocated memory regions (base, size) tuples.
     
+    This function can use either the tree (for validation/dry-run) or
+    /proc/iomem (for actual kernel state). For actual allocations,
+    prefer get_allocated_memory_regions_from_iomem().
+
     Args:
         tree: GlobalDeviceTree to analyze
         
@@ -74,25 +110,29 @@ def get_allocated_memory_regions(tree: GlobalDeviceTree) -> List[tuple[int, int]
     """
     regions = []
     for instance in tree.instances.values():
-        regions.append((
-            instance.resources.memory_base,
-            instance.resources.memory_bytes
-        ))
+        if instance.resources.memory_base > 0:  # Only include if memory_base is set
+            regions.append((
+                instance.resources.memory_base,
+                instance.resources.memory_bytes
+            ))
     return regions
 
 
 def find_available_memory_base(
     tree: GlobalDeviceTree,
     size_bytes: int,
-    alignment: int = 0x1000
+    alignment: int = 0x1000,
+    use_iomem: bool = True
 ) -> Optional[int]:
     """
     Find available memory region for allocation.
     
     Args:
-        tree: GlobalDeviceTree to analyze
+        tree: GlobalDeviceTree to analyze (for pool boundaries)
         size_bytes: Size of memory region needed
         alignment: Required alignment (default 4KB)
+        use_iomem: If True, read actual allocations from /proc/iomem (kernel source of truth).
+                   If False, use allocations from tree (for validation/dry-run).
         
     Returns:
         Base address for allocation, or None if no space available
@@ -100,7 +140,10 @@ def find_available_memory_base(
     pool_base = tree.hardware.memory.memory_pool_base
     pool_end = tree.hardware.memory.memory_pool_end
     
-    allocated_regions = get_allocated_memory_regions(tree)
+    if use_iomem:
+        allocated_regions = get_allocated_memory_regions_from_iomem()
+    else:
+        allocated_regions = get_allocated_memory_regions(tree)
     # Sort by base address
     allocated_regions.sort()
     
