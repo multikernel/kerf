@@ -104,10 +104,15 @@ def read_instance_info(name: str) -> Dict[str, Optional[str]]:
         for file_path in instance_dir.iterdir():
             if file_path.is_file() and file_path.name not in ['id', 'status']:
                 try:
-                    with open(file_path, 'r') as f:
-                        content = f.read().strip()
-                        if content:
-                            info[file_path.name] = content
+                    # Try text mode first
+                    try:
+                        with open(file_path, 'r', encoding='utf-8', errors='replace') as f:
+                            content = f.read().strip()
+                            if content:
+                                info[file_path.name] = content
+                    except (UnicodeDecodeError, ValueError):
+                        # If UTF-8 decode fails, skip this file (it's likely binary)
+                        pass
                 except (OSError, IOError):
                     pass
     except (OSError, IOError):

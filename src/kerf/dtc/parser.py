@@ -1376,6 +1376,20 @@ class DeviceTreeParser:
         if not data:
             return f'{indent}{name};'
         
+        # FDT strings are null-terminated and padded to 4-byte alignment
+        try:
+            null_pos = data.find(b'\x00')
+            if null_pos >= 0:
+                string_part = data[:null_pos]
+                if string_part and all(32 <= b < 127 or b in (9, 10, 13) for b in string_part):
+                    try:
+                        string_data = string_part.decode('utf-8')
+                        return f'{indent}{name} = "{string_data}";'
+                    except UnicodeDecodeError:
+                        pass
+        except Exception:
+            pass
+
         # Try to interpret as different data types
         if len(data) == 4:
             # 32-bit integer
@@ -1394,9 +1408,8 @@ class DeviceTreeParser:
                 values.append(hex(value))
             return f'{indent}{name} = <{" ".join(values)}>;'
         else:
-            # String data
+            # Non-aligned data - try as string or hex
             try:
-                # Try to decode as string
                 string_data = data.rstrip(b'\x00').decode('utf-8')
                 return f'{indent}{name} = "{string_data}";'
             except UnicodeDecodeError:
