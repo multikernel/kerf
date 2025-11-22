@@ -32,14 +32,17 @@ from .exceptions import ValidationError, ParseError, KernelInterfaceError
 
 class BaselineManager:
     """
-    Manages baseline device tree (hardware resources only).
+    Manages root device tree in kernel.
     
-    The baseline device tree describes the hardware inventory and resource pool
-    available for allocation to kernel instances. It must NOT contain any instances,
-    as instances are managed exclusively via overlays.
+    The root device_tree path serves dual purposes:
+    - Writing (via write_baseline): Used during initialization to write a
+      resources-only baseline. Must contain only hardware resources, no instances.
+    - Reading (via read_baseline): Returns complete current state including
+      both resources and instances. The kernel keeps this up-to-date by
+      automatically merging all applied overlays.
     
     Attributes:
-        baseline_path: Path to baseline device tree in kernel
+        baseline_path: Path to root device tree in kernel
         parser: DeviceTreeParser instance for reading state
         extractor: InstanceExtractor instance for generating DTB
         validator: MultikernelValidator instance for validation
@@ -137,10 +140,10 @@ class BaselineManager:
     
     def read_baseline(self) -> GlobalDeviceTree:
         """
-        Read baseline device tree from kernel.
-        
+        Read root device tree from kernel.
+
         Returns:
-            GlobalDeviceTree model representing baseline (resources only)
+            GlobalDeviceTree model representing current complete state
             
         Raises:
             KernelInterfaceError: If kernel interface is inaccessible
@@ -149,7 +152,7 @@ class BaselineManager:
         try:
             if not self.baseline_path.exists():
                 raise KernelInterfaceError(
-                    f"Baseline device tree not found: {self.baseline_path}. "
+                    f"Root device tree not found: {self.baseline_path}. "
                     "Initialize it first with 'kerf init'."
                 )
             
@@ -158,28 +161,20 @@ class BaselineManager:
             
             if not dtb_data:
                 raise KernelInterfaceError(
-                    f"Baseline device tree is empty. "
+                    f"Root device tree is empty. "
                     "Initialize it first with 'kerf init'."
                 )
             
             tree = self.parser.parse_dtb_from_bytes(dtb_data)
-            
-            # Validate it's actually a baseline (no instances)
-            try:
-                self.validate_baseline(tree)
-            except ValidationError as e:
-                raise KernelInterfaceError(
-                    f"Baseline contains instances (invalid state): {e}"
-                ) from e
-            
+
             return tree
             
         except OSError as e:
             raise KernelInterfaceError(
-                f"Failed to read baseline from {self.baseline_path}: {e}"
+                f"Failed to read root device tree from {self.baseline_path}: {e}"
             ) from e
         except ParseError as e:
             raise ParseError(
-                f"Failed to parse baseline device tree: {e}"
+                f"Failed to parse root device tree: {e}"
             ) from e
 

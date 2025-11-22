@@ -15,21 +15,17 @@
 """
 Device tree overlay generation.
 
-This module provides functionality to generate device tree overlay blobs (DTBO)
-that represent incremental changes to the device tree state.
+This module provides the OverlayGenerator class for generating device tree
+overlays (DTBO) that represent incremental changes to the device tree state.
 """
 
 import libfdt
-from typing import Dict, Optional, List, Tuple
-from ..models import GlobalDeviceTree, Instance
-from ..exceptions import ParseError, ValidationError
+from typing import Set
+from ..models import GlobalDeviceTree
 
 
 class OverlayGenerator:
-    """Generates device tree overlay blobs (DTBO) from state changes."""
-    
-    def __init__(self):
-        self.fdt = None
+    """Generates device tree overlay blobs (DTBO) from device tree model deltas."""
     
     def generate_overlay(
         self,
@@ -37,12 +33,10 @@ class OverlayGenerator:
         modified: GlobalDeviceTree
     ) -> bytes:
         """
-        Generate DTBO overlay representing changes from current to modified state.
+        Generate overlay DTBO representing the difference between current and modified states.
         
-        The overlay contains only the differences between current and modified states.
-        It can add new instances, modify existing ones, or delete instances.
-        
-        Overlays MUST NOT modify resources (enforced by validation).
+        The overlay contains only instance changes (additions, modifications, deletions).
+        Hardware resources are never included in overlays.
         
         Args:
             current: Current device tree state (before change)
@@ -50,100 +44,98 @@ class OverlayGenerator:
             
         Returns:
             DTBO blob as bytes
-            
-        Raises:
-            ValidationError: If overlay tries to modify resources
         """
-        # Validate overlay doesn't modify resources
-        if current.hardware != modified.hardware:
-            raise ValidationError(
-                "Overlay cannot modify hardware resources. "
-                "Resources are defined in baseline only. "
-                "Overlays can only modify instances."
-            )
-        
-        # Create a minimal FDT for the overlay
-        # Overlays use fragments and target references
-        fdt = self._create_overlay_fdt(current, modified)
-        return fdt
-    
-    def _create_overlay_fdt(
-        self,
-        current: GlobalDeviceTree,
-        modified: GlobalDeviceTree
-    ) -> bytes:
-        """Create FDT overlay blob using FdtSw to match kernel format."""
-        # Calculate what changed
-        # New instances: in modified but not in current
-        # Modified instances: in both but different
-        # Deleted instances: in current but not in modified (handled via deletion)
-        
-        new_instances = {}
-        modified_instances = {}
-        deleted_instances = []
+        # Compute instance delta
+        instances_to_add = {}
+        instances_to_update = {}
+        instances_to_remove = set()
         
         for name, instance in modified.instances.items():
             if name not in current.instances:
-                new_instances[name] = instance
+                instances_to_add[name] = instance
             elif current.instances[name] != instance:
-                modified_instances[name] = instance
+                instances_to_update[name] = instance
         
-        # Find deleted instances
         for name in current.instances:
             if name not in modified.instances:
-                deleted_instances.append(name)
+                instances_to_remove.add(name)
+
+        return self._create_overlay_dtb(instances_to_add, instances_to_update, instances_to_remove)
+    
+    def _create_overlay_dtb(
+        self,
+        instances_to_add: dict,
+        instances_to_update: dict,
+        instances_to_remove: Set[str]
+    ) -> bytes:
+        """
+        Create overlay DTB with instance changes using fragment format.
         
+        Args:
+            instances_to_add: Dict of instance name -> Instance to add
+            instances_to_update: Dict of instance name -> Instance to update
+            instances_to_remove: Set of instance names to remove
+            
+        Returns:
+            DTBO blob as bytes
+        """
         fdt_sw = libfdt.FdtSw()
         fdt_sw.finish_reservemap()
         
+        # Root node
         fdt_sw.begin_node('')
         fdt_sw.property_string('compatible', 'linux,multikernel-overlay')
         
-        # For each new/modified instance, add a fragment
-        # Kernel expects fragment@0, fragment@1, etc.
-        fragment_index = 0
-        for name, instance in {**new_instances, **modified_instances}.items():
-            # Fragment node: fragment@<index>
-            fdt_sw.begin_node(f'fragment@{fragment_index}')
-            
-            fdt_sw.property_string('target-path', '/')
+        fragment_id = 0
+        
+        all_instances = {**instances_to_add, **instances_to_update}
+        for name, instance in all_instances.items():
+            fdt_sw.begin_node(f'fragment@{fragment_id}')
             fdt_sw.begin_node('__overlay__')
             fdt_sw.begin_node('instance-create')
+            
+            # Add instance properties
             fdt_sw.property_string('instance-name', name)
             fdt_sw.property_u32('id', instance.id)
+            
             fdt_sw.begin_node('resources')
-
-            fdt_sw.property_u64('memory-bytes', instance.resources.memory_bytes)
             
             import struct
             cpus_data = struct.pack('>' + 'I' * len(instance.resources.cpus), *instance.resources.cpus)
             fdt_sw.property('cpus', cpus_data)
             
+            fdt_sw.property_u64('memory-base', instance.resources.memory_base)
+            fdt_sw.property_u64('memory-bytes', instance.resources.memory_bytes)
+            
             if instance.resources.devices:
-                device_names_str = ' '.join(instance.resources.devices)
-                fdt_sw.property_string('device-names', device_names_str)
+                fdt_sw.property_string('devices', ' '.join(instance.resources.devices))
+
+            if instance.resources.numa_nodes:
+                import struct
+                numa_data = struct.pack('>' + 'I' * len(instance.resources.numa_nodes), *instance.resources.numa_nodes)
+                fdt_sw.property('numa-nodes', numa_data)
+            
+            if instance.resources.cpu_affinity:
+                fdt_sw.property_string('cpu-affinity', instance.resources.cpu_affinity)
+            
+            if instance.resources.memory_policy:
+                fdt_sw.property_string('memory-policy', instance.resources.memory_policy)
             
             fdt_sw.end_node()  # End resources
             fdt_sw.end_node()  # End instance-create
             fdt_sw.end_node()  # End __overlay__
             fdt_sw.end_node()  # End fragment
-            
-            fragment_index += 1
+            fragment_id += 1
         
-        # For each deleted instance, add a fragment with instance-remove
-        for name in deleted_instances:
-            # Fragment node: fragment@<index>
-            fdt_sw.begin_node(f'fragment@{fragment_index}')
-            
-            fdt_sw.property_string('target-path', '/')
+        for name in instances_to_remove:
+            fdt_sw.begin_node(f'fragment@{fragment_id}')
             fdt_sw.begin_node('__overlay__')
             fdt_sw.begin_node('instance-remove')
             fdt_sw.property_string('instance-name', name)
             fdt_sw.end_node()  # End instance-remove
             fdt_sw.end_node()  # End __overlay__
             fdt_sw.end_node()  # End fragment
-            
-            fragment_index += 1
+            fragment_id += 1
         
         fdt_sw.end_node()  # End root
         

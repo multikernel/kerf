@@ -23,28 +23,27 @@ source of truth while supporting imperative operations.
 Architecture:
 ============
 
-The system uses a clean separation between baseline and overlays:
+The kernel maintains the root device_tree up-to-date with all overlays already merged:
 
-**Baseline** (`/sys/fs/multikernel/device_tree`):
-- Contains ONLY hardware resources (no instances)
-- Describes: CPUs, memory pool, devices available for allocation
-- Set once via `kerf init --input=baseline.dts --apply`
-- Updated rarely via explicit baseline update operations
+**Root Device Tree** (`/sys/fs/multikernel/device_tree`):
+- Contains complete current state (resources + instances)
+- Kept up-to-date by the kernel automatically
+- Read directly to get current effective state (no user-space merging needed)
 
 **Overlays** (`/sys/fs/multikernel/overlays/`):
 - Contains ONLY instance changes (no resource modifications)
 - Applied via `/sys/fs/multikernel/overlays/new`
 - Kernel creates `tx_XXX/` directories after applying
+- Kernel automatically merges overlays into root device_tree
 - Rollback via `rmdir /sys/fs/multikernel/overlays/tx_XXX/`
 
 DeviceTreeManager workflow (for runtime operations):
-1. Read: Load baseline (resources) + all applied overlays (instances)
-2. Merge: Build effective state (baseline resources + overlay instances)
-3. Modify: Apply imperative operation to create modified state
-4. Validate: Validate entire modified state + enforce overlay constraints
-5. Generate: Create DTBO overlay representing instance delta only
-6. Apply: Write DTBO to `/sys/fs/multikernel/overlays/new`
-7. Track: Kernel creates `tx_XXX/` directory with transaction metadata
+1. Read: Read root device_tree directly (kernel keeps it up-to-date)
+2. Modify: Apply imperative operation to create modified state
+3. Validate: Validate entire modified state + enforce overlay constraints
+4. Generate: Create DTBO overlay representing instance delta only
+5. Apply: Write DTBO to `/sys/fs/multikernel/overlays/new`
+6. Track: Kernel creates `tx_XXX/` directory with transaction metadata
 
 Example Usage (for future commands):
 ====================================
@@ -101,14 +100,14 @@ All operations follow this same pattern, ensuring consistency and validation.
 import os
 import re
 from pathlib import Path
-from typing import Callable, Optional, List, Dict, Tuple
+from typing import Callable, Optional, List, Dict
 from contextlib import contextmanager
 
 from .dtc.parser import DeviceTreeParser
 from .dtc.overlay import OverlayGenerator
 from .dtc.validator import MultikernelValidator
 from .baseline import BaselineManager
-from .models import GlobalDeviceTree, OverlayInstanceData
+from .models import GlobalDeviceTree
 from .exceptions import ValidationError, ParseError, KernelInterfaceError
 
 
@@ -163,159 +162,20 @@ class DeviceTreeManager:
     
     def read_baseline(self) -> GlobalDeviceTree:
         """
-        Read baseline device tree from kernel (resources only).
+        Read root device tree from kernel.
+        
+        The kernel maintains the root device_tree up-to-date with all overlays
+        already merged, so this returns the complete current state including
+        both resources and instances.
         
         Returns:
-            GlobalDeviceTree model representing baseline (resources only, no instances)
+            GlobalDeviceTree model representing current complete state
             
         Raises:
             KernelInterfaceError: If kernel interface is inaccessible
             ParseError: If device tree cannot be parsed
         """
         return self.baseline_mgr.read_baseline()
-    
-    def read_applied_overlays(self) -> List[Tuple[str, bytes]]:
-        """
-        Read all successfully applied overlays from kernel.
-
-        Only includes transactions with status "applied", "success", or "ok".
-        Failed transactions are excluded to ensure accurate resource tracking.
-        
-        Returns:
-            List of (transaction_id, dtbo_data) tuples
-        """
-        overlays = []
-        
-        if not self.overlays_dir.exists():
-            return overlays
-        
-        for tx_dir in self.overlays_dir.iterdir():
-            if not tx_dir.is_dir():
-                continue
-            
-            match = re.match(r'^tx_(\d+)$', tx_dir.name)
-            if not match:
-                continue
-            
-            tx_id = match.group(1)
-            dtbo_path = tx_dir / "dtbo"
-
-            status_file = tx_dir / "status"
-            if status_file.exists():
-                try:
-                    with open(status_file, 'r') as f:
-                        status = f.read().strip()
-                    if status not in ("applied", "success", "ok"):
-                        continue
-                except OSError:
-                    continue
-
-            if dtbo_path.exists():
-                try:
-                    with open(dtbo_path, 'rb') as f:
-                        dtbo_data = f.read()
-                    overlays.append((tx_id, dtbo_data))
-                except OSError:
-                    # Skip if we can't read it
-                    continue
-        
-        # Sort by transaction ID
-        overlays.sort(key=lambda x: int(x[0]))
-        return overlays
-    
-    def read_current_state(self) -> GlobalDeviceTree:
-        """
-        Read current effective device tree state (baseline + all overlays).
-        
-        This reads the baseline (resources only) and all applied overlays (instances),
-        then merges them to produce the effective current state.
-        
-        Returns:
-            GlobalDeviceTree model representing current effective state
-            
-        Raises:
-            KernelInterfaceError: If kernel interface is inaccessible
-            ParseError: If device tree cannot be parsed
-        """
-        # Read baseline (resources only, no instances)
-        baseline = self.read_baseline()
-        
-        import copy
-        effective = copy.deepcopy(baseline)
-        if not hasattr(effective, 'instances') or effective.instances is None:
-            effective.instances = {}
-        else:
-            effective.instances = {}
-        
-        applied_overlays = self.read_applied_overlays()
-        for tx_id, dtbo_data in applied_overlays:
-            try:
-                self.parser._last_overlay_data = None
-                overlay_tree = self.parser.parse_dtb_from_bytes(dtbo_data)
-                overlay_data = self.parser.get_last_overlay_data()
-                effective = self._merge_overlay(effective, overlay_tree, overlay_data)
-            except ParseError:
-                continue
-        
-        return effective
-    
-    def _merge_overlay(
-        self,
-        base: GlobalDeviceTree,
-        overlay: GlobalDeviceTree,
-        overlay_data: Optional['OverlayInstanceData'] = None
-    ) -> GlobalDeviceTree:
-        """
-        Merge overlay into base tree.
-        
-        Overlay instances replace or add to base instances.
-        Overlays must NOT modify resources (enforced by validation).
-        
-        Args:
-            base: Base device tree (baseline + previous overlays)
-            overlay: Overlay device tree (instance changes only)
-            overlay_data: Optional overlay-specific data (removals) from parser
-            
-        Returns:
-            Merged device tree
-        """
-        import copy
-        
-        merged = copy.deepcopy(base)
-        
-        # Overlays must not modify hardware resources (they have empty hardware by design)
-        overlay_has_hardware = (
-            overlay.hardware.cpus.total > 0 or
-            overlay.hardware.memory.total_bytes > 0 or
-            (overlay.hardware.devices and len(overlay.hardware.devices) > 0)
-        )
-        
-        if overlay_has_hardware:
-            raise ValidationError(
-                "Overlay cannot modify hardware resources. "
-                "Resources are defined in baseline only. "
-                "Use 'kerf baseline update' to change resources."
-            )
-        
-        removals = set()
-        if overlay_data:
-            removals = overlay_data.removals
-        
-        for instance_name in removals:
-            if instance_name in merged.instances:
-                del merged.instances[instance_name]
-        
-        instances_to_merge = {}
-        if overlay_data and overlay_data.instances:
-            instances_to_merge = overlay_data.instances
-        elif overlay.instances:
-            instances_to_merge = overlay.instances
-        
-        if instances_to_merge:
-            for name, instance in instances_to_merge.items():
-                merged.instances[name] = copy.deepcopy(instance)
-        
-        return merged
     
     def apply_overlay(self, current: GlobalDeviceTree, modified: GlobalDeviceTree) -> str:
         """
@@ -551,7 +411,7 @@ class DeviceTreeManager:
         Apply an operation transactionally via overlay.
         
         This is the core method that implements the overlay pattern:
-        1. Read baseline and applied overlays to get current effective state
+        1. Read root device_tree to get current effective state (kernel keeps it up-to-date)
         2. Apply operation to get modified state
         3. Validate modified state
         4. Generate overlay (delta between current effective and modified)
@@ -573,8 +433,7 @@ class DeviceTreeManager:
             Any exceptions raised by the operation function
         """
         with self._acquire_lock():
-            # Read current effective state (baseline + all overlays)
-            current = self.read_current_state()
+            current = self.read_baseline()
             
             # Apply operation (returns modified state)
             modified = operation(current)
@@ -593,7 +452,7 @@ class DeviceTreeManager:
             List of instance names (empty list if kernel not initialized)
         """
         try:
-            tree = self.read_current_state()
+            tree = self.read_baseline()
             return list(tree.instances.keys())
         except (KernelInterfaceError, ParseError):
             return []
@@ -602,8 +461,7 @@ class DeviceTreeManager:
         """
         Check if an instance exists in the kernel filesystem.
 
-        This checks the actual kernel state (/sys/fs/multikernel/instances/),
-        not just overlays, to avoid false positives from stale overlays.
+        This checks the actual kernel state (/sys/fs/multikernel/instances/).
 
         Args:
             name: Instance name to check

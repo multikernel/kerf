@@ -639,7 +639,7 @@ def create(
         # Validate only (dry-run)
         if dry_run:
             try:
-                current = manager.read_current_state()
+                current = manager.read_baseline()
                 modified = create_instance_operation(current)
                 
                 # Get instance details from modified tree
@@ -677,7 +677,7 @@ def create(
         
         try:
             if debug:
-                current = manager.read_current_state()
+                current = manager.read_baseline()
                 modified = create_instance_operation(current)
                 dump_overlay_for_debug(manager, current, modified, name)
 
@@ -685,7 +685,7 @@ def create(
             
             click.echo(f"✓ Created instance '{name}' (transaction {tx_id})")
             if verbose:
-                current = manager.read_current_state()
+                current = manager.read_baseline()
                 instance = current.instances[name]
                 click.echo(f"  Instance ID: {instance.id}")
                 click.echo(f"  CPUs: {', '.join(map(str, instance.resources.cpus))}")

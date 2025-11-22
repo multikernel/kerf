@@ -72,7 +72,7 @@ def delete(ctx: click.Context, name: Optional[str], id: Optional[int], verbose: 
         if name:
             instance_name = name
             if not manager.has_instance(name):
-                current = manager.read_current_state()
+                current = manager.read_baseline()
                 available_instances = list(current.instances.keys())
                 
                 click.echo(
@@ -111,7 +111,7 @@ def delete(ctx: click.Context, name: Optional[str], id: Optional[int], verbose: 
                 sys.exit(2)
             
             # Find instance name from device tree by ID
-            current = manager.read_current_state()
+            current = manager.read_baseline()
             for inst_name, inst in current.instances.items():
                 if inst.id == instance_id:
                     instance_name = inst_name
@@ -178,7 +178,7 @@ def delete(ctx: click.Context, name: Optional[str], id: Optional[int], verbose: 
         # Validate only (dry-run)
         if dry_run:
             try:
-                current = manager.read_current_state()
+                current = manager.read_baseline()
                 
                 if instance_name not in current.instances:
                     click.echo(f"Error: Instance '{instance_name}' does not exist in device tree", err=True)
@@ -221,7 +221,7 @@ def delete(ctx: click.Context, name: Optional[str], id: Optional[int], verbose: 
         
         try:
             if debug:
-                current = manager.read_current_state()
+                current = manager.read_baseline()
                 modified = delete_instance_operation(current)
                 
                 from ..dtc.parser import DeviceTreeParser
