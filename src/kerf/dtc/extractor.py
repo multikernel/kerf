@@ -136,7 +136,15 @@ class InstanceExtractor:
         
         for name, device_info in devices.items():
             fdt_sw.begin_node(name)
-            fdt_sw.property_string('compatible', device_info.compatible)
+            
+            if device_info.device_type:
+                fdt_sw.property_string('device-type', device_info.device_type)
+            
+            if device_info.compatible:
+                fdt_sw.property_string('compatible', device_info.compatible)
+            
+            if device_info.device_name:
+                fdt_sw.property_string('device-name', device_info.device_name)
             
             if device_info.pci_id:
                 fdt_sw.property_string('pci-id', device_info.pci_id)

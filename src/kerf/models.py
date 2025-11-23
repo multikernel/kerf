@@ -111,6 +111,8 @@ class DeviceInfo:
     """Device information from hardware inventory."""
     name: str
     compatible: str
+    device_type: Optional[str] = None  # "pci", "platform", etc.
+    device_name: Optional[str] = None  # For platform devices (e.g., "serial8250")
     pci_id: Optional[str] = None
     vendor_id: Optional[int] = None
     device_id: Optional[int] = None

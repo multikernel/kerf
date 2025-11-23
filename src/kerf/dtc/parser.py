@@ -272,13 +272,15 @@ class DeviceTreeParser:
     
     def _parse_device_info(self, node_offset: int, name: str) -> DeviceInfo:
         """Parse individual device information."""
-        # Compatible is required for devices
+        compatible = ""
         try:
             compatible = self.fdt.getprop(node_offset, 'compatible').as_str()
         except libfdt.FdtException:
-            raise ParseError(f"Device '{name}' is missing required 'compatible' property")
+            pass
         
         # Parse optional properties
+        device_type = None
+        device_name = None
         pci_id = None
         vendor_id = None
         device_id = None
@@ -288,6 +290,16 @@ class DeviceTreeParser:
         namespaces = None
         host_reserved_ns = None
         available_ns = None
+        
+        try:
+            device_type = self.fdt.getprop(node_offset, 'device-type').as_str()
+        except libfdt.FdtException:
+            pass
+        
+        try:
+            device_name = self.fdt.getprop(node_offset, 'device-name').as_str()
+        except libfdt.FdtException:
+            pass
         
         try:
             pci_id = self.fdt.getprop(node_offset, 'pci-id').as_str()
@@ -337,6 +349,8 @@ class DeviceTreeParser:
         return DeviceInfo(
             name=name,
             compatible=compatible,
+            device_type=device_type,
+            device_name=device_name,
             pci_id=pci_id,
             vendor_id=vendor_id,
             device_id=device_id,
@@ -803,6 +817,8 @@ class DeviceTreeParser:
         compatible = compatible_match.group(1) if compatible_match else ""
         
         # Parse optional properties
+        device_type = None
+        device_name = None
         pci_id = None
         vendor_id = None
         device_id = None
@@ -812,6 +828,14 @@ class DeviceTreeParser:
         namespaces = None
         host_reserved_ns = None
         available_ns = None
+        
+        device_type_match = re.search(r'device-type\s*=\s*"([^"]+)"', content)
+        if device_type_match:
+            device_type = device_type_match.group(1)
+        
+        device_name_match = re.search(r'device-name\s*=\s*"([^"]+)"', content)
+        if device_name_match:
+            device_name = device_name_match.group(1)
         
         pci_id_match = re.search(r'pci-id\s*=\s*"([^"]+)"', content)
         if pci_id_match:
@@ -852,6 +876,8 @@ class DeviceTreeParser:
         return DeviceInfo(
             name=name,
             compatible=compatible,
+            device_type=device_type,
+            device_name=device_name,
             pci_id=pci_id,
             vendor_id=vendor_id,
             device_id=device_id,
