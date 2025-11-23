@@ -141,6 +141,7 @@ class Instance:
     id: int
     resources: InstanceResources
     config: Optional[InstanceConfig] = None
+    options: Optional[Dict[str, bool]] = None
 
 @dataclass
 class TopologySection:

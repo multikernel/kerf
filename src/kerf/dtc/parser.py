@@ -373,6 +373,10 @@ class DeviceTreeParser:
                 except libfdt.FdtException:
                     break
         except libfdt.FdtException as e:
+            error_str = str(e)
+            if 'FDT_ERR_NOTFOUND' in error_str or 'NOTFOUND' in error_str:
+                return instances
+            # For other errors, re-raise
             raise ParseError(f"Error iterating instance nodes: {e}") from e
 
         return instances
@@ -438,11 +442,13 @@ class DeviceTreeParser:
             raise ParseError("Missing 'id' property in instance-create")
         
         resources = self._parse_instance_resources_from_overlay(node_offset)
-        
+        options = self._parse_instance_options(node_offset)
+
         return Instance(
             name=instance_name,
             id=instance_id,
-            resources=resources
+            resources=resources,
+            options=options
         )
     
     def _parse_instance_resources_from_overlay(self, node_offset: int) -> InstanceResources:
@@ -493,13 +499,15 @@ class DeviceTreeParser:
         except libfdt.FdtException as e:
             raise ParseError(f"Missing 'id' property for instance '{name}': {e}") from e
 
-        # Parse resources
+        # Parse resources and options
         resources = self._parse_instance_resources(node_offset)
-        
+        options = self._parse_instance_options(node_offset)
+
         return Instance(
             name=name,
             id=instance_id,
-            resources=resources
+            resources=resources,
+            options=options
         )
     
     def _parse_instance_resources(self, node_offset: int) -> InstanceResources:
@@ -540,6 +548,22 @@ class DeviceTreeParser:
             devices=devices
         )
     
+    def _parse_instance_options(self, node_offset: int) -> Optional[Dict[str, bool]]:
+        """Parse instance options from DTB node."""
+        options = {}
+        
+        try:
+            options_node = self.fdt.subnode_offset(node_offset, 'options')
+        except libfdt.FdtException:
+            return None if not options else options
+
+        try:
+            self.fdt.getprop(options_node, 'enable-host-kcore')
+            options['enable-host-kcore'] = True
+        except libfdt.FdtException:
+            pass
+
+        return options if options else None
     
     def _parse_device_references(self) -> Dict[str, Dict]:
         """Parse device reference nodes (phandle targets) from DTB."""
@@ -934,13 +958,15 @@ class DeviceTreeParser:
             raise ParseError(f"Missing 'id' for instance '{name}'")
         instance_id = int(id_match.group(1))
         
-        # Parse resources
+        # Parse resources and options
         resources = self._parse_instance_resources_from_dts(content)
+        options = self._parse_instance_options_from_dts(content)
         
         return Instance(
             name=name,
             id=instance_id,
-            resources=resources
+            resources=resources,
+            options=options
         )
     
     def _parse_instance_resources_from_dts(self, content: str) -> InstanceResources:
@@ -1007,6 +1033,36 @@ class DeviceTreeParser:
             memory_policy=memory_policy
         )
     
+    def _parse_instance_options_from_dts(self, content: str) -> Optional[Dict[str, bool]]:
+        """Parse instance options from DTS content."""
+        import re
+        
+        options_start = re.search(r'options\s*\{', content)
+        if not options_start:
+            return None
+
+        start_pos = options_start.end() - 1
+        end_pos = start_pos
+        
+        for i, char in enumerate(content[start_pos:], start_pos):
+            if char == '{':
+                brace_count += 1
+            elif char == '}':
+                brace_count -= 1
+                if brace_count == 0:
+                    end_pos = i
+                    break
+        
+        if brace_count != 0:
+            return None
+        
+        options_text = content[start_pos+1:end_pos]
+        options = {}
+
+        if re.search(r'enable-host-kcore\s*;', options_text):
+            options['enable-host-kcore'] = True
+
+        return options if options else None
     
     def _parse_device_references_from_dts(self, dts_content: str) -> Dict[str, Dict]:
         """Parse device reference nodes from DTS content."""

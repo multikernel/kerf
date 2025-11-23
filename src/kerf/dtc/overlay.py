@@ -122,6 +122,19 @@ class OverlayGenerator:
                 fdt_sw.property_string('memory-policy', instance.resources.memory_policy)
             
             fdt_sw.end_node()  # End resources
+            
+            # Add options node if options exist
+            if instance.options:
+                fdt_sw.begin_node('options')
+                
+                # Add enable-host-kcore if enabled
+                if instance.options.get('enable-host-kcore'):
+                    fdt_sw.property('enable-host-kcore', b'')
+                
+                # Future options can be added here
+                
+                fdt_sw.end_node()  # End options
+            
             fdt_sw.end_node()  # End instance-create
             fdt_sw.end_node()  # End __overlay__
             fdt_sw.end_node()  # End fragment

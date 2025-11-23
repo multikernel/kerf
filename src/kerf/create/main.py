@@ -414,6 +414,7 @@ def dump_overlay_for_debug(
 @click.option('--memory', '-m', required=True, help='Memory allocation (e.g., "2GB", "2048MB", or bytes)')
 @click.option('--memory-base', help='Memory base address (hex: 0x80000000 or decimal, auto-assigned if not specified)')
 @click.option('--devices', '-d', help='Device names (comma-separated, e.g., "enp9s0_dev,nvme0"). Device names must match device node names in the baseline DTB.')
+@click.option('--enable-host-kcore', is_flag=True, help='Enable host kcore access for this instance')
 @click.option('--dry-run', is_flag=True, help='Validate without applying to kernel')
 @click.option('--verbose', '-v', is_flag=True, help='Verbose output')
 def create(
@@ -428,6 +429,7 @@ def create(
     memory: str,
     memory_base: Optional[str],
     devices: Optional[str],
+    enable_host_kcore: bool,
     dry_run: bool,
     verbose: bool
 ):
@@ -624,11 +626,16 @@ def create(
                 memory_policy=memory_policy
             )
             
+            options = None
+            if enable_host_kcore:
+                options = {'enable-host-kcore': True}
+
             # Create instance
             instance = Instance(
                 name=name,
                 id=instance_id,
-                resources=resources
+                resources=resources,
+                options=options
             )
             
             # Add to modified state
