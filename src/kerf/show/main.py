@@ -26,6 +26,8 @@ from typing import Optional, Dict, List
 import click
 
 from ..utils import get_instance_id_from_name, get_instance_status
+from ..dtc.parser import DeviceTreeParser
+import libfdt
 
 
 def read_proc_kimage() -> str:
@@ -104,15 +106,25 @@ def read_instance_info(name: str) -> Dict[str, Optional[str]]:
         for file_path in instance_dir.iterdir():
             if file_path.is_file() and file_path.name not in ['id', 'status']:
                 try:
-                    # Try text mode first
-                    try:
-                        with open(file_path, 'r', encoding='utf-8', errors='replace') as f:
-                            content = f.read().strip()
-                            if content:
-                                info[file_path.name] = content
-                    except (UnicodeDecodeError, ValueError):
-                        # If UTF-8 decode fails, skip this file (it's likely binary)
-                        pass
+                    if file_path.name == 'device_tree':
+                        try:
+                            with open(file_path, 'rb') as f:
+                                file_data = f.read()
+
+                            if file_data and len(file_data) > 0:
+                                try:
+                                    parser = DeviceTreeParser()
+                                    fdt = libfdt.Fdt(file_data)
+                                    parser.fdt = fdt
+                                    dts_lines = parser._fdt_to_dts_recursive(0, 0)
+                                    dts_content = '\n'.join(dts_lines)
+                                    if not dts_content.startswith('/dts-v1/'):
+                                        dts_content = '/dts-v1/;\n\n' + dts_content
+                                    info['device_tree_source'] = dts_content
+                                except Exception:
+                                    pass
+                        except (OSError, IOError):
+                            pass
                 except (OSError, IOError):
                     pass
     except (OSError, IOError):
