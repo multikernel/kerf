@@ -199,7 +199,7 @@ class InstanceExtractor:
             fdt_sw.property_u64('memory-bytes', instance.resources.memory_bytes)
             
             if instance.resources.devices:
-                fdt_sw.property_string('devices', ' '.join(instance.resources.devices))
+                fdt_sw.property_string('device-names', ' '.join(instance.resources.devices))
             
             fdt_sw.end_node()  # End resources
             fdt_sw.end_node()  # End instance
@@ -321,7 +321,7 @@ class InstanceExtractor:
         
         if instance.resources.devices:
             # This would need proper phandle handling
-            self.fdt.setprop_str(resources_offset, "devices", " ".join(instance.resources.devices))
+            self.fdt.setprop_str(resources_offset, "device-names", " ".join(instance.resources.devices))
     
     
     def _add_device_references(self, parent_offset: int, tree: GlobalDeviceTree):
