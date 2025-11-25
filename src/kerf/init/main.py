@@ -200,11 +200,16 @@ def init(input: str, dry_run: bool, report: bool, format: str, verbose: bool):
             try:
                 mount_multikernel_fs(verbose=verbose)
 
+                if verbose:
+                    click.echo("Writing baseline to kernel...")
                 baseline_mgr.write_baseline(tree)
                 click.echo("✓ Baseline applied to kernel successfully")
                 click.echo(f"  Baseline: /sys/fs/multikernel/device_tree")
             except KernelInterfaceError as e:
                 click.echo(f"Error: Failed to apply baseline: {e}", err=True)
+                if verbose:
+                    import traceback
+                    traceback.print_exc()
                 sys.exit(1)
         
     except ParseError as e:

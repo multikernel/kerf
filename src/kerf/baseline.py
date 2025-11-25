@@ -132,7 +132,21 @@ class BaselineManager:
         try:
             with open(self.baseline_path, 'wb') as f:
                 f.write(dtb_data)
+                f.flush()
+                os.fsync(f.fileno())
             
+            if not self.baseline_path.exists():
+                raise KernelInterfaceError(
+                    f"Baseline DTB write completed but file does not exist at {self.baseline_path}. "
+                    f"Kernel may have rejected the write operation."
+                )
+            file_size = self.baseline_path.stat().st_size
+            if file_size == 0:
+                raise KernelInterfaceError(
+                    f"Baseline DTB written but file is empty. "
+                    f"Kernel may have rejected the DTB format."
+                )
+
         except OSError as e:
             raise KernelInterfaceError(
                 f"Failed to write baseline to {self.baseline_path}: {e}"
