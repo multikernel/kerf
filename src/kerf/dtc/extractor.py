@@ -187,6 +187,8 @@ class InstanceExtractor:
         
         for name, instance in instances.items():
             fdt_sw.begin_node(name)
+            if instance.id is None:
+                raise ValueError(f"Instance '{name}' missing ID in baseline (should not happen)")
             fdt_sw.property_u32('id', instance.id)
             
             fdt_sw.begin_node('resources')
@@ -301,6 +303,9 @@ class InstanceExtractor:
         
         for name, instance in tree.instances.items():
             instance_offset = self.fdt.add_subnode(instances_offset, name)
+            # Instance ID should always be present in baseline (instances are already created)
+            if instance.id is None:
+                raise ValueError(f"Instance '{name}' missing ID in baseline (should not happen)")
             self.fdt.setprop_u32(instance_offset, "id", instance.id)
             
             # Add resources section

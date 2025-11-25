@@ -570,7 +570,7 @@ def create(
             
             # Check if instance ID is already in use (if specified)
             if id is not None:
-                existing_ids = {inst.id for inst in modified.instances.values()}
+                existing_ids = {inst.id for inst in modified.instances.values() if inst.id is not None}
                 if id in existing_ids:
                     # Find which instance uses this ID
                     for inst_name, inst in modified.instances.items():
@@ -580,8 +580,7 @@ def create(
                             )
                 instance_id = id
             else:
-                # Find next instance ID if not specified
-                instance_id = find_next_instance_id(modified)
+                instance_id = None
             
             # Allocate CPUs based on specification
             if is_count:

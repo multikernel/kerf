@@ -450,10 +450,11 @@ class DeviceTreeParser:
         except libfdt.FdtException:
             raise ParseError("Missing 'instance-name' property in instance-create")
         
+        instance_id = None
         try:
             instance_id = self.fdt.getprop(node_offset, 'id').as_uint32()
         except libfdt.FdtException:
-            raise ParseError("Missing 'id' property in instance-create")
+            pass
         
         resources = self._parse_instance_resources_from_overlay(node_offset)
         options = self._parse_instance_options(node_offset)

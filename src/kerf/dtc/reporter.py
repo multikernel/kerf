@@ -138,7 +138,8 @@ class ValidationReporter:
         lines.append("Instance Allocations:")
         
         for name, instance in tree.instances.items():
-            lines.append(f"  {name} (ID: {instance.id}):")
+            id_str = f"ID: {instance.id}" if instance.id is not None else "ID: auto-assigned"
+            lines.append(f"  {name} ({id_str}):")
             
             # CPU allocation
             cpu_count = len(instance.resources.cpus)
@@ -241,7 +242,7 @@ class ValidationReporter:
             },
             "instances": {
                 name: {
-                    "id": instance.id,
+                    "id": instance.id if instance.id is not None else "auto-assigned",
                     "resources": {
                         "cpus": instance.resources.cpus,
                         "memory_base": instance.resources.memory_base,

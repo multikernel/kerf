@@ -111,7 +111,8 @@ class OverlayGenerator:
             
             # Add instance properties
             fdt_sw.property_string('instance-name', name)
-            fdt_sw.property_u32('id', instance.id)
+            if instance.id is not None:
+                fdt_sw.property_u32('id', instance.id)
             
             fdt_sw.begin_node('resources')
             

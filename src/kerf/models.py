@@ -140,7 +140,7 @@ class InstanceResources:
 class Instance:
     """A kernel instance definition."""
     name: str
-    id: int
+    id: Optional[int]  # None means kernel should auto-assign
     resources: InstanceResources
     config: Optional[InstanceConfig] = None
     options: Optional[Dict[str, bool]] = None

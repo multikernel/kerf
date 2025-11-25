@@ -325,9 +325,10 @@ class MultikernelValidator:
                 self.errors.append(f"Duplicate instance name: '{instance.name}' appears multiple times")
             instance_names.add(instance.name)
             
-            if instance.id in instance_ids:
-                self.errors.append(f"Duplicate instance ID: {instance.id} assigned to multiple instances")
-            instance_ids.add(instance.id)
+            if instance.id is not None:
+                if instance.id in instance_ids:
+                    self.errors.append(f"Duplicate instance ID: {instance.id} assigned to multiple instances")
+                instance_ids.add(instance.id)
             
             self._validate_instance_resources(instance, tree)
     

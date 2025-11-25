@@ -305,7 +305,7 @@ def find_next_instance_id(tree: GlobalDeviceTree) -> int:
     Raises:
         ResourceError: If no IDs available
     """
-    existing_ids = {inst.id for inst in tree.instances.values()}
+    existing_ids = {inst.id for inst in tree.instances.values() if inst.id is not None}
     
     # Find first available ID in range 1-511
     for instance_id in range(1, 512):
