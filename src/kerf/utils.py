@@ -46,6 +46,33 @@ def get_instance_id_from_name(name: str) -> Optional[int]:
         return None
 
 
+def get_instance_name_from_id(instance_id: int) -> Optional[str]:
+    """
+    Get instance name from instance ID by scanning /sys/fs/multikernel/instances/.
+    
+    Args:
+        instance_id: Instance ID to search for
+    
+    Returns:
+        Instance name if found, None otherwise
+    """
+    instances_dir = Path('/sys/fs/multikernel/instances')
+    
+    if not instances_dir.exists():
+        return None
+    
+    try:
+        for inst_dir in instances_dir.iterdir():
+            if inst_dir.is_dir():
+                found_id = get_instance_id_from_name(inst_dir.name)
+                if found_id == instance_id:
+                    return inst_dir.name
+    except (OSError, IOError):
+        pass
+    
+    return None
+
+
 def get_instance_status(name: str) -> Optional[str]:
     """
     Get instance status from kernel filesystem.

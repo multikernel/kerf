@@ -15,19 +15,19 @@
 """
 Delete kernel instance command.
 
-This command removes a kernel instance from the device tree using an overlay.
-The instance must not have a kernel loaded (must be in EMPTY or READY state).
+This command removes a kernel instance by generating an instance-remove overlay
+and applying it to /sys/fs/multikernel/overlays/new. The instance must not have
+a kernel loaded (must be in EMPTY or READY state).
 """
 
 import sys
-import copy
 from typing import Optional
 import click
 
 from ..runtime import DeviceTreeManager
 from ..models import InstanceState
 from ..exceptions import ResourceError, ValidationError, KernelInterfaceError, ParseError
-from ..utils import get_instance_id_from_name, get_instance_status
+from ..utils import get_instance_id_from_name, get_instance_name_from_id, get_instance_status
 
 
 @click.command(name='delete')
@@ -40,9 +40,10 @@ def delete(ctx: click.Context, name: Optional[str], id: Optional[int], verbose: 
     """
     Delete a kernel instance from the device tree.
     
-    This command removes a kernel instance using a device tree overlay. The instance
-    must not have a kernel loaded (must be in EMPTY or READY state). If a kernel
-    is loaded, use 'kerf unload' first.
+    This command generates an instance-remove overlay and applies it to the kernel,
+    which handles deletion via mk_instance_destroy(). The instance must not have a
+    kernel loaded (must be in EMPTY or READY state). If a kernel is loaded, use
+    'kerf unload' first.
     
     Examples:
     
@@ -72,37 +73,28 @@ def delete(ctx: click.Context, name: Optional[str], id: Optional[int], verbose: 
         if name:
             instance_name = name
             if not manager.has_instance(name):
-                current = manager.read_baseline()
-                available_instances = list(current.instances.keys())
-                
                 click.echo(
-                    f"Error: Instance '{name}' does not exist in device tree",
+                    f"Error: Instance '{name}' does not exist",
                     err=True
                 )
-                if available_instances:
-                    click.echo(
-                        f"Available instances: {', '.join(available_instances)}",
-                        err=True
-                    )
-                else:
-                    click.echo(
-                        "No instances found in device tree",
-                        err=True
-                    )
+                click.echo(
+                    f"Check available instances in /sys/fs/multikernel/instances/",
+                    err=True
+                )
+                sys.exit(1)
+
+            instance_id = get_instance_id_from_name(name)
+            if instance_id is None:
+                click.echo(
+                    f"Error: Could not read instance ID for '{name}'",
+                    err=True
+                )
                 sys.exit(1)
             
-            # Try to get ID from kernel filesystem (if instance directory exists)
-            instance_id = get_instance_id_from_name(name)
-            
             if verbose:
-                if instance_id:
-                    click.echo(f"Instance name: {name} (ID: {instance_id})")
-                else:
-                    click.echo(f"Instance name: {name} (ID: from device tree)")
+                click.echo(f"Instance name: {name} (ID: {instance_id})")
         else:
-            # Use ID directly, need to find name from device tree
             instance_id = id
-            
             if instance_id < 1 or instance_id > 511:
                 click.echo(
                     f"Error: --id must be between 1 and 511 (got {instance_id})",
@@ -110,19 +102,20 @@ def delete(ctx: click.Context, name: Optional[str], id: Optional[int], verbose: 
                 )
                 sys.exit(2)
             
-            # Find instance name from device tree by ID
-            current = manager.read_baseline()
-            for inst_name, inst in current.instances.items():
-                if inst.id == instance_id:
-                    instance_name = inst_name
-                    break
-            
+            instance_name = get_instance_name_from_id(instance_id)
             if not instance_name:
                 click.echo(
-                    f"Error: Instance with ID {instance_id} does not exist in device tree",
+                    f"Error: Instance with ID {instance_id} not found",
+                    err=True
+                )
+                click.echo(
+                    f"Check available instances in /sys/fs/multikernel/instances/",
                     err=True
                 )
                 sys.exit(1)
+            
+            if verbose:
+                click.echo(f"Instance name: {instance_name} (ID: {instance_id})")
         
         status = get_instance_status(instance_name)
         
@@ -164,50 +157,33 @@ def delete(ctx: click.Context, name: Optional[str], id: Optional[int], verbose: 
             
             if verbose:
                 click.echo(f"Instance status: '{status}' (OK to delete)")
-        
-        def delete_instance_operation(current):
-            """Operation function to delete instance from device tree."""
-            if instance_name not in current.instances:
-                raise ResourceError(f"Instance '{instance_name}' does not exist in device tree")
-            
-            modified = copy.deepcopy(current)
-            del modified.instances[instance_name]
-            
-            return modified
-        
-        # Validate only (dry-run)
+
         if dry_run:
             try:
-                current = manager.read_baseline()
-                
-                if instance_name not in current.instances:
-                    click.echo(f"Error: Instance '{instance_name}' does not exist in device tree", err=True)
-                    sys.exit(1)
-                
-                # Get instance ID from device tree if not available from kernel
-                if instance_id is None:
-                    instance_id = current.instances[instance_name].id
-                
-                modified = delete_instance_operation(current)
-                
                 click.echo(f"✓ Validation passed for deletion of instance '{instance_name}'")
                 click.echo(f"  Instance ID: {instance_id}")
                 
                 if debug:
-                    from ..dtc.parser import DeviceTreeParser
-                    import libfdt
-                    
-                    dtbo_data = manager.overlay_gen.generate_overlay(current, modified)
-                    fdt = libfdt.Fdt(dtbo_data)
-                    parser = DeviceTreeParser()
-                    parser.fdt = fdt
-                    dts_lines = parser._fdt_to_dts_recursive(0, 0)
-                    dts_content = '\n'.join(dts_lines)
-                    
-                    click.echo(f"\nDebug: Overlay DTS source for deletion of '{instance_name}' (dry-run):")
-                    click.echo("─" * 70)
-                    click.echo(dts_content)
-                    click.echo("─" * 70)
+                    try:
+                        from ..dtc.parser import DeviceTreeParser
+                        import libfdt
+                        
+                        dtbo_data = manager.overlay_gen.generate_removal_overlay(instance_name)
+                        fdt = libfdt.Fdt(dtbo_data)
+                        parser = DeviceTreeParser()
+                        parser.fdt = fdt
+                        dts_lines = parser._fdt_to_dts_recursive(0, 0)
+                        dts_content = '\n'.join(dts_lines)
+                        
+                        click.echo(f"\nDebug: Overlay DTS source for deletion of '{instance_name}' (dry-run):")
+                        click.echo("─" * 70)
+                        click.echo(dts_content)
+                        click.echo("─" * 70)
+                    except Exception as e:
+                        click.echo(f"Debug: Failed to generate DTS output: {e}", err=True)
+                        if verbose:
+                            import traceback
+                            traceback.print_exc()
                 
                 click.echo("\n✓ Instance would be deleted (dry-run mode)")
                 click.echo("  Remove --dry-run to apply overlay to kernel")
@@ -221,25 +197,28 @@ def delete(ctx: click.Context, name: Optional[str], id: Optional[int], verbose: 
         
         try:
             if debug:
-                current = manager.read_baseline()
-                modified = delete_instance_operation(current)
-                
-                from ..dtc.parser import DeviceTreeParser
-                import libfdt
-                
-                dtbo_data = manager.overlay_gen.generate_overlay(current, modified)
-                fdt = libfdt.Fdt(dtbo_data)
-                parser = DeviceTreeParser()
-                parser.fdt = fdt
-                dts_lines = parser._fdt_to_dts_recursive(0, 0)
-                dts_content = '\n'.join(dts_lines)
-                
-                click.echo(f"Debug: Overlay DTS source for deletion of '{instance_name}':")
-                click.echo("─" * 70)
-                click.echo(dts_content)
-                click.echo("─" * 70)
-            
-            tx_id = manager.apply_operation(delete_instance_operation)
+                try:
+                    from ..dtc.parser import DeviceTreeParser
+                    import libfdt
+                    
+                    dtbo_data = manager.overlay_gen.generate_removal_overlay(instance_name)
+                    fdt = libfdt.Fdt(dtbo_data)
+                    parser = DeviceTreeParser()
+                    parser.fdt = fdt
+                    dts_lines = parser._fdt_to_dts_recursive(0, 0)
+                    dts_content = '\n'.join(dts_lines)
+                    
+                    click.echo(f"\nDebug: Overlay DTS source for deletion of '{instance_name}':")
+                    click.echo("─" * 70)
+                    click.echo(dts_content)
+                    click.echo("─" * 70)
+                except Exception as e:
+                    click.echo(f"Debug: Failed to generate DTS output: {e}", err=True)
+                    if verbose:
+                        import traceback
+                        traceback.print_exc()
+
+            tx_id = manager.apply_removal_overlay(instance_name)
             
             click.echo(f"✓ Deleted instance '{instance_name}' (transaction {tx_id})")
             if verbose:

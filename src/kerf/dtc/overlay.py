@@ -62,6 +62,21 @@ class OverlayGenerator:
 
         return self._create_overlay_dtb(instances_to_add, instances_to_update, instances_to_remove)
     
+    def generate_removal_overlay(self, instance_name: str) -> bytes:
+        """
+        Generate an instance-remove overlay for a single instance.
+
+        This method generates a minimal overlay that only contains an instance-remove
+        fragment, allowing the kernel to handle deletion via mk_instance_destroy().
+
+        Args:
+            instance_name: Name of the instance to remove
+
+        Returns:
+            DTBO blob as bytes containing only the instance-remove fragment
+        """
+        return self._create_overlay_dtb({}, {}, {instance_name})
+
     def _create_overlay_dtb(
         self,
         instances_to_add: dict,

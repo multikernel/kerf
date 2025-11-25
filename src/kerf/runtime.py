@@ -268,6 +268,75 @@ class DeviceTreeManager:
                 f"Failed to write overlay to {self.overlays_new}: {e}"
             ) from e
     
+    def apply_removal_overlay(self, instance_name: str) -> str:
+        """
+        Apply an instance-remove overlay directly to the kernel.
+
+        This method generates an instance-remove overlay and applies it to
+        /sys/fs/multikernel/overlays/new, allowing the kernel to handle deletion
+        via mk_instance_destroy(). This is the correct approach for deletion,
+        as it doesn't require reading or modifying the baseline device tree.
+
+        Args:
+            instance_name: Name of the instance to remove
+
+        Returns:
+            Transaction ID from applied overlay
+
+        Raises:
+            KernelInterfaceError: If overlay application fails
+        """
+        with self._acquire_lock():
+            try:
+                dtbo_data = self.overlay_gen.generate_removal_overlay(instance_name)
+            except Exception as e:
+                raise KernelInterfaceError(
+                    f"Failed to generate removal overlay: {e}"
+                ) from e
+            
+            try:
+                if not self.overlays_new.exists():
+                    raise KernelInterfaceError(
+                        f"Overlay interface not found: {self.overlays_new}"
+                    )
+
+                with open(self.overlays_new, 'wb') as f:
+                    f.write(dtbo_data)
+
+                tx_id = self._find_latest_transaction()
+                if not tx_id:
+                    raise KernelInterfaceError(
+                        "Overlay written but kernel did not create transaction directory"
+                    )
+
+                tx_dir = self.overlays_dir / f"tx_{tx_id}"
+                status_file = tx_dir / "status"
+
+                if status_file.exists():
+                    try:
+                        with open(status_file, 'r') as f:
+                            status = f.read().strip()
+                        if status not in ("applied", "success", "ok"):
+                            error_msg = f"Overlay transaction {tx_id} failed with status: '{status}'"
+                            instance_file = tx_dir / "instance"
+                            if instance_file.exists():
+                                try:
+                                    with open(instance_file, 'r') as f:
+                                        tx_instance_name = f.read().strip()
+                                    error_msg += f" (instance: {tx_instance_name})"
+                                except OSError:
+                                    pass
+                            raise KernelInterfaceError(error_msg)
+                    except OSError:
+                        pass
+
+                return tx_id
+
+            except OSError as e:
+                raise KernelInterfaceError(
+                    f"Failed to write overlay to {self.overlays_new}: {e}"
+                ) from e
+
     def _find_latest_transaction(self) -> Optional[str]:
         """Find the latest transaction ID from kernel-created directories."""
         if not self.overlays_dir.exists():
