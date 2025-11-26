@@ -377,14 +377,7 @@ def build_baseline_from_cmdline(
         )
     memory_pool_base, memory_pool_bytes = memory_pool
 
-    total_memory = get_total_memory_from_system()
-    if total_memory is None:
-        raise KernelInterfaceError(
-            "Could not determine total system memory from /proc/meminfo. "
-            "Please ensure /proc/meminfo is accessible."
-        )
-
-    total_bytes = total_memory
+    total_bytes = memory_pool_base + memory_pool_bytes
     host_reserved_bytes = memory_pool_base
     if verbose:
         click.echo(f"Parsed CPU specification: {cpus}")
@@ -394,7 +387,7 @@ def build_baseline_from_cmdline(
         click.echo(f"Memory pool from /proc/iomem:")
         click.echo(f"  Base: {hex(memory_pool_base)}")
         click.echo(f"  Size: {memory_pool_bytes} bytes ({memory_pool_bytes / (1024**3):.2f} GB)")
-        click.echo(f"  Total memory: {total_bytes} bytes ({total_bytes / (1024**3):.2f} GB)")
+        click.echo(f"  Total bytes: {total_bytes} bytes ({total_bytes / (1024**3):.2f} GB)")
         click.echo(f"  Host-reserved: {host_reserved_bytes} bytes ({host_reserved_bytes / (1024**3):.2f} GB)")
     
     cpu_allocation = CPUAllocation(
