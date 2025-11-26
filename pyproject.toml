@@ -15,6 +15,7 @@ python = "^3.8"
 pylibfdt = "^1.7.0"
 click = "^8.0.0"
 pyyaml = "^6.0"
+pyudev = "^0.24.0"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^7.0.0"

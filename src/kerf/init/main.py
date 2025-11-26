@@ -27,6 +27,10 @@ import re
 from pathlib import Path
 from typing import Optional, Tuple, List
 import click
+try:
+    import pyudev
+except ImportError:
+    pyudev = None
 
 from ..baseline import BaselineManager
 from ..dtc.parser import DeviceTreeParser
@@ -165,69 +169,89 @@ def detect_pci_device(device_name: str) -> Optional[DeviceInfo]:
     Detect PCI device information from the system.
     
     Args:
-        device_name: Device name (e.g., "enp9s0_dev" or PCI BDF "0000:09:00.0")
+        device_name: Device name (e.g., "enp9s0" or PCI BDF "0000:09:00.0")
         
     Returns:
         DeviceInfo with detected PCI information, or None if not found
     """
+    if pyudev is None:
+        raise KernelInterfaceError(
+            "pyudev is required for device detection. Please install it: pip install pyudev"
+        )
+    
     try:
+        context = pyudev.Context()
+        pci_device = None
         pci_slot = None
+        
         if re.match(r'^[0-9a-f]{4}:[0-9a-f]{2}:[0-9a-f]{2}\.[0-9a-f]$', device_name):
             pci_slot = device_name
+            try:
+                pci_device = pyudev.Devices.from_path(context, f'/sys/bus/pci/devices/{pci_slot}')
+            except (ValueError, pyudev.DeviceNotFoundError):
+                return None
         else:
-            pci_devices = Path('/sys/bus/pci/devices')
-            if pci_devices.exists():
-                for pci_dev in pci_devices.iterdir():
+            try:
+                net_device = pyudev.Devices.from_name(context, 'net', device_name)
+                pci_device = net_device.find_parent('pci')
+                if pci_device:
+                    pci_slot = pci_device.sys_name
+            except (ValueError, pyudev.DeviceNotFoundError):
+                pass
+
+            if not pci_device:
+                for device in context.list_devices(subsystem='pci'):
                     try:
-                        for subdir in pci_dev.iterdir():
-                            if subdir.is_dir():
-                                for child in subdir.iterdir():
-                                    if child.name == device_name:
-                                        pci_slot = pci_dev.name
-                                        break
-                            if pci_slot:
+                        for child in device.children:
+                            if child.sys_name == device_name:
+                                pci_device = device
+                                pci_slot = device.sys_name
                                 break
-                    except (OSError, PermissionError):
-                        # Skip directories we can't access
+                        if pci_device:
+                            break
+                    except (OSError, AttributeError):
                         continue
-                    
-                    if pci_slot:
-                        break
         
-        if not pci_slot:
-            return None
-        
-        pci_device_path = Path(f'/sys/bus/pci/devices/{pci_slot}')
-        if not pci_device_path.exists():
+        if not pci_device or not pci_slot:
             return None
         
         vendor_id = None
         device_id = None
+        pci_device_path = Path(pci_device.sys_path)
 
         vendor_file = pci_device_path / 'vendor'
         if vendor_file.exists():
-            with open(vendor_file, 'r') as f:
-                vendor_id = int(f.read().strip(), 16)
+            try:
+                with open(vendor_file, 'r') as f:
+                    vendor_id = int(f.read().strip(), 16)
+            except (ValueError, IOError):
+                pass
 
         device_file = pci_device_path / 'device'
         if device_file.exists():
-            with open(device_file, 'r') as f:
-                device_id = int(f.read().strip(), 16)
+            try:
+                with open(device_file, 'r') as f:
+                    device_id = int(f.read().strip(), 16)
+            except (ValueError, IOError):
+                pass
 
         compatible = "pci-device"  # Default
         class_file = pci_device_path / 'class'
         if class_file.exists():
-            with open(class_file, 'r') as f:
-                pci_class = int(f.read().strip(), 16)
-                class_code = (pci_class >> 16) & 0xFF
-                if class_code == 0x02:  # Network controller
-                    compatible = "pci-network"
-                elif class_code == 0x01:  # Mass storage controller
-                    compatible = "pci-storage"
-                elif class_code == 0x03:  # Display controller
-                    compatible = "pci-display"
-                elif class_code == 0x0c:  # Serial bus controller
-                    compatible = "pci-serial"
+            try:
+                with open(class_file, 'r') as f:
+                    pci_class = int(f.read().strip(), 16)
+                    class_code = (pci_class >> 16) & 0xFF
+                    if class_code == 0x02:  # Network controller
+                        compatible = "pci-network"
+                    elif class_code == 0x01:  # Mass storage controller
+                        compatible = "pci-storage"
+                    elif class_code == 0x03:  # Display controller
+                        compatible = "pci-display"
+                    elif class_code == 0x0c:  # Serial bus controller
+                        compatible = "pci-serial"
+            except (ValueError, IOError):
+                pass
         
         return DeviceInfo(
             name=device_name,
@@ -237,7 +261,7 @@ def detect_pci_device(device_name: str) -> Optional[DeviceInfo]:
             vendor_id=vendor_id,
             device_id=device_id
         )
-    except (OSError, IOError, ValueError, AttributeError):
+    except (OSError, IOError, ValueError, AttributeError, pyudev.DeviceNotFoundError) as e:
         return None
 
 
