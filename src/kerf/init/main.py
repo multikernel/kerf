@@ -33,6 +33,7 @@ from ..dtc.parser import DeviceTreeParser
 from ..dtc.validator import MultikernelValidator
 from ..dtc.reporter import ValidationReporter
 from ..exceptions import ValidationError, KernelInterfaceError, ParseError
+import libfdt
 from ..models import (
     GlobalDeviceTree,
     HardwareInventory,
@@ -444,6 +445,7 @@ def build_baseline_from_cmdline(
 
 
 @click.command()
+@click.pass_context
 @click.option('--input', '-i', help='Input DTS or DTB file containing all resources. Mutually exclusive with --cpus and --devices. When used, all resources must come from the file.')
 @click.option('--cpus', '-c', help='CPU specification for baseline (e.g., "4-7" or "4,5,6,7"). Mutually exclusive with --input. Memory will be parsed from /proc/iomem.')
 @click.option('--devices', '-d', help='Device names (comma-separated, e.g., "enp9s0_dev,nvme0"). Mutually exclusive with --input. Creates minimal device entries in baseline.')
@@ -452,7 +454,7 @@ def build_baseline_from_cmdline(
 @click.option('--format', type=click.Choice(['text', 'json', 'yaml']), 
               default='text', help='Report format (default: text)')
 @click.option('--verbose', '-v', is_flag=True, help='Verbose output')
-def init(input: Optional[str], cpus: Optional[str], devices: Optional[str], dry_run: bool, report: bool, format: str, verbose: bool):
+def init(ctx: click.Context, input: Optional[str], cpus: Optional[str], devices: Optional[str], dry_run: bool, report: bool, format: str, verbose: bool):
     """
     Initialize baseline device tree configuration.
     
@@ -580,12 +582,30 @@ def init(input: Optional[str], cpus: Optional[str], devices: Optional[str], dry_
                 for warning in validation_result.warnings:
                     click.echo(f"  ⚠ {warning}")
         
+        debug = ctx.obj.get('debug', False) if ctx and ctx.obj else False
+
         if dry_run:
             click.echo(" Baseline validation passed")
             click.echo(" Baseline would be applied (dry-run mode)")
         else:
             try:
                 mount_multikernel_fs(verbose=verbose)
+
+                if debug:
+                    try:
+                        dtb_data = baseline_mgr.extractor.generate_global_dtb(tree)
+                        fdt = libfdt.Fdt(dtb_data)
+                        dts_parser = DeviceTreeParser()
+                        dts_parser.fdt = fdt
+                        dts_lines = dts_parser._fdt_to_dts_recursive(0, 0)
+                        dts_content = '\n'.join(dts_lines)
+
+                        click.echo("Debug: Baseline DTS source being written to kernel:")
+                        click.echo("─" * 70)
+                        click.echo(dts_content)
+                        click.echo("─" * 70)
+                    except Exception as e:
+                        click.echo(f"Debug: Failed to convert baseline DTB to DTS: {e}", err=True)
 
                 if verbose:
                     click.echo("Writing baseline to kernel...")
