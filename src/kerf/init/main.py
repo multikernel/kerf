@@ -23,7 +23,9 @@ contain only resources (no instances).
 import sys
 import os
 import ctypes
+import re
 from pathlib import Path
+from typing import Optional, Tuple, List
 import click
 
 from ..baseline import BaselineManager
@@ -31,6 +33,14 @@ from ..dtc.parser import DeviceTreeParser
 from ..dtc.validator import MultikernelValidator
 from ..dtc.reporter import ValidationReporter
 from ..exceptions import ValidationError, KernelInterfaceError, ParseError
+from ..models import (
+    GlobalDeviceTree,
+    HardwareInventory,
+    CPUAllocation,
+    MemoryAllocation,
+    DeviceInfo
+)
+from ..create.main import parse_cpu_spec, parse_device_list
 
 
 MULTIKERNEL_MOUNT_POINT = "/sys/fs/multikernel"
@@ -103,14 +113,353 @@ def mount_multikernel_fs(verbose: bool = False) -> None:
         click.echo(f"✓ Successfully mounted multikernel filesystem")
 
 
+def get_multikernel_memory_pool_from_iomem() -> Optional[Tuple[int, int]]:
+    """
+    Get multikernel memory pool region from /proc/iomem.
+    Returns (base_address, size_bytes) or None if not found.
+    """
+    try:
+        iomem_path = Path('/proc/iomem')
+        if not iomem_path.exists():
+            return None
+        with open(iomem_path, 'r') as f:
+            for line in f:
+                if 'Multikernel Memory Pool' in line:
+                    match = re.search(r'([0-9a-fA-F]+)-([0-9a-fA-F]+)', line)
+                    if match:
+                        base = int(match.group(1), 16)
+                        end = int(match.group(2), 16)
+                        size = end - base + 1
+                        return (base, size)
+    except (OSError, IOError, ValueError):
+        pass
+    
+    return None
+
+
+def get_total_memory_from_system() -> Optional[int]:
+    """
+    Get total system memory from /proc/meminfo.
+    Returns total memory in bytes or None if not available.
+    """
+    try:
+        meminfo_path = Path('/proc/meminfo')
+        if not meminfo_path.exists():
+            return None
+        with open(meminfo_path, 'r') as f:
+            for line in f:
+                if line.startswith('MemTotal:'):
+                    match = re.search(r'(\d+)', line)
+                    if match:
+                        # Convert from KB to bytes
+                        return int(match.group(1)) * 1024
+    except (OSError, IOError, ValueError):
+        pass
+    
+    return None
+
+
+def detect_pci_device(device_name: str) -> Optional[DeviceInfo]:
+    """
+    Detect PCI device information from the system.
+    
+    Args:
+        device_name: Device name (e.g., "enp9s0_dev" or PCI BDF "0000:09:00.0")
+        
+    Returns:
+        DeviceInfo with detected PCI information, or None if not found
+    """
+    try:
+        pci_slot = None
+        if re.match(r'^[0-9a-f]{4}:[0-9a-f]{2}:[0-9a-f]{2}\.[0-9a-f]$', device_name):
+            pci_slot = device_name
+        else:
+            pci_devices = Path('/sys/bus/pci/devices')
+            if pci_devices.exists():
+                for pci_dev in pci_devices.iterdir():
+                    try:
+                        for subdir in pci_dev.iterdir():
+                            if subdir.is_dir():
+                                for child in subdir.iterdir():
+                                    if child.name == device_name:
+                                        pci_slot = pci_dev.name
+                                        break
+                            if pci_slot:
+                                break
+                    except (OSError, PermissionError):
+                        # Skip directories we can't access
+                        continue
+                    
+                    if pci_slot:
+                        break
+        
+        if not pci_slot:
+            return None
+        
+        pci_device_path = Path(f'/sys/bus/pci/devices/{pci_slot}')
+        if not pci_device_path.exists():
+            return None
+        
+        vendor_id = None
+        device_id = None
+
+        vendor_file = pci_device_path / 'vendor'
+        if vendor_file.exists():
+            with open(vendor_file, 'r') as f:
+                vendor_id = int(f.read().strip(), 16)
+
+        device_file = pci_device_path / 'device'
+        if device_file.exists():
+            with open(device_file, 'r') as f:
+                device_id = int(f.read().strip(), 16)
+
+        compatible = "pci-device"  # Default
+        class_file = pci_device_path / 'class'
+        if class_file.exists():
+            with open(class_file, 'r') as f:
+                pci_class = int(f.read().strip(), 16)
+                class_code = (pci_class >> 16) & 0xFF
+                if class_code == 0x02:  # Network controller
+                    compatible = "pci-network"
+                elif class_code == 0x01:  # Mass storage controller
+                    compatible = "pci-storage"
+                elif class_code == 0x03:  # Display controller
+                    compatible = "pci-display"
+                elif class_code == 0x0c:  # Serial bus controller
+                    compatible = "pci-serial"
+        
+        return DeviceInfo(
+            name=device_name,
+            compatible=compatible,
+            device_type="pci",
+            pci_id=pci_slot,
+            vendor_id=vendor_id,
+            device_id=device_id
+        )
+    except (OSError, IOError, ValueError, AttributeError):
+        return None
+
+
+def detect_platform_device(device_name: str) -> Optional[DeviceInfo]:
+    """
+    Detect platform device information from the system.
+    
+    Args:
+        device_name: Device name (e.g., "serial_console")
+        
+    Returns:
+        DeviceInfo with detected platform information, or None if not found
+    """
+    try:
+        platform_devices = Path('/sys/devices/platform')
+        if not platform_devices.exists():
+            return None
+
+        if 'serial' in device_name.lower() or 'console' in device_name.lower():
+            serial_path = platform_devices / 'serial8250'
+            if serial_path.exists():
+                return DeviceInfo(
+                    name=device_name,
+                    compatible="ns16550",
+                    device_type="platform",
+                    device_name="serial8250"
+                )
+
+        for platform_dev in platform_devices.iterdir():
+            if platform_dev.name in device_name or device_name in platform_dev.name:
+                return DeviceInfo(
+                    name=device_name,
+                    compatible="platform-device",
+                    device_type="platform",
+                    device_name=platform_dev.name
+                )
+        
+        return None
+    except (OSError, IOError, ValueError):
+        return None
+
+
+def detect_device_from_system(device_name: str) -> Optional[DeviceInfo]:
+    """
+    Detect device information from the system.
+    Tries PCI first, then platform devices.
+    
+    Args:
+        device_name: Device name to detect
+        
+    Returns:
+        DeviceInfo with detected information, or None if not found
+    """
+    pci_device = detect_pci_device(device_name)
+    if pci_device:
+        return pci_device
+    
+    platform_device = detect_platform_device(device_name)
+    if platform_device:
+        return platform_device
+    
+    return None
+
+
+def get_total_cpus_from_system() -> Optional[int]:
+    """
+    Get total number of logical CPUs from the system via sysfs.
+    Returns total CPU count or None if not available.
+    """
+    try:
+        cpu_dir = Path('/sys/devices/system/cpu')
+        if cpu_dir.exists():
+            cpu_files = [f for f in cpu_dir.iterdir() if f.name.startswith('cpu') and f.name[3:].isdigit()]
+            if cpu_files:
+                cpu_numbers = [int(f.name[3:]) for f in cpu_files]
+                return max(cpu_numbers) + 1
+    except (OSError, ValueError):
+        pass
+    
+    return None
+
+
+def build_baseline_from_cmdline(
+    cpus: str,
+    devices: Optional[str] = None,
+    verbose: bool = False
+) -> GlobalDeviceTree:
+    """
+    Build a GlobalDeviceTree from command line arguments.
+    
+    Args:
+        cpus: CPU specification string (e.g., "4-7" or "4,5,6,7")
+        devices: Optional device names (comma-separated, e.g., "enp9s0_dev,nvme0")
+        verbose: Whether to print verbose output
+        
+    Returns:
+        GlobalDeviceTree with resources only (no instances)
+        
+    Raises:
+        ValueError: If CPU specification is invalid
+        KernelInterfaceError: If memory cannot be determined from /proc/iomem
+    """
+    try:
+        cpu_list = parse_cpu_spec(cpus)
+    except ValueError as e:
+        raise ValueError(f"Invalid CPU specification '{cpus}': {e}")
+    
+    system_total_cpus = get_total_cpus_from_system()
+    if system_total_cpus is None:
+        max_cpu = max(cpu_list) if cpu_list else 0
+        total_cpus = max_cpu + 1
+        if verbose:
+            click.echo(f"Warning: Could not determine total CPUs from system, using max from specification: {total_cpus}", err=True)
+    else:
+        total_cpus = system_total_cpus
+        max_specified = max(cpu_list) if cpu_list else -1
+        if max_specified >= total_cpus:
+            raise ValueError(
+                f"CPU {max_specified} specified but system only has {total_cpus} CPUs (0-{total_cpus-1})"
+            )
+    
+    available_cpus = set(cpu_list)
+    all_cpus = set(range(total_cpus))
+    host_reserved_cpus = sorted(list(all_cpus - available_cpus))
+    
+    if 0 in available_cpus and len(host_reserved_cpus) == 0:
+        if verbose:
+            click.echo("Warning: CPU 0 is in available list but no host-reserved CPUs. Moving CPU 0 to host-reserved.", err=True)
+        available_cpus.discard(0)
+        host_reserved_cpus = [0]
+        cpu_list = sorted(list(available_cpus))
+    
+    memory_pool = get_multikernel_memory_pool_from_iomem()
+    if memory_pool is None:
+        raise KernelInterfaceError(
+            "Could not find multikernel memory pool in /proc/iomem. "
+            "Please ensure the multikernel kernel module is loaded and memory is reserved."
+        )
+    memory_pool_base, memory_pool_bytes = memory_pool
+
+    total_memory = get_total_memory_from_system()
+    if total_memory is None:
+        raise KernelInterfaceError(
+            "Could not determine total system memory from /proc/meminfo. "
+            "Please ensure /proc/meminfo is accessible."
+        )
+
+    total_bytes = total_memory
+    host_reserved_bytes = memory_pool_base
+    if verbose:
+        click.echo(f"Parsed CPU specification: {cpus}")
+        click.echo(f"  Total CPUs: {total_cpus}")
+        click.echo(f"  Host-reserved CPUs: {host_reserved_cpus}")
+        click.echo(f"  Available CPUs: {cpu_list}")
+        click.echo(f"Memory pool from /proc/iomem:")
+        click.echo(f"  Base: {hex(memory_pool_base)}")
+        click.echo(f"  Size: {memory_pool_bytes} bytes ({memory_pool_bytes / (1024**3):.2f} GB)")
+        click.echo(f"  Total memory: {total_bytes} bytes ({total_bytes / (1024**3):.2f} GB)")
+        click.echo(f"  Host-reserved: {host_reserved_bytes} bytes ({host_reserved_bytes / (1024**3):.2f} GB)")
+    
+    cpu_allocation = CPUAllocation(
+        total=total_cpus,
+        host_reserved=host_reserved_cpus,
+        available=cpu_list
+    )
+    
+    memory_allocation = MemoryAllocation(
+        total_bytes=total_bytes,
+        host_reserved_bytes=host_reserved_bytes,
+        memory_pool_base=memory_pool_base,
+        memory_pool_bytes=memory_pool_bytes
+    )
+    
+    device_dict = {}
+    if devices:
+        device_names = parse_device_list(devices)
+        for device_name in device_names:
+            device_info = detect_device_from_system(device_name)
+            if device_info:
+                device_dict[device_name] = device_info
+                if verbose:
+                    click.echo(f"Detected device '{device_name}':")
+                    click.echo(f"  Type: {device_info.device_type}")
+                    click.echo(f"  Compatible: {device_info.compatible}")
+                    if device_info.pci_id:
+                        click.echo(f"  PCI ID: {device_info.pci_id}")
+                    if device_info.vendor_id is not None:
+                        click.echo(f"  Vendor ID: 0x{device_info.vendor_id:04x}")
+                    if device_info.device_id is not None:
+                        click.echo(f"  Device ID: 0x{device_info.device_id:04x}")
+                    if device_info.device_name:
+                        click.echo(f"  Device Name: {device_info.device_name}")
+            else:
+                raise KernelInterfaceError(
+                    f"Could not detect device '{device_name}' from system. "
+                    f"Please ensure the device exists and is accessible, or use --input with a DTS file to specify device details."
+                )
+    
+    hardware = HardwareInventory(
+        cpus=cpu_allocation,
+        memory=memory_allocation,
+        devices=device_dict
+    )
+    
+    tree = GlobalDeviceTree(
+        hardware=hardware,
+        instances={},
+        device_references={}
+    )
+    
+    return tree
+
+
 @click.command()
-@click.option('--input', '-i', required=True, help='Input DTS or DTB file containing resources only')
+@click.option('--input', '-i', help='Input DTS or DTB file containing all resources. Mutually exclusive with --cpus and --devices. When used, all resources must come from the file.')
+@click.option('--cpus', '-c', help='CPU specification for baseline (e.g., "4-7" or "4,5,6,7"). Mutually exclusive with --input. Memory will be parsed from /proc/iomem.')
+@click.option('--devices', '-d', help='Device names (comma-separated, e.g., "enp9s0_dev,nvme0"). Mutually exclusive with --input. Creates minimal device entries in baseline.')
 @click.option('--dry-run', is_flag=True, help='Validate without applying')
 @click.option('--report', is_flag=True, help='Generate detailed validation report')
 @click.option('--format', type=click.Choice(['text', 'json', 'yaml']), 
               default='text', help='Report format (default: text)')
 @click.option('--verbose', '-v', is_flag=True, help='Verbose output')
-def init(input: str, dry_run: bool, report: bool, format: str, verbose: bool):
+def init(input: Optional[str], cpus: Optional[str], devices: Optional[str], dry_run: bool, report: bool, format: str, verbose: bool):
     """
     Initialize baseline device tree configuration.
     
@@ -121,34 +470,78 @@ def init(input: str, dry_run: bool, report: bool, format: str, verbose: bool):
     By default, the baseline is applied to the kernel after validation.
     Use --dry-run to validate without applying.
     
-    Example:
+    You can either provide a DTS/DTB file via --input, or construct the
+    baseline from command line arguments using --cpus. These options are
+    mutually exclusive - when using --input, all resources must come from
+    the DTS file. Memory will be automatically parsed from /proc/iomem
+    when using --cpus.
     
-        # Validate and apply to kernel (default behavior)
+    Examples:
+        # Initialize from DTS file (all resources from file)
         kerf init --input=hardware.dts
+
+        # Initialize from command line (CPUs 4-7, memory from /proc/iomem)
+        kerf init --cpus=4-7
+        
+        # Initialize with CPUs and devices
+        kerf init --cpus=4-7 --devices=enp9s0_dev,nvme0
         
         # Validate baseline without applying
         kerf init --input=hardware.dts --dry-run
     """
     try:
-        input_path = Path(input)
-        
-        if not input_path.exists():
-            click.echo(f"Error: Input file '{input}' does not exist", err=True)
-            sys.exit(3)
-        
-        # Parse input file
-        parser = DeviceTreeParser()
-        
-        if input_path.suffix == '.dts':
-            with open(input_path, 'r') as f:
-                dts_content = f.read()
-            tree = parser.parse_dts(dts_content)
-        elif input_path.suffix == '.dtb':
-            tree = parser.parse_dtb(str(input_path))
-        else:
-            click.echo(f"Error: Unsupported input format: {input_path.suffix}", err=True)
-            click.echo("Supported formats: .dts, .dtb", err=True)
+        # Validate that --input and resource specification options are mutually exclusive
+        # When using --input, all resources must come from the DTS file
+        if input and (cpus or devices):
+            conflicting = []
+            if cpus:
+                conflicting.append("--cpus")
+            if devices:
+                conflicting.append("--devices")
+            click.echo(f"Error: --input is mutually exclusive with {', '.join(conflicting)}.", err=True)
+            click.echo("When using --input, all resources must come from the DTS/DTB file.", err=True)
+            click.echo("Use either --input for a complete DTS/DTB file, or command-line options to construct baseline.", err=True)
             sys.exit(2)
+        
+        if not input and not cpus:
+            click.echo("Error: Either --input or --cpus must be specified", err=True)
+            click.echo("\nUsage:", err=True)
+            click.echo("  kerf init --input=hardware.dts", err=True)
+            click.echo("  kerf init --cpus=4-7", err=True)
+            click.echo("  kerf init --cpus=4-7 --devices=enp9s0_dev", err=True)
+            sys.exit(2)
+        
+        parser = DeviceTreeParser()
+        dts_content = None
+        
+        if input:
+            # Parse from input file
+            input_path = Path(input)
+            
+            if not input_path.exists():
+                click.echo(f"Error: Input file '{input}' does not exist", err=True)
+                sys.exit(3)
+            
+            if input_path.suffix == '.dts':
+                with open(input_path, 'r') as f:
+                    dts_content = f.read()
+                tree = parser.parse_dts(dts_content)
+            elif input_path.suffix == '.dtb':
+                tree = parser.parse_dtb(str(input_path))
+            else:
+                click.echo(f"Error: Unsupported input format: {input_path.suffix}", err=True)
+                click.echo("Supported formats: .dts, .dtb", err=True)
+                sys.exit(2)
+        else:
+            # Build from command line arguments
+            try:
+                tree = build_baseline_from_cmdline(cpus, devices=devices, verbose=verbose)
+            except ValueError as e:
+                click.echo(f"Error: {e}", err=True)
+                sys.exit(2)
+            except KernelInterfaceError as e:
+                click.echo(f"Error: {e}", err=True)
+                sys.exit(1)
         
         baseline_mgr = BaselineManager()
         
@@ -163,8 +556,9 @@ def init(input: str, dry_run: bool, report: bool, format: str, verbose: bool):
             sys.exit(1)
         
         validator = MultikernelValidator()
-        if input_path.suffix == '.dts':
-            validator.set_dts_context(dts_content, str(input_path))
+        if dts_content is not None:
+            input_path_str = str(input) if input else "command-line"
+            validator.set_dts_context(dts_content, input_path_str)
         
         validation_result = validator.validate(tree)
         

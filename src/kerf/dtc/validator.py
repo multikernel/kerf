@@ -280,10 +280,11 @@ class MultikernelValidator:
         if memory.memory_pool_bytes <= 0:
             self.errors.append("Hardware inventory: Spawn pool size must be positive")
         
-        if memory.memory_pool_base + memory.memory_pool_bytes > memory.total_bytes:
-            self.errors.append("Hardware inventory: Spawn pool extends beyond total memory")
-
         iomem_pool = self._get_multikernel_memory_pool_from_iomem()
+        if iomem_pool is None or (memory.memory_pool_base != iomem_pool[0] or memory.memory_pool_bytes != iomem_pool[1]):
+            # Pool doesn't match kernel-provided pool, validate against total_bytes
+            if memory.memory_pool_base + memory.memory_pool_bytes > memory.total_bytes:
+                self.errors.append("Hardware inventory: Spawn pool extends beyond total memory")
         if iomem_pool is not None:
             iomem_base, iomem_size = iomem_pool
             iomem_end = iomem_base + iomem_size
