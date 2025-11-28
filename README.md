@@ -8,33 +8,26 @@
 
 Unlike standard tools that only perform basic format conversion, `kerf` understands multikernel semantics and **always validates** resource allocations and detects conflicts. The system is architected to evolve into a complete multikernel runtime environment.
 
-## Vision & Roadmap
+## Features
 
-### Current Phase: Device Tree Foundation
-`kerf` currently provides the essential device tree compilation and validation capabilities needed for multikernel systems:
+`kerf` is a comprehensive multikernel management platform with the following capabilities:
 
-1. **Resource Conflict Detection**: Multiple instances might accidentally be allocated the same CPUs, overlapping memory regions, or the same devices
-2. **Over-Allocation**: The sum of all allocations might exceed available resources
-3. **Invalid References**: Instances might reference non-existent hardware or devices reserved for the host
-4. **Atomicity**: All allocations should be validated together before deployment
-
-### Future Phases: Complete Multikernel Runtime
-The `kerf` system is designed to evolve into a comprehensive multikernel management platform:
-
+- **Resource Pool Initialization**: Initialize hardware resource pools available for multikernel allocation
+- **Resource Conflict Detection**: Detect and prevent allocation conflicts for CPUs, memory regions, and devices
+- **Resource Validation**: Ensure allocations don't exceed available resources and references are valid
+- **Atomicity**: Validate all allocations together before deployment
 - **Kernel Loading & Execution**: Load and execute multiple kernel instances with proper isolation
-- **Resource Management**: Dynamic allocation and deallocation of system resources
-- **Instance Lifecycle**: Start, stop, pause, and migrate kernel instances
+- **Instance Lifecycle**: Create, delete, and manage kernel instances
+- **Dynamic Resource Management**: Allocation and deallocation of system resources
 - **Monitoring & Debugging**: Real-time monitoring of kernel instances and system health
 - **Security & Isolation**: Advanced security policies and isolation mechanisms
 - **Orchestration**: High-level orchestration of complex multikernel workloads
-
-The current device tree foundation provides the critical infrastructure needed for these advanced capabilities.
 
 ## Architecture
 
 ### Design Philosophy
 
-The `kerf` system is built on foundational principles that support both current device tree capabilities and future multikernel runtime features:
+The `kerf` system is built on foundational principles that support both current resource pool management and future multikernel runtime features:
 
 1. **Single Source of Truth**: Baseline DTS describes hardware resources available for allocation
 2. **Mandatory Validation**: Every operation validates the configuration - validation is not optional
@@ -46,14 +39,14 @@ The `kerf` system is built on foundational principles that support both current 
 
 ### Compilation Model
 
-**Baseline initialization:**
+**Resource pool initialization:**
 ```
 Input: Baseline DTS (resources only)
          │
          ▼
     ┌─────────┐
-    │ kerf    │ ← Always validates
-    │  init   │
+    │ kerf    │ ← Initializes resource pool
+    │  init   │   and validates
     └─────────┘
          │
          ▼
@@ -123,7 +116,8 @@ Baseline DTB (static)
 
 ## Current Capabilities
 
-### Device Tree Management & Validation
+### Resource Pool Management & Validation
+- **Resource Pool Initialization**: Initialize hardware resource pools for multikernel allocation
 - **Advanced Validation**: Comprehensive resource conflict detection and validation
 - **Baseline Management**: Initialize and manage baseline device tree containing hardware resources
 - **Format Support**: DTS to DTB compilation for baseline configuration
@@ -133,65 +127,54 @@ Baseline DTB (static)
 
 ### Command Line Interface
 ```bash
-# Initialize baseline device tree (applies by default)
+# Initialize resource pool from baseline DTS
 kerf init --input=baseline.dts
 
-# Validate baseline without applying (dry-run)
-kerf init --input=baseline.dts --dry-run
+# Create kernel instance with resource allocation
+kerf create web-server --cpus=4-7 --memory=2GB
+kerf create database --cpu-count=8 --memory=16GB
 
 # Load kernel image with initrd and boot parameters
 kerf load --kernel=/boot/vmlinuz --initrd=/boot/initrd.img \
           --cmdline="root=/dev/sda1 ro" --id=1
 
-# Create kernel instance with explicit CPU allocation
-kerf create web-server --cpus=4-7 --memory=2GB
-
-# Create instance with auto-allocated CPU count
-kerf create database --cpu-count=8 --memory=16GB
-
-# Create with topology-aware auto-allocation
-kerf create compute --cpu-count=16 --memory=32GB --numa-nodes=0,1 --cpu-affinity=spread --memory-policy=interleave
-
-# Validate instance creation without applying
-kerf create test-instance --cpu-count=4 --memory=2GB --dry-run
-
-# Show all kernel instances
-kerf show
-
-# Show specific instance information
-kerf show web-server --verbose
-
-# Boot a kernel instance (requires loaded kernel)
+# Boot a kernel instance
 kerf exec web-server
-kerf exec --id=1
+
+# Show kernel instance information
+kerf show
+kerf show web-server
 
 # Unload kernel image from an instance
 kerf unload web-server
-kerf unload --id=1 --verbose
 
-# Delete a kernel instance (must be unloaded first)
+# Delete a kernel instance
 kerf delete web-server
-kerf delete --id=1 --dry-run
+
+# Use --help for detailed options and usage
+kerf --help
+kerf <command> --help
 ```
 
 ### Modular Architecture
 The `kerf` system is designed with a modular architecture that supports incremental development:
 
-- **`kerf init`**: Initialize baseline device tree (resources only) (current)
-- **`kerf create`**: Create a kernel instance (current)
-- **`kerf load`**: Kernel loading via kexec_file_load syscall (current)
-- **`kerf exec`**: Kernel execution via reboot syscall with MULTIKERNEL command (current)
-- **`kerf unload`**: Unload kernel image from a multikernel instance (current)
-- **`kerf delete`**: Delete a kernel instance (current)
-- **`kerf show`**: Show kernel instance information (current)
+- **`kerf init`**: Initialize resource pool from baseline DTS
+- **`kerf create`**: Create a kernel instance
+- **`kerf load`**: Load kernel image via kexec_file_load syscall
+- **`kerf exec`**: Execute kernel via reboot syscall with MULTIKERNEL command
+- **`kerf unload`**: Unload kernel image from a multikernel instance
+- **`kerf delete`**: Delete a kernel instance
+- **`kerf show`**: Show kernel instance information
 - **`kerf update`**: Update a kernel instance (future)
 - **`kerf kill`**: Kill a kernel instance (future)
 
-This modular design allows users to adopt `kerf` incrementally, starting with device tree validation and expanding to full multikernel management as features become available.
+This modular design allows users to adopt `kerf` incrementally, starting with resource pool initialization and expanding to full multikernel management as features become available.
 
 ### Technical Foundation
-The current device tree foundation provides essential building blocks for future multikernel capabilities:
+The current resource pool management provides essential building blocks for future multikernel capabilities:
 
+- **Resource Pool Initialization**: Initializes hardware resource pools for safe multikernel allocation
 - **Resource Validation**: Ensures safe resource allocation before kernel execution
 - **Instance Isolation**: Provides the foundation for secure kernel isolation
 - **Configuration Management**: Enables consistent and validated system configurations
@@ -320,37 +303,6 @@ DTS: /instances/compute                  →  /sys/kernel/multikernel/instances/
 4. Hardware inventory must be complete and consistent
 
 
-## Command-Line Interface
-
-### Basic Commands
-
-```bash
-# Initialize baseline device tree
-kerf init --input=baseline.dts
-
-# Validate baseline without applying
-kerf init --input=baseline.dts --dry-run
-
-# Generate detailed validation report
-kerf init --input=baseline.dts --report
-
-# Validate with verbose output
-kerf init --input=baseline.dts --verbose
-```
-
-### Report Formats
-
-```bash
-# Human-readable text (default)
-kerf init --input=baseline.dts --report
-
-# JSON for tooling integration
-kerf init --input=baseline.dts --report --format=json
-
-# YAML for configuration management
-kerf init --input=baseline.dts --report --format=yaml
-```
-
 ## Integration with Kernel
 
 ### Kernel Interface
@@ -384,108 +336,6 @@ The kernel exposes a filesystem interface (mounted at `/sys/fs/multikernel/`) th
 - **Rollback Support**: Remove overlay transaction directory (`rmdir /sys/fs/multikernel/overlays/tx_XXX/`) to rollback changes
 - **Kernel-Generated**: Instance directories auto-generated from baseline + applied overlays
 
-### Workflow: Initial Setup
-
-```bash
-# Step 1: Write baseline DTS describing hardware resources only
-vim baseline.dts
-# Baseline contains only /resources - no instances
-
-# Step 2: Initialize baseline device tree
-kerf init --input=baseline.dts
-# Output:
-#   ✓ Baseline validation passed
-#   ✓ Baseline applied to kernel successfully
-#   Baseline: /sys/fs/multikernel/device_tree
-
-# Step 3: Create kernel instances via overlays
-kerf create web-server --cpus=4-7 --memory=2GB
-kerf create database --cpus=8-15 --memory=8GB
-
-# Kernel now has baseline configuration:
-# - Resources defined and available for allocation
-# - Instances created via overlays
-# - Ready for kernel loading via 'kerf load'
-```
-
-### Workflow: Dynamic Updates
-
-```bash
-# Create new kernel instance via overlay
-# Instance name is a positional argument (can appear anywhere after 'create')
-kerf create web-server --cpus=4-7 --memory=2GB
-# This applies an overlay adding the instance to the device tree
-
-# Instance name can also appear after options
-kerf create --cpus=8-15 --memory=8GB database
-
-# Create with explicit CPU allocation (CPU 8)
-kerf create compute --cpus=8 --memory=16GB
-
-# Create with auto-allocated CPU count (topology-aware)
-kerf create compute --cpu-count=8 --memory=16GB --numa-nodes=0 --cpu-affinity=compact --memory-policy=local
-
-# Validate before applying (dry-run, auto-allocate 4 CPUs)
-kerf create web-server --cpu-count=4 --memory=2GB --dry-run
-
-# Update instance resources via overlay (future)
-kerf update database --cpus=8-19 --memory=8GB
-# This applies an overlay updating the instance configuration
-
-# Delete instance via overlay removal (future)
-kerf delete compute
-# This removes the overlay transaction, reverting the change
-```
-
-
-## Validation Output Examples
-
-### Successful Baseline Validation
-
-```
-$ kerf init --input=baseline.dts --report
-
-Multikernel Device Tree Validation Report
-==========================================
-Status: ✓ VALID
-
-Hardware Inventory:
-  CPUs: 32 total
-    Host reserved: 0-3 (4 CPUs, 12%)
-    Memory pool: 4-31 (28 CPUs, 88%)
-  Memory: 16GB total
-    Host reserved: 2GB (12%)
-    Memory pool: 14GB at 0x80000000 (88%)
-  Devices: 2 network, 1 storage
-
-✓ Baseline validation passed
-✓ Baseline applied to kernel successfully
-  Baseline: /sys/fs/multikernel/device_tree
-```
-
-### Failed Baseline Validation
-
-```
-$ kerf init --input=bad_baseline.dts --report
-
-Multikernel Device Tree Validation Report
-==========================================
-Status: ✗ INVALID
-
-ERROR: Baseline must not contain instances. Instances should be created via overlays.
-  Baseline must contain:
-    ✓ /resources (hardware inventory)
-    ✗ /instances (must be empty or absent)
-
-  Suggestion: Remove instances section from baseline
-  Instances should be created via 'kerf create' using overlays
-  
-  In file bad_baseline.dts:
-    Line 45: instances { web-server { ... } }
-
-✗ Validation failed with 1 error
-Exit code: 1
-```
 
 ## Dependencies
 
