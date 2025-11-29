@@ -216,11 +216,14 @@ def update(
             
             modified = copy.deepcopy(current)
             modified.instances[instance_node_name] = copy.deepcopy(existing_instance)
-            instance = modified.instances[instance_node_name]
             
             if cpu_list is not None:
-                validate_cpu_allocation(modified, cpu_list, exclude_instance=instance_node_name)
-                instance.resources.cpus = cpu_list
+                current_cpus = set(existing_instance.resources.cpus)
+                requested_cpus = set(cpu_list)
+                new_cpus = requested_cpus - current_cpus
+                
+                if new_cpus:
+                    validate_cpu_allocation(modified, sorted(new_cpus), exclude_instance=instance_node_name)
             
             if memory_bytes is not None:
                 if memory_base_addr is None:
@@ -235,7 +238,11 @@ def update(
                     validate_memory_allocation(
                         modified, memory_base_addr, memory_bytes, exclude_instance=instance_node_name
                     )
-                
+            
+            instance = modified.instances[instance_node_name]
+            if cpu_list is not None:
+                instance.resources.cpus = cpu_list
+            if memory_bytes is not None:
                 instance.resources.memory_base = memory_base_addr
                 instance.resources.memory_bytes = memory_bytes
             
