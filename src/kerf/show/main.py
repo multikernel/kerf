@@ -116,8 +116,10 @@ def read_instance_info(name: str) -> Dict[str, Optional[str]]:
                                     parser = DeviceTreeParser()
                                     fdt = libfdt.Fdt(file_data)
                                     parser.fdt = fdt
+
                                     dts_lines = parser._fdt_to_dts_recursive(0, 0)
                                     dts_content = '\n'.join(dts_lines)
+
                                     if not dts_content.startswith('/dts-v1/'):
                                         dts_content = '/dts-v1/;\n\n' + dts_content
                                     info['device_tree_source'] = dts_content

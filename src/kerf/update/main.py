@@ -173,13 +173,15 @@ def update(
                 
                 fdt = libfdt.Fdt(instance_dtb_data)
                 
-                instance_path = f'/instances/{name}'
-                instance_offset = fdt.path_offset(instance_path)
-                
+                instance_offset = 0
+                instance_node_name = fdt.get_name(instance_offset)
+
                 instance_id_prop = fdt.getprop(instance_offset, 'id')
                 instance_id = struct.unpack('>I', instance_id_prop)[0]
-                
-                resources_offset = fdt.path_offset(f'{instance_path}/resources')
+
+                resources_offset = fdt.first_subnode(instance_offset)
+                if resources_offset < 0:
+                    raise ResourceError(f"No resources node found for instance '{instance_node_name}'")
                 
                 cpus_prop = fdt.getprop(resources_offset, 'cpus')
                 cpus = list(struct.unpack(f'>{len(cpus_prop)//4}I', cpus_prop))
@@ -197,7 +199,7 @@ def update(
                     device_names = []
                 
                 existing_instance = Instance(
-                    name=name,
+                    name=instance_node_name,
                     id=instance_id,
                     resources=InstanceResources(
                         cpus=cpus,
@@ -213,11 +215,11 @@ def update(
                 raise ResourceError(f"Failed to read instance '{name}' device_tree: {e}")
             
             modified = copy.deepcopy(current)
-            modified.instances[name] = copy.deepcopy(existing_instance)
-            instance = modified.instances[name]
+            modified.instances[instance_node_name] = copy.deepcopy(existing_instance)
+            instance = modified.instances[instance_node_name]
             
             if cpu_list is not None:
-                validate_cpu_allocation(modified, cpu_list, exclude_instance=name)
+                validate_cpu_allocation(modified, cpu_list, exclude_instance=instance_node_name)
                 instance.resources.cpus = cpu_list
             
             if memory_bytes is not None:
@@ -231,7 +233,7 @@ def update(
                     memory_base_addr = found_base
                 else:
                     validate_memory_allocation(
-                        modified, memory_base_addr, memory_bytes, exclude_instance=name
+                        modified, memory_base_addr, memory_bytes, exclude_instance=instance_node_name
                     )
                 
                 instance.resources.memory_base = memory_base_addr

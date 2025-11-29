@@ -1391,14 +1391,17 @@ class DeviceTreeParser:
         try:
             # Get node name
             node_name = self.fdt.get_name(node_offset)
-            if node_offset == 0:
-                node_name = '/'  # Root node
+            if not node_name:
+                node_name = '/'  # Empty name means root
             
             # Start node
-            if node_offset == 0:
+            if not node_name or node_name == '/':
                 lines.append(f'{indent}/ {{')
             else:
-                lines.append(f'{indent}{node_name} {{')
+                if node_offset == 0:
+                    lines.append(f'{indent}/{node_name} {{')
+                else:
+                    lines.append(f'{indent}{node_name} {{')
             
             # Get properties for this node
             try:
