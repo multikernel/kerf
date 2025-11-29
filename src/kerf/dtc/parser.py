@@ -201,7 +201,8 @@ class DeviceTreeParser:
             cpus_prop = self.fdt.getprop(resources_node, 'cpus')
             available = cpus_prop.as_uint32_list()
         except libfdt.FdtException:
-            raise ParseError("Missing 'cpus' property in /resources")
+            # No cpus property means all CPUs are allocated
+            available = []
         
         if available:
             total = max(available) + 1
