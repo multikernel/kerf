@@ -80,116 +80,147 @@ class OverlayGenerator:
     def generate_update_overlay(self, instance_name: str, old_instance, new_instance) -> bytes:
         """
         Generate resource update overlay for an existing instance.
-
+        
         Operations are generated in order: memory-remove, memory-add, cpu-remove, cpu-add.
-
+        All operations are in a single fragment.
+        
         Args:
             instance_name: Name of the instance to update
             old_instance: Current instance state
             new_instance: New instance state
-
+            
         Returns:
             DTBO blob as bytes containing resource update operations
         """
         import struct
-
+        
         fdt_sw = libfdt.FdtSw()
         fdt_sw.finish_reservemap()
-
+        
         fdt_sw.begin_node('')
         fdt_sw.property_string('compatible', 'linux,multikernel-overlay')
-
-        fragment_id = 0
-
+        
         old_cpus = set(old_instance.resources.cpus)
         new_cpus = set(new_instance.resources.cpus)
         cpus_to_remove = sorted(old_cpus - new_cpus)
         cpus_to_add = sorted(new_cpus - old_cpus)
-
+        
         old_mem_base = old_instance.resources.memory_base
         old_mem_size = old_instance.resources.memory_bytes
         new_mem_base = new_instance.resources.memory_base
         new_mem_size = new_instance.resources.memory_bytes
         memory_changed = (old_mem_base != new_mem_base) or (old_mem_size != new_mem_size)
-
+        
+        # Single fragment with all operations
+        fdt_sw.begin_node('fragment@0')
+        fdt_sw.begin_node('__overlay__')
+        
         # 1. memory-remove (if memory changed)
         if memory_changed:
-            fragment_id = self._add_memory_operation(
-                fdt_sw, fragment_id, 'memory-remove', instance_name,
-                old_mem_base, old_mem_size
-            )
-
+            fdt_sw.begin_node('memory-remove')
+            fdt_sw.property_string('mk,instance', instance_name)
+            
+            fdt_sw.begin_node('region@0')
+            reg_data = struct.pack('>QQ', old_mem_base, old_mem_size)
+            fdt_sw.property('reg', reg_data)
+            fdt_sw.end_node()
+            
+            fdt_sw.end_node()
+        
         # 2. memory-add (if memory changed)
         if memory_changed:
-            fragment_id = self._add_memory_operation(
-                fdt_sw, fragment_id, 'memory-add', instance_name,
-                new_mem_base, new_mem_size
-            )
-
+            fdt_sw.begin_node('memory-add')
+            fdt_sw.property_string('mk,instance', instance_name)
+            
+            fdt_sw.begin_node('region@0')
+            reg_data = struct.pack('>QQ', new_mem_base, new_mem_size)
+            fdt_sw.property('reg', reg_data)
+            fdt_sw.end_node()
+            
+            fdt_sw.end_node()
+        
         # 3. cpu-remove (if CPUs removed)
         if cpus_to_remove:
-            fragment_id = self._add_cpu_operation(
-                fdt_sw, fragment_id, 'cpu-remove', instance_name,
-                cpus_to_remove, None
-            )
-
+            fdt_sw.begin_node('cpu-remove')
+            fdt_sw.property_string('mk,instance', instance_name)
+            
+            for cpu_id in cpus_to_remove:
+                fdt_sw.begin_node(f'cpu@{cpu_id}')
+                reg_data = struct.pack('>I', cpu_id)
+                fdt_sw.property('reg', reg_data)
+                fdt_sw.end_node()
+            
+            fdt_sw.end_node()
+        
         # 4. cpu-add (if CPUs added)
         if cpus_to_add:
-            numa_nodes = new_instance.resources.numa_nodes
-            fragment_id = self._add_cpu_operation(
-                fdt_sw, fragment_id, 'cpu-add', instance_name,
-                cpus_to_add, numa_nodes
-            )
-
-        fdt_sw.end_node()
-
+            fdt_sw.begin_node('cpu-add')
+            fdt_sw.property_string('mk,instance', instance_name)
+            
+            for cpu_id in cpus_to_add:
+                fdt_sw.begin_node(f'cpu@{cpu_id}')
+                reg_data = struct.pack('>I', cpu_id)
+                fdt_sw.property('reg', reg_data)
+                
+                if new_instance.resources.numa_nodes:
+                    fdt_sw.property_u32('numa-node', new_instance.resources.numa_nodes[0])
+                
+                fdt_sw.end_node()
+            
+            fdt_sw.end_node()
+        
+        fdt_sw.end_node()  # End __overlay__
+        fdt_sw.end_node()  # End fragment@0
+        
+        fdt_sw.end_node()  # End root
+        
         dtb = fdt_sw.as_fdt()
         dtb.pack()
         return dtb.as_bytearray()
-
+    
     def _add_memory_operation(self, fdt_sw, fragment_id, operation, instance_name, base, size):
         """Helper to add memory operation fragment."""
         import struct
-
+        
         fdt_sw.begin_node(f'fragment@{fragment_id}')
         fdt_sw.begin_node('__overlay__')
         fdt_sw.begin_node(operation)
         fdt_sw.property_string('mk,instance', instance_name)
-
+        
         fdt_sw.begin_node('region@0')
         reg_data = struct.pack('>QQ', base, size)
         fdt_sw.property('reg', reg_data)
         fdt_sw.end_node()
-
+        
         fdt_sw.end_node()
         fdt_sw.end_node()
         fdt_sw.end_node()
-
+        
         return fragment_id + 1
-
+    
     def _add_cpu_operation(self, fdt_sw, fragment_id, operation, instance_name, cpu_ids, numa_nodes):
         """Helper to add CPU operation fragment."""
         import struct
-
+        
         fdt_sw.begin_node(f'fragment@{fragment_id}')
         fdt_sw.begin_node('__overlay__')
         fdt_sw.begin_node(operation)
         fdt_sw.property_string('mk,instance', instance_name)
-
+        
         for cpu_id in cpu_ids:
             fdt_sw.begin_node(f'cpu@{cpu_id}')
             reg_data = struct.pack('>I', cpu_id)
             fdt_sw.property('reg', reg_data)
-
+            
             if operation == 'cpu-add' and numa_nodes:
                 fdt_sw.property_u32('numa-node', numa_nodes[0])
-
+            
             fdt_sw.end_node()
-
+        
         fdt_sw.end_node()
         fdt_sw.end_node()
         fdt_sw.end_node()
-
+        
         return fragment_id + 1
 
     def _create_overlay_dtb(
