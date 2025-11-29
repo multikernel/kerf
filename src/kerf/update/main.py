@@ -238,15 +238,15 @@ def update(
                     validate_memory_allocation(
                         modified, memory_base_addr, memory_bytes, exclude_instance=instance_node_name
                     )
-            
-            instance = modified.instances[instance_node_name]
+
+            updated_instance = copy.deepcopy(existing_instance)
             if cpu_list is not None:
-                instance.resources.cpus = cpu_list
+                updated_instance.resources.cpus = cpu_list
             if memory_bytes is not None:
-                instance.resources.memory_base = memory_base_addr
-                instance.resources.memory_bytes = memory_bytes
-            
-            return (existing_instance, instance)
+                updated_instance.resources.memory_base = memory_base_addr
+                updated_instance.resources.memory_bytes = memory_bytes
+
+            return (existing_instance, updated_instance)
         
         if dry_run:
             try:
