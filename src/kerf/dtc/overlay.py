@@ -81,7 +81,8 @@ class OverlayGenerator:
         """
         Generate resource update overlay for an existing instance.
         
-        Operations are generated in order: memory-remove, memory-add, cpu-remove, cpu-add.
+        Operations are generated in order: memory-remove, memory-add, cpu-remove, cpu-add,
+        device-remove, device-add.
         All operations are in a single fragment.
         
         Args:
@@ -110,6 +111,11 @@ class OverlayGenerator:
         new_mem_base = new_instance.resources.memory_base
         new_mem_size = new_instance.resources.memory_bytes
         memory_changed = (old_mem_base != new_mem_base) or (old_mem_size != new_mem_size)
+        
+        old_devices = set(old_instance.resources.devices)
+        new_devices = set(new_instance.resources.devices)
+        devices_to_remove = sorted(old_devices - new_devices)
+        devices_to_add = sorted(new_devices - old_devices)
         
         # Single fragment with all operations
         fdt_sw.begin_node('fragment@0')
@@ -165,6 +171,30 @@ class OverlayGenerator:
                 if new_instance.resources.numa_nodes:
                     fdt_sw.property_u32('numa-node', new_instance.resources.numa_nodes[0])
                 
+                fdt_sw.end_node()
+            
+            fdt_sw.end_node()
+        
+        # 5. device-remove (if devices removed)
+        if devices_to_remove:
+            fdt_sw.begin_node('device-remove')
+            fdt_sw.property_string('mk,instance', instance_name)
+            
+            for idx, pci_id in enumerate(devices_to_remove):
+                fdt_sw.begin_node(f'pci@{idx}')
+                fdt_sw.property_string('pci-id', pci_id)
+                fdt_sw.end_node()
+            
+            fdt_sw.end_node()
+        
+        # 6. device-add (if devices added)
+        if devices_to_add:
+            fdt_sw.begin_node('device-add')
+            fdt_sw.property_string('mk,instance', instance_name)
+            
+            for idx, pci_id in enumerate(devices_to_add):
+                fdt_sw.begin_node(f'pci@{idx}')
+                fdt_sw.property_string('pci-id', pci_id)
                 fdt_sw.end_node()
             
             fdt_sw.end_node()
