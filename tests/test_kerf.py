@@ -35,21 +35,21 @@ from kerf.dtc.reporter import ValidationReporter
 
 def create_test_tree():
     """Create a test GlobalDeviceTree for demonstration."""
-    
+
     # Create hardware inventory
     cpus = CPUAllocation(
         total=32,
         host_reserved=[0, 1, 2, 3],
         available=list(range(4, 32))
     )
-    
+
     memory = MemoryAllocation(
         total_bytes=16 * 1024**3,  # 16GB
         host_reserved_bytes=2 * 1024**3,  # 2GB
         memory_pool_base=0x80000000,
         memory_pool_bytes=14 * 1024**3  # 14GB
     )
-    
+
     devices = {
         'eth0': DeviceInfo(
             name='eth0',
@@ -68,13 +68,13 @@ def create_test_tree():
             available_ns=[2, 3, 4]
         )
     }
-    
+
     hardware = HardwareInventory(
         cpus=cpus,
         memory=memory,
         devices=devices
     )
-    
+
     # Create instances
     instances = {
         'web-server': Instance(
@@ -120,7 +120,7 @@ def create_test_tree():
             )
         )
     }
-    
+
     return GlobalDeviceTree(
         hardware=hardware,
         instances=instances,
@@ -131,25 +131,25 @@ def create_test_tree():
 def test_validation():
     """Test validation functionality."""
     print("=== Testing Validation ===")
-    
+
     tree = create_test_tree()
     validator = MultikernelValidator()
     result = validator.validate(tree)
-    
+
     reporter = ValidationReporter()
     report = reporter.generate_report(result, tree, verbose=True)
     print(report)
-    
-    return result.is_valid
+
+    assert result.is_valid, "Validation should pass for valid tree"
 
 
 def test_extraction():
     """Test instance extraction functionality."""
     print("\n=== Testing Instance Extraction ===")
-    
+
     tree = create_test_tree()
     extractor = InstanceExtractor()
-    
+
     # Extract individual instances
     for instance_name in tree.instances.keys():
         try:
@@ -157,7 +157,7 @@ def test_extraction():
             print(f"✓ Extracted {instance_name}: {len(instance_dtb)} bytes")
         except Exception as e:
             print(f"✗ Failed to extract {instance_name}: {e}")
-    
+
     # Extract all instances
     try:
         all_instances = extractor.extract_all_instances(tree)
@@ -169,10 +169,10 @@ def test_extraction():
 def test_conflict_detection():
     """Test conflict detection with invalid configuration."""
     print("\n=== Testing Conflict Detection ===")
-    
+
     # Create a tree with conflicts
     tree = create_test_tree()
-    
+
     # Add conflicting instance
     conflicting_instance = Instance(
         name='conflicting',
@@ -185,44 +185,45 @@ def test_conflict_detection():
         ),
         config=InstanceConfig(workload_type=WorkloadType.COMPUTE)
     )
-    
+
     tree.instances['conflicting'] = conflicting_instance
-    
+
     validator = MultikernelValidator()
     result = validator.validate(tree)
-    
+
     print(f"Validation result: {'VALID' if result.is_valid else 'INVALID'}")
     if result.errors:
         print("Errors found:")
         for error in result.errors:
             print(f"  - {error}")
-    
-    return not result.is_valid
+
+    assert not result.is_valid, "Validation should fail for conflicting resources"
+    assert len(result.errors) > 0, "Should have error messages for conflicts"
 
 
 def main():
     """Run all tests."""
     print("kerf Test Suite")
     print("=" * 50)
-    
+
     # Test 1: Basic validation
     valid = test_validation()
     print(f"✓ Basic validation: {'PASSED' if valid else 'FAILED'}")
-    
+
     # Test 2: Instance extraction
     test_extraction()
     print("✓ Instance extraction: PASSED")
-    
+
     # Test 3: Conflict detection
     conflicts_detected = test_conflict_detection()
     print(f"✓ Conflict detection: {'PASSED' if conflicts_detected else 'FAILED'}")
-    
+
     print("\n" + "=" * 50)
     print("Test Summary:")
     print(f"  Basic validation: {'PASS' if valid else 'FAIL'}")
     print(f"  Instance extraction: PASS")
     print(f"  Conflict detection: {'PASS' if conflicts_detected else 'FAIL'}")
-    
+
     if valid and conflicts_detected:
         print("\n🎉 All tests passed!")
         return 0
