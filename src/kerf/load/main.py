@@ -23,6 +23,7 @@ import ctypes
 import platform
 from pathlib import Path
 from typing import Optional
+from ..utils import get_instance_id_from_name, get_instance_name_from_id
 
 
 # KEXEC flags definitions
@@ -156,25 +157,84 @@ def kexec_file_load(
 
 @click.command()
 @click.pass_context
+@click.argument('name', required=False)
 @click.option('--kernel', '-k', required=True, help='Path to kernel image file')
 @click.option('--initrd', '-i', help='Path to initrd image file (optional)')
 @click.option('--cmdline', '-c', help='Boot command line parameters')
-@click.option('--id', type=int, required=True, help='Multikernel instance ID (1-511)')
+@click.option('--id', type=int, help='Multikernel instance ID (1-511)')
 @click.option('--verbose', '-v', is_flag=True, help='Verbose output')
-def load(ctx: click.Context, kernel: str, initrd: Optional[str], cmdline: Optional[str],
-         id: int, verbose: bool):
+def load(ctx: click.Context, name: Optional[str], kernel: str, initrd: Optional[str], 
+         cmdline: Optional[str], id: Optional[int], verbose: bool):
     """
     Load kernel image and initrd using kexec_file_load syscall.
     
     This command loads a kernel image into memory using the kexec_file_load
     syscall. The kernel is loaded in multikernel mode with the specified ID.
     
-    Example:
+    Examples:
     
+        kerf load web-server --kernel=/boot/vmlinuz --initrd=/boot/initrd.img \\
+                 --cmdline="root=/dev/sda1"
         kerf load --kernel=/boot/vmlinuz --initrd=/boot/initrd.img \\
                  --cmdline="root=/dev/sda1" --id=1
     """
     try:
+        if not name and id is None:
+            click.echo(
+                "Error: Either instance name or --id must be provided",
+                err=True
+            )
+            click.echo(
+                "Usage: kerf load <name> --kernel=<path>  or  kerf load --id=<id> --kernel=<path>",
+                err=True
+            )
+            sys.exit(2)
+        
+        instance_name = None
+        instance_id = None
+        
+        if name:
+            instance_name = name
+            instance_id = get_instance_id_from_name(name)
+            
+            if instance_id is None:
+                click.echo(
+                    f"Error: Instance '{name}' not found",
+                    err=True
+                )
+                click.echo(
+                    f"Check available instances in /sys/fs/multikernel/instances/",
+                    err=True
+                )
+                sys.exit(1)
+            
+            if verbose:
+                click.echo(f"Instance name: {name} (ID: {instance_id})")
+        else:
+            instance_id = id
+            
+            if instance_id < 1 or instance_id > 511:
+                click.echo(
+                    f"Error: --id must be between 1 and 511 (got {instance_id})",
+                    err=True
+                )
+                sys.exit(2)
+            
+            instance_name = get_instance_name_from_id(instance_id)
+            if not instance_name:
+                click.echo(
+                    f"Error: Instance with ID {instance_id} not found",
+                    err=True
+                )
+                click.echo(
+                    f"Check available instances in /sys/fs/multikernel/instances/",
+                    err=True
+                )
+                sys.exit(1)
+            
+            if verbose:
+                click.echo(f"Instance name: {instance_name} (ID: {instance_id})")
+        
         # Validate kernel file
         kernel_path = Path(kernel)
         if not kernel_path.exists():
@@ -203,21 +263,13 @@ def load(ctx: click.Context, kernel: str, initrd: Optional[str], cmdline: Option
             if verbose:
                 click.echo(f"Initrd image: {initrd_path}")
         
-        # Validate id (always required for multikernel mode)
-        if id < 1 or id > 511:
-            click.echo(
-                f"Error: --id must be between 1 and 511 (got {id})",
-                err=True
-            )
-            sys.exit(2)  # Invalid command-line arguments
-        
         # Always enable multikernel mode
-        mk_id_flags = KEXEC_MK_ID(id)
+        mk_id_flags = KEXEC_MK_ID(instance_id)
         flags = KEXEC_MULTIKERNEL | mk_id_flags
         
         if verbose:
-            click.echo(f"Multikernel mode enabled with ID: {id}")
-            click.echo(f"Flags: KEXEC_MULTIKERNEL=0x{KEXEC_MULTIKERNEL:x}, KEXEC_MK_ID({id})=0x{mk_id_flags:x}, combined=0x{flags:x}")
+            click.echo(f"Multikernel mode enabled with ID: {instance_id}")
+            click.echo(f"Flags: KEXEC_MULTIKERNEL=0x{KEXEC_MULTIKERNEL:x}, KEXEC_MK_ID({instance_id})=0x{mk_id_flags:x}, combined=0x{flags:x}")
 
         # Prepare command line (default to empty string if not provided)
         cmdline_str = cmdline if cmdline else ''
