@@ -74,15 +74,15 @@ def kexec_file_unload(
 ) -> int:
     libc = ctypes.CDLL(None, use_errno=True)
     syscall_fn = libc.syscall
-    
+
     syscall_num = get_kexec_file_load_syscall()
-    
+
     # For unload: kernel_fd = -1, initrd_fd = -1, cmdline = NULL
     kernel_fd = -1
     initrd_fd = -1
     cmdline_len = 0
     cmdline_ptr = None
-    
+
     # syscall signature: long syscall(long number, ...)
     # kexec_file_load: long kexec_file_load(int kernel_fd, int initrd_fd,
     #                                       unsigned long cmdline_len,
@@ -97,7 +97,7 @@ def kexec_file_unload(
         ctypes.c_ulong      # flags
     ]
     syscall_fn.restype = ctypes.c_long
-    
+
     if debug:
         click.echo(f"DEBUG: syscall_num={syscall_num}, kernel_fd={kernel_fd}, initrd_fd={initrd_fd}, cmdline_len={cmdline_len}, flags=0x{flags:x}", err=True)
         click.echo(f"DEBUG: KEXEC_FILE_UNLOAD=0x{KEXEC_FILE_UNLOAD:x}, KEXEC_MULTIKERNEL=0x{KEXEC_MULTIKERNEL:x}, KEXEC_MK_ID_MASK=0x{KEXEC_MK_ID_MASK:x}, KEXEC_MK_ID_SHIFT={KEXEC_MK_ID_SHIFT}", err=True)
@@ -123,7 +123,7 @@ def kexec_file_unload(
             # This handles cases where the syscall returns -errno directly
             errno_value = -result
         raise OSError(errno_value, os.strerror(errno_value))
-    
+
     return result
 
 
@@ -135,12 +135,12 @@ def kexec_file_unload(
 def unload(ctx: click.Context, name: Optional[str], id: Optional[int], verbose: bool):
     """
     Unload a kernel image from a multikernel instance using kexec_file_load with KEXEC_FILE_UNLOAD flag.
-    
+
     This command unloads a previously loaded kernel image from memory for the specified
     multikernel instance. The instance must be in LOADED state (not ACTIVE).
-    
+
     Examples:
-    
+
         kerf unload web-server
         kerf unload --id=1
         kerf unload --id=1 --verbose
@@ -156,15 +156,15 @@ def unload(ctx: click.Context, name: Optional[str], id: Optional[int], verbose: 
                 err=True
             )
             sys.exit(2)
-        
+
         instance_name = None
         instance_id = None
-        
+
         if name:
             # Use name, convert to ID
             instance_name = name
             instance_id = get_instance_id_from_name(name)
-            
+
             if instance_id is None:
                 click.echo(
                     f"Error: Instance '{name}' not found",
@@ -175,20 +175,20 @@ def unload(ctx: click.Context, name: Optional[str], id: Optional[int], verbose: 
                     err=True
                 )
                 sys.exit(1)
-            
+
             if verbose:
                 click.echo(f"Instance name: {name} (ID: {instance_id})")
         else:
             # Use ID directly, need to find name for status check
             instance_id = id
-            
+
             if instance_id < 1 or instance_id > 511:
                 click.echo(
                     f"Error: --id must be between 1 and 511 (got {instance_id})",
                     err=True
                 )
                 sys.exit(2)
-            
+
             instances_dir = Path('/sys/fs/multikernel/instances')
             if instances_dir.exists():
                 for inst_dir in instances_dir.iterdir():
@@ -197,7 +197,7 @@ def unload(ctx: click.Context, name: Optional[str], id: Optional[int], verbose: 
                         if found_id == instance_id:
                             instance_name = inst_dir.name
                             break
-            
+
             if not instance_name:
                 click.echo(
                     f"Error: Instance with ID {instance_id} not found",
@@ -208,12 +208,12 @@ def unload(ctx: click.Context, name: Optional[str], id: Optional[int], verbose: 
                     err=True
                 )
                 sys.exit(1)
-        
+
         status_path = Path(f'/sys/fs/multikernel/instances/{instance_name}/status')
         if verbose:
             click.echo(f"Checking instance status for '{instance_name}'...")
             click.echo(f"Status file: {status_path}")
-        
+
         if not status_path.exists():
             click.echo(
                 f"Error: Instance '{instance_name}' status file not found",
@@ -224,13 +224,13 @@ def unload(ctx: click.Context, name: Optional[str], id: Optional[int], verbose: 
                 err=True
             )
             sys.exit(1)
-        
+
         try:
             with open(status_path, 'r') as f:
                 status = f.read().strip()
- 
+
             status_lower = status.lower()
-            
+
             if status_lower == InstanceState.ACTIVE.value:
                 click.echo(
                     f"Error: Cannot unload kernel for instance '{instance_name}' (ID: {instance_id})",
@@ -255,7 +255,7 @@ def unload(ctx: click.Context, name: Optional[str], id: Optional[int], verbose: 
                     err=True
                 )
                 sys.exit(1)
-            
+
             if verbose:
                 click.echo(f"Instance status: '{status}' (OK to unload)")
         except (OSError, IOError) as e:
@@ -268,26 +268,26 @@ def unload(ctx: click.Context, name: Optional[str], id: Optional[int], verbose: 
                 err=True
             )
             sys.exit(1)
-        
+
         mk_id_flags = KEXEC_MK_ID(instance_id)
         flags = KEXEC_FILE_UNLOAD | KEXEC_MULTIKERNEL | mk_id_flags
-        
+
         if verbose:
             click.echo(f"Unloading kernel for instance '{instance_name}' (ID: {instance_id})...")
             click.echo(f"Flags: KEXEC_FILE_UNLOAD=0x{KEXEC_FILE_UNLOAD:x}, KEXEC_MULTIKERNEL=0x{KEXEC_MULTIKERNEL:x}, KEXEC_MK_ID({instance_id})=0x{mk_id_flags:x}, combined=0x{flags:x}")
             click.echo("Calling kexec_file_load syscall with KEXEC_FILE_UNLOAD flag...")
         else:
             click.echo(f"Unloading kernel for instance '{instance_name}' (ID: {instance_id})...")
-        
+
         try:
             debug = ctx.obj.get('debug', False) if ctx and ctx.obj else False
             result = kexec_file_unload(flags, debug=debug)
-            
+
             if verbose:
                 click.echo(f"✓ Kernel unloaded successfully (result: {result})")
             else:
                 click.echo("✓ Kernel unloaded successfully")
-            
+
         except OSError as e:
             click.echo(f"Error: kexec_file_unload failed: {e}", err=True)
             if e.errno == 1:  # EPERM
@@ -310,7 +310,7 @@ def unload(ctx: click.Context, name: Optional[str], id: Optional[int], verbose: 
                     err=True
                 )
             sys.exit(1)
-        
+
     except Exception as e:
         click.echo(f"Unexpected error: {e}", err=True)
         if verbose:

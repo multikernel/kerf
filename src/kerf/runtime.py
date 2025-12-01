@@ -56,24 +56,24 @@ from kerf.resources import validate_cpu_allocation, find_next_instance_id, ...
 @click.command()
 def create(name: str, cpus: List[int], memory: int):
     manager = DeviceTreeManager()
-    
+
     def create_instance(current: GlobalDeviceTree) -> GlobalDeviceTree:
         # Create modified state
         import copy
         modified = copy.deepcopy(current)
-        
+
         # Check existence
         if name in modified.instances:
             raise ValueError(f"Instance '{name}' already exists")
-        
+
         # Validate resources (against baseline)
         validate_cpu_allocation(modified, cpus)
-        
+
         # Find memory base
         memory_base = find_available_memory_base(modified, memory)
         if not memory_base:
             raise ResourceError("No memory available")
-        
+
         # Create instance
         instance = Instance(
             name=name,
@@ -86,9 +86,9 @@ def create(name: str, cpus: List[int], memory: int):
             )
         )
         modified.instances[name] = instance
-        
+
         return modified
-    
+
     # Apply transactionally via overlay
     tx_id = manager.apply_operation(create_instance)
     click.echo(f"Created instance '{name}' (transaction {tx_id})")
@@ -114,11 +114,11 @@ from .exceptions import ValidationError, ParseError, KernelInterfaceError
 class DeviceTreeManager:
     """
     Manages device tree state with kernel overlay interface.
-    
+
     This class provides a transactional interface for modifying the device tree
     using overlays. Each operation generates a device tree overlay (DTBO) that
     represents the incremental change.
-    
+
     Attributes:
         baseline_path: Path to baseline device tree
         overlays_dir: Path to overlays directory
@@ -128,10 +128,10 @@ class DeviceTreeManager:
         overlay_gen: OverlayGenerator instance for creating overlays
         validator: MultikernelValidator instance for validation
     """
-    
+
     DEFAULT_BASELINE_PATH = "/sys/fs/multikernel/device_tree"
     DEFAULT_OVERLAYS_DIR = "/sys/fs/multikernel/overlays"
-    
+
     def __init__(
         self,
         baseline_path: Optional[str] = None,
@@ -139,7 +139,7 @@ class DeviceTreeManager:
     ):
         """
         Initialize DeviceTreeManager.
-        
+
         Args:
             baseline_path: Path to baseline device tree. Defaults to
                          /sys/fs/multikernel/device_tree
@@ -154,44 +154,44 @@ class DeviceTreeManager:
         if not lock_dir.exists() or not os.access(lock_dir, os.W_OK):
             lock_dir = Path("/tmp")
         self.lock_file = lock_dir / "kerf.lock"
-        
+
         self.parser = DeviceTreeParser()
         self.overlay_gen = OverlayGenerator()
         self.validator = MultikernelValidator()
         self.baseline_mgr = BaselineManager(str(self.baseline_path))
-    
+
     def read_baseline(self) -> GlobalDeviceTree:
         """
         Read root device tree from kernel.
-        
+
         The kernel maintains the root device_tree up-to-date with all overlays
         already merged, so this returns the complete current state including
         both resources and instances.
-        
+
         Returns:
             GlobalDeviceTree model representing current complete state
-            
+
         Raises:
             KernelInterfaceError: If kernel interface is inaccessible
             ParseError: If device tree cannot be parsed
         """
         return self.baseline_mgr.read_baseline()
-    
+
     def apply_overlay(self, current: GlobalDeviceTree, modified: GlobalDeviceTree) -> str:
         """
         Apply overlay by writing DTBO to kernel.
-        
+
         Generates an overlay representing the difference between current and
         modified states, then writes it to /sys/fs/multikernel/overlays/new.
         The kernel applies it and creates a transaction directory.
-        
+
         Args:
             current: Current effective state (before change)
             modified: Modified state (after change)
-            
+
         Returns:
             Transaction ID (from kernel-created directory)
-            
+
         Raises:
             ValidationError: If modified state validation fails
             KernelInterfaceError: If overlay application fails
@@ -203,7 +203,7 @@ class DeviceTreeManager:
                 "Resources are defined in baseline only. "
                 "Current and modified states have different hardware definitions."
             )
-        
+
         # Validate modified state before generating overlay
         validation_result = self.validator.validate(modified)
         if not validation_result.is_valid:
@@ -213,20 +213,20 @@ class DeviceTreeManager:
                 error_msg += "\n\nWarnings:\n"
                 error_msg += "\n".join(f"  - {warn}" for warn in validation_result.warnings)
             raise ValidationError(error_msg)
-        
+
         try:
             dtbo_data = self.overlay_gen.generate_overlay(current, modified)
         except Exception as e:
             raise KernelInterfaceError(
                 f"Failed to generate overlay: {e}"
             ) from e
-        
+
         try:
             if not self.overlays_new.exists():
                 raise KernelInterfaceError(
                     f"Overlay interface not found: {self.overlays_new}"
                 )
-            
+
             with open(self.overlays_new, 'wb') as f:
                 f.write(dtbo_data)
 
@@ -235,11 +235,11 @@ class DeviceTreeManager:
                 raise KernelInterfaceError(
                     "Overlay written but kernel did not create transaction directory"
                 )
-            
+
             # Verify transaction succeeded by checking status
             tx_dir = self.overlays_dir / f"tx_{tx_id}"
             status_file = tx_dir / "status"
-            
+
             if status_file.exists():
                 try:
                     with open(status_file, 'r') as f:
@@ -254,20 +254,20 @@ class DeviceTreeManager:
                                 error_msg += f" (instance: {instance_name})"
                             except OSError:
                                 pass
-                        
+
                         raise KernelInterfaceError(error_msg)
                 except OSError:
                     # If we can't read status, assume it might still be processing
                     # But warn that we couldn't verify
                     pass
-            
+
             return tx_id
-            
+
         except OSError as e:
             raise KernelInterfaceError(
                 f"Failed to write overlay to {self.overlays_new}: {e}"
             ) from e
-    
+
     def apply_removal_overlay(self, instance_name: str) -> str:
         """
         Apply an instance-remove overlay directly to the kernel.
@@ -293,7 +293,7 @@ class DeviceTreeManager:
                 raise KernelInterfaceError(
                     f"Failed to generate removal overlay: {e}"
                 ) from e
-            
+
             try:
                 if not self.overlays_new.exists():
                     raise KernelInterfaceError(
@@ -341,40 +341,40 @@ class DeviceTreeManager:
         """Find the latest transaction ID from kernel-created directories."""
         if not self.overlays_dir.exists():
             return None
-        
+
         max_tx_id = None
         max_id = -1
-        
+
         for tx_dir in self.overlays_dir.iterdir():
             if not tx_dir.is_dir():
                 continue
-            
+
             match = re.match(r'^tx_(\d+)$', tx_dir.name)
             if match:
                 tx_id = int(match.group(1))
                 if tx_id > max_id:
                     max_id = tx_id
                     max_tx_id = match.group(1)
-        
+
         return max_tx_id
-    
+
     def rollback_transaction(self, tx_id: str) -> None:
         """
         Rollback a transaction by removing its overlay.
-        
+
         Args:
             tx_id: Transaction ID to rollback
-            
+
         Raises:
             KernelInterfaceError: If rollback fails
         """
         tx_dir = self.overlays_dir / f"tx_{tx_id}"
-        
+
         if not tx_dir.exists():
             raise KernelInterfaceError(
                 f"Transaction {tx_id} not found: {tx_dir}"
             )
-        
+
         try:
             # Remove transaction directory (kernel handles rollback)
             tx_dir.rmdir()
@@ -382,71 +382,71 @@ class DeviceTreeManager:
             raise KernelInterfaceError(
                 f"Failed to rollback transaction {tx_id}: {e}"
             ) from e
-    
+
     def list_transactions(self) -> List[Dict[str, str]]:
         """
         List all applied transactions.
-        
+
         Returns:
             List of transaction info dicts with keys: id, status, instance
         """
         transactions = []
-        
+
         if not self.overlays_dir.exists():
             return transactions
-        
+
         for tx_dir in self.overlays_dir.iterdir():
             if not tx_dir.is_dir():
                 continue
-            
+
             match = re.match(r'^tx_(\d+)$', tx_dir.name)
             if not match:
                 continue
-            
+
             tx_id = match.group(1)
             tx_info = {"id": tx_id}
-            
+
             # Read transaction metadata
             status_file = tx_dir / "status"
             instance_file = tx_dir / "instance"
-            
+
             if status_file.exists():
                 try:
                     with open(status_file, 'r') as f:
                         tx_info["status"] = f.read().strip()
                 except OSError:
                     tx_info["status"] = "unknown"
-            
+
             if instance_file.exists():
                 try:
                     with open(instance_file, 'r') as f:
                         tx_info["instance"] = f.read().strip()
                 except OSError:
                     pass
-            
+
             transactions.append(tx_info)
-        
+
         # Sort by transaction ID
         transactions.sort(key=lambda x: int(x["id"]))
         return transactions
-    
+
     @contextmanager
     def _acquire_lock(self):
         """
         Acquire file lock for concurrency safety.
-        
+
         Yields:
             Lock context
-            
+
         Raises:
             KernelInterfaceError: If lock cannot be acquired
         """
         lock_acquired = False
-        
+
         try:
             max_retries = 10
             retry_delay = 0.1
-            
+
             for attempt in range(max_retries):
                 try:
                     if not self.lock_file.exists():
@@ -459,43 +459,43 @@ class DeviceTreeManager:
                     import time
                     time.sleep(retry_delay)
                     continue
-            
+
             if not lock_acquired:
                 raise KernelInterfaceError(
                     f"Could not acquire lock after {max_retries} attempts. "
                     "Another kerf operation may be in progress."
                 )
-            
+
             yield
-            
+
         finally:
             if lock_acquired and self.lock_file.exists():
                 self.lock_file.unlink()
-    
+
     def apply_operation(
         self,
         operation: Callable[[GlobalDeviceTree], GlobalDeviceTree]
     ) -> str:
         """
         Apply an operation transactionally via overlay.
-        
+
         This is the core method that implements the overlay pattern:
         1. Read root device_tree to get current effective state (kernel keeps it up-to-date)
         2. Apply operation to get modified state
         3. Validate modified state
         4. Generate overlay (delta between current effective and modified)
         5. Apply overlay to kernel
-        
+
         The operation function receives the current effective GlobalDeviceTree
         and must return a modified GlobalDeviceTree (typically a copy).
-        
+
         Args:
             operation: Callable that takes GlobalDeviceTree and returns modified
                       GlobalDeviceTree. Should raise appropriate exceptions for errors.
-                      
+
         Returns:
             Transaction ID from applied overlay
-            
+
         Raises:
             ValidationError: If resulting state is invalid
             KernelInterfaceError: If kernel interface operations fail
@@ -503,20 +503,20 @@ class DeviceTreeManager:
         """
         with self._acquire_lock():
             current = self.read_baseline()
-            
+
             # Apply operation (returns modified state)
             modified = operation(current)
-            
+
             # Generate overlay comparing current effective to modified
             # Each overlay represents incremental change from current state
             tx_id = self.apply_overlay(current, modified)
-            
+
             return tx_id
-    
+
     def get_instance_names(self) -> List[str]:
         """
         Get list of all instance names in current effective state.
-        
+
         Returns:
             List of instance names (empty list if kernel not initialized)
         """
@@ -525,7 +525,7 @@ class DeviceTreeManager:
             return list(tree.instances.keys())
         except (KernelInterfaceError, ParseError):
             return []
-    
+
     def has_instance(self, name: str) -> bool:
         """
         Check if an instance exists in the kernel filesystem.

@@ -40,30 +40,30 @@ from ..exceptions import ValidationError, KernelInterfaceError, ResourceError, P
 def parse_cpu_spec(cpu_spec: str) -> List[int]:
     """
     Parse CPU specification string into explicit CPU IDs.
-    
+
     Supports formats:
     - "4" (single CPU ID 4)
     - "4-7" (range of CPUs: 4, 5, 6, 7)
     - "4,5,6,7" (comma-separated list)
     - "4-7,10-12" (mixed ranges and lists)
-    
+
     Args:
         cpu_spec: CPU specification string
-        
+
     Returns:
         List of explicit CPU IDs (sorted)
-        
+
     Raises:
         ValueError: If specification is invalid
     """
     cpu_spec = cpu_spec.strip()
-    
+
     # Explicit CPU specification
     cpus = set()
-    
+
     # Split by comma
     parts = [p.strip() for p in cpu_spec.split(',')]
-    
+
     for part in parts:
         if '-' in part:
             # Range format: "4-7"
@@ -82,10 +82,10 @@ def parse_cpu_spec(cpu_spec: str) -> List[int]:
                 cpus.add(int(part.strip()))
             except ValueError as e:
                 raise ValueError(f"Invalid CPU ID '{part}': {e}")
-    
+
     if not cpus:
         raise ValueError("CPU specification must include at least one CPU")
-    
+
     return sorted(list(cpus))
 
 
@@ -97,22 +97,22 @@ def allocate_cpus_from_pool(
 ) -> List[int]:
     """
     Allocate specified number of CPUs from available pool with topology awareness.
-    
+
     Args:
         tree: GlobalDeviceTree to analyze
         count: Number of CPUs to allocate
         cpu_affinity: CPU affinity policy - "compact", "spread", or "local"
         numa_nodes: Preferred NUMA node IDs (optional). If specified, allocates
                    CPUs only from these NUMA nodes
-        
+
     Returns:
         List of allocated CPU IDs (sorted)
-        
+
     Raises:
         ResourceError: If not enough CPUs available
     """
     available = sorted(list(get_available_cpus(tree)))
-    
+
     # Filter by NUMA nodes if specified
     if numa_nodes and tree.hardware.topology and tree.hardware.topology.numa_nodes:
         numa_filtered = []
@@ -121,7 +121,7 @@ def allocate_cpus_from_pool(
             if cpu_numa is not None and cpu_numa in numa_nodes:
                 numa_filtered.append(cpu_id)
         available = numa_filtered
-    
+
     if len(available) < count:
         if numa_nodes:
             raise ResourceError(
@@ -133,7 +133,7 @@ def allocate_cpus_from_pool(
                 f"Not enough CPUs available: requested {count}, "
                 f"but only {len(available)} available in pool"
             )
-    
+
     if cpu_affinity == "compact":
         # Allocate from same NUMA node, preferably consecutive CPUs
         if numa_nodes and tree.hardware.topology and tree.hardware.topology.numa_nodes:
@@ -155,7 +155,7 @@ def allocate_cpus_from_pool(
                             return sorted(numa_cpus[i:i+count])
                     # No consecutive range, take first N
                     return sorted(numa_cpus[:count])
-        
+
         # No NUMA topology or not constrained to specific nodes
         # Find consecutive CPUs
         for i in range(len(available) - count + 1):
@@ -166,10 +166,10 @@ def allocate_cpus_from_pool(
                     break
             if consecutive:
                 return available[i:i+count]
-        
+
         # If no consecutive range found, take first N
         return available[:count]
-    
+
     elif cpu_affinity == "spread":
         # Distribute CPUs across NUMA nodes if topology available
         if numa_nodes and tree.hardware.topology and tree.hardware.topology.numa_nodes:
@@ -182,22 +182,22 @@ def allocate_cpus_from_pool(
                 ]
                 if numa_cpus:
                     numa_cpu_lists[numa_node_id] = sorted(numa_cpus)
-            
+
             if not numa_cpu_lists:
                 raise ResourceError(
                     f"No available CPUs in specified NUMA nodes: {numa_nodes}"
                 )
-            
+
             # Distribute evenly across NUMA nodes
             allocated = []
             numa_indices = {node_id: 0 for node_id in numa_cpu_lists.keys()}
-            
+
             for i in range(count):
                 # Round-robin across NUMA nodes
                 numa_idx = i % len(numa_cpu_lists)
                 numa_node_id = list(numa_cpu_lists.keys())[numa_idx]
                 cpu_list = numa_cpu_lists[numa_node_id]
-                
+
                 if numa_indices[numa_node_id] < len(cpu_list):
                     allocated.append(cpu_list[numa_indices[numa_node_id]])
                     numa_indices[numa_node_id] += 1
@@ -208,17 +208,17 @@ def allocate_cpus_from_pool(
                             allocated.append(numa_cpu_lists[next_numa_id][numa_indices[next_numa_id]])
                             numa_indices[next_numa_id] += 1
                             break
-            
+
             return sorted(allocated)
-        
+
         # No NUMA topology, spread evenly across available range
         if count == 1:
             return [available[0]]
-        
+
         step = (len(available) - 1) / (count - 1) if count > 1 else 1
         indices = [int(i * step) for i in range(count)]
         return sorted([available[i] for i in indices])
-    
+
     elif cpu_affinity == "local":
         # Allocate CPUs and ensure they're co-located with memory on same NUMA node
         # This requires NUMA topology
@@ -227,7 +227,7 @@ def allocate_cpus_from_pool(
                 "CPU affinity 'local' requires NUMA topology information. "
                 "Use 'compact' or 'spread' instead, or specify NUMA topology in baseline."
             )
-        
+
         # For 'local', we need to ensure CPUs are from same NUMA node as memory
         # This will be validated later when memory is allocated
         # For now, prefer single NUMA node allocation
@@ -254,11 +254,11 @@ def allocate_cpus_from_pool(
                 ]
                 if len(numa_cpus) >= count:
                     return sorted(numa_cpus[:count])
-            
+
             raise ResourceError(
                 f"No single NUMA node has {count} available CPUs for 'local' affinity"
             )
-    
+
     else:
         raise ValueError(f"Unknown CPU affinity policy: {cpu_affinity}")
 
@@ -266,24 +266,24 @@ def allocate_cpus_from_pool(
 def parse_memory_spec(memory_spec: str) -> int:
     """
     Parse memory specification string into bytes.
-    
+
     Supports formats:
     - "2GB" or "2gb"
     - "2048MB" or "2048mb"
     - "2097152KB" or "2097152kb"
     - "2147483648" (raw bytes)
-    
+
     Args:
         memory_spec: Memory specification string
-        
+
     Returns:
         Size in bytes
-        
+
     Raises:
         ValueError: If specification is invalid
     """
     memory_spec = memory_spec.strip().upper()
-    
+
     # Check for unit suffix
     multipliers = {
         'KB': 1024,
@@ -291,7 +291,7 @@ def parse_memory_spec(memory_spec: str) -> int:
         'GB': 1024 ** 3,
         'TB': 1024 ** 4,
     }
-    
+
     for unit, multiplier in multipliers.items():
         if memory_spec.endswith(unit):
             try:
@@ -299,7 +299,7 @@ def parse_memory_spec(memory_spec: str) -> int:
                 return int(value * multiplier)
             except ValueError:
                 raise ValueError(f"Invalid memory value '{memory_spec}': expected number before {unit}")
-    
+
     # No unit, assume bytes
     try:
         return int(memory_spec)
@@ -310,22 +310,22 @@ def parse_memory_spec(memory_spec: str) -> int:
 def parse_memory_base(base_spec: str) -> int:
     """
     Parse memory base address specification.
-    
+
     Supports formats:
     - "0x80000000" (hexadecimal)
     - "2147483648" (decimal)
-    
+
     Args:
         base_spec: Base address specification
-        
+
     Returns:
         Base address as integer
-        
+
     Raises:
         ValueError: If specification is invalid
     """
     base_spec = base_spec.strip()
-    
+
     if base_spec.startswith('0x') or base_spec.startswith('0X'):
         try:
             return int(base_spec, 16)
@@ -341,22 +341,22 @@ def parse_memory_base(base_spec: str) -> int:
 def parse_device_list(device_spec: Optional[str]) -> List[str]:
     """
     Parse device specification string into list of device names.
-    
+
     Supports formats:
     - "enp9s0_dev" (single device name)
     - "enp9s0_dev,nvme0" (comma-separated device names)
-    
+
     Device names must match device node names in the baseline DTB.
-    
+
     Args:
         device_spec: Device specification string or None (device names, comma-separated)
-        
+
     Returns:
         List of device name strings (e.g., ["enp9s0_dev", "nvme0"])
     """
     if not device_spec:
         return []
-    
+
     devices = [d.strip() for d in device_spec.split(',') if d.strip()]
     return devices
 
@@ -383,13 +383,13 @@ def dump_overlay_for_debug(
     try:
         from ..dtc.parser import DeviceTreeParser
         import libfdt
-        
+
         fdt = libfdt.Fdt(dtbo_data)
         parser = DeviceTreeParser()
         parser.fdt = fdt
         dts_lines = parser._fdt_to_dts_recursive(0, 0)
         dts_content = '\n'.join(dts_lines)
-        
+
         click.echo(f"Debug: Overlay DTS source for '{instance_name}'{suffix}:")
         click.echo("─" * 70)
         click.echo(dts_content)
@@ -435,40 +435,40 @@ def create(
 ):
     """
     Create a new kernel instance with specified resources.
-    
+
     This command creates a new kernel instance and allocates resources to it.
     Resources are validated against the baseline (must be within available pool)
     and existing instances (no overlaps allowed).
-    
+
     The instance name is a required positional argument that can appear anywhere
     after the 'create' command.
-    
+
     Examples:
-    
+
         # Create instance with CPUs 4-7 and 2GB memory (auto-assigned base)
         kerf create web-server --cpus=4-7 --memory=2GB
-        
+
         # Create instance with name after options
         kerf create --cpus=8-15 --memory=8GB web-server
-        
+
         # Create instance with specific memory base address
         kerf create database --cpus=8-15 --memory=8GB --memory-base=0x100000000
-        
+
         # Create instance with devices
         kerf create compute --cpus=16-23 --memory=4GB --devices=enp9s0_dev
-        
+
         # Create instance with explicit single CPU
         kerf create web-server --cpus=4 --memory=2GB
-        
+
         # Create instance with auto-allocated CPU count
         kerf create web-server --cpu-count=4 --memory=2GB
-        
+
         # Create instance with topology-aware allocation (auto-allocated)
         kerf create database --cpu-count=8 --memory=16GB --numa-nodes=0 --cpu-affinity=compact --memory-policy=local
-        
+
         # Create instance with spread affinity across multiple NUMA nodes (auto-allocated)
         kerf create compute --cpu-count=16 --memory=32GB --numa-nodes=0,1 --cpu-affinity=spread --memory-policy=interleave
-        
+
         # Validate without applying
         kerf create web-server --cpu-count=4 --memory=2GB --dry-run
     """
@@ -481,23 +481,23 @@ def create(
                 if not arg.startswith('-') and arg:
                     name = arg
                     break
-        
+
         # Validate name is provided
         if not name:
             click.echo("Error: Instance name is required", err=True)
             click.echo("\nUsage: kerf create <name> [OPTIONS]", err=True)
             click.echo("       kerf create [OPTIONS] <name>", err=True)
             sys.exit(2)
-        
+
         # Validate that exactly one of --cpus or --cpu-count is provided
         if cpus and cpu_count is not None:
             click.echo("Error: --cpus and --cpu-count are mutually exclusive. Specify either explicit CPUs (--cpus) or a count (--cpu-count)", err=True)
             sys.exit(2)
-        
+
         if not cpus and cpu_count is None:
             click.echo("Error: Either --cpus or --cpu-count must be specified", err=True)
             sys.exit(2)
-        
+
         # Parse CPU specification
         is_count = (cpu_count is not None)
         if is_count:
@@ -511,14 +511,14 @@ def create(
             except ValueError as e:
                 click.echo(f"Error: Invalid CPU specification '{cpus}': {e}", err=True)
                 sys.exit(2)
-        
+
         # Parse memory specification
         try:
             memory_bytes = parse_memory_spec(memory)
         except ValueError as e:
             click.echo(f"Error: Invalid memory specification '{memory}': {e}", err=True)
             sys.exit(2)
-        
+
         # Parse memory base (if specified)
         memory_base_addr = None
         if memory_base:
@@ -527,10 +527,10 @@ def create(
             except ValueError as e:
                 click.echo(f"Error: Invalid memory base '{memory_base}': {e}", err=True)
                 sys.exit(2)
-        
+
         # Parse device list
         device_list = parse_device_list(devices)
-        
+
         # Parse NUMA nodes (if specified)
         numa_node_list = None
         if numa_nodes:
@@ -542,18 +542,18 @@ def create(
             except ValueError as e:
                 click.echo(f"Error: Invalid NUMA nodes specification '{numa_nodes}': {e}", err=True)
                 sys.exit(2)
-        
+
         # Validate instance ID if specified
         if id is not None:
             if id < 1 or id > 511:
                 click.echo(f"Error: Instance ID must be in range 1-511, got {id}", err=True)
                 sys.exit(2)
-        
+
         debug = ctx.obj.get('debug', False) if ctx and ctx.obj else False
 
         # Initialize manager
         manager = DeviceTreeManager()
-        
+
         # Define operation to create instance
         def create_instance_operation(current):
             """Operation function to create instance in device tree."""
@@ -567,7 +567,7 @@ def create(
 
             # Create modified state
             modified = copy.deepcopy(current)
-            
+
             # Check if instance ID is already in use (if specified)
             if id is not None:
                 existing_ids = {inst.id for inst in modified.instances.values() if inst.id is not None}
@@ -581,7 +581,7 @@ def create(
                 instance_id = id
             else:
                 instance_id = None
-            
+
             # Allocate CPUs based on specification
             if is_count:
                 # Allocate CPUs automatically from available pool with topology awareness
@@ -594,10 +594,10 @@ def create(
             else:
                 # Use explicitly specified CPUs
                 cpu_list = cpu_spec_value  # cpu_spec_value is List[int]
-            
+
             # Validate CPU allocation (against baseline and existing instances)
             validate_cpu_allocation(modified, cpu_list)
-            
+
             # Find memory base if not specified
             if memory_base_addr is None:
                 found_base = find_available_memory_base(modified, memory_bytes)
@@ -610,10 +610,10 @@ def create(
             else:
                 # Validate specified memory base
                 validate_memory_allocation(modified, memory_base_addr, memory_bytes)
-            
+
             # Validate devices (if specified)
             # TODO: Add device validation when device reference parsing is implemented
-            
+
             # Create instance resources with topology settings
             resources = InstanceResources(
                 cpus=cpu_list,
@@ -624,7 +624,7 @@ def create(
                 cpu_affinity=cpu_affinity,
                 memory_policy=memory_policy
             )
-            
+
             options = None
             if enable_host_kcore:
                 options = {'enable-host-kcore': True}
@@ -636,21 +636,21 @@ def create(
                 resources=resources,
                 options=options
             )
-            
+
             # Add to modified state
             modified.instances[name] = instance
-            
+
             return modified
-        
+
         # Validate only (dry-run)
         if dry_run:
             try:
                 current = manager.read_baseline()
                 modified = create_instance_operation(current)
-                
+
                 # Get instance details from modified tree
                 instance = modified.instances[name]
-                
+
                 click.echo(f"✓ Validation passed for instance '{name}'")
                 if is_count:
                     click.echo(f"  CPUs: {cpu_spec_value} CPUs auto-allocated: {', '.join(map(str, instance.resources.cpus))}")
@@ -680,7 +680,7 @@ def create(
                 click.echo(f"Error: {e}", err=True)
                 sys.exit(1)
             return
-        
+
         try:
             if debug:
                 current = manager.read_baseline()
@@ -688,7 +688,7 @@ def create(
                 dump_overlay_for_debug(manager, current, modified, name)
 
             tx_id = manager.apply_operation(create_instance_operation)
-            
+
             click.echo(f"✓ Created instance '{name}' (transaction {tx_id})")
             if verbose:
                 current = manager.read_baseline()
@@ -722,7 +722,7 @@ def create(
                 import traceback
                 traceback.print_exc()
             sys.exit(1)
-            
+
     except KeyboardInterrupt:
         click.echo("\nOperation cancelled", err=True)
         sys.exit(130)

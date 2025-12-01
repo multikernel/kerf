@@ -33,7 +33,7 @@ class WorkloadType(Enum):
 class InstanceState(Enum):
     """
     Instance state enum matching kernel mk_instance_state.
-    
+
     States:
     - EMPTY: Instance directory exists but no DTB
     - READY: DTB loaded, resources reserved
@@ -86,7 +86,7 @@ class CPUAllocation:
     host_reserved: List[int]
     available: List[int]
     topology: Optional[Dict[int, CPUTopology]] = None  # CPU ID -> topology info
-    
+
     def get_allocated_cpus(self) -> Set[int]:
         """Get set of CPUs allocated to instances."""
         return set(self.available) - set(self.host_reserved)
@@ -99,7 +99,7 @@ class MemoryAllocation:
     host_reserved_bytes: int
     memory_pool_base: int
     memory_pool_bytes: int
-    
+
     @property
     def memory_pool_end(self) -> int:
         """End address of memory pool."""
@@ -149,13 +149,13 @@ class Instance:
 class TopologySection:
     """Generic topology section containing all topology types."""
     numa_nodes: Optional[Dict[int, NUMANode]] = None  # NUMA node ID -> node info
-    
+
     def get_cpus_in_numa_node(self, numa_node: int) -> List[int]:
         """Get all CPUs in a specific NUMA node."""
         if not self.numa_nodes or numa_node not in self.numa_nodes:
             return []
         return self.numa_nodes[numa_node].cpus
-    
+
     def get_numa_node_for_cpu(self, cpu_id: int) -> Optional[int]:
         """Get NUMA node ID for a specific CPU."""
         if not self.numa_nodes:
@@ -164,7 +164,7 @@ class TopologySection:
             if cpu_id in node.cpus:
                 return node_id
         return None
-    
+
     def get_memory_region_for_numa_node(self, numa_node: int) -> Optional[Tuple[int, int]]:
         """Get memory region (base, size) for a specific NUMA node."""
         if not self.numa_nodes or numa_node not in self.numa_nodes:

@@ -44,16 +44,16 @@ def parse_device_spec(device_spec: str) -> List[str]:
     """Parse device specification string into list of PCI IDs."""
     if not device_spec:
         return []
-    
+
     devices = [d.strip() for d in device_spec.split(',') if d.strip()]
-    
+
     # Validate PCI ID format (basic validation)
     import re
     pci_pattern = re.compile(r'^[0-9a-fA-F]{4}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}\.[0-9a-fA-F]$')
     for device in devices:
         if not pci_pattern.match(device):
             raise ValueError(f"Invalid PCI ID format: {device}. Expected format: 0000:09:00.0")
-    
+
     return devices
 
 
@@ -70,13 +70,13 @@ def dump_overlay_for_debug(
     try:
         from ..dtc.parser import DeviceTreeParser
         import libfdt
-        
+
         fdt = libfdt.Fdt(dtbo_data)
         parser = DeviceTreeParser()
         parser.fdt = fdt
         dts_lines = parser._fdt_to_dts_recursive(0, 0)
         dts_content = '\n'.join(dts_lines)
-        
+
         click.echo(f"Debug: Overlay DTS source for '{instance_name}'{suffix}:")
         click.echo("─" * 70)
         click.echo(dts_content)
@@ -110,30 +110,30 @@ def update(
 ):
     """
     Update resources of an existing kernel instance.
-    
+
     This command updates CPU, memory, and/or device resources for an instance.
     Operations are processed in order: memory-remove, memory-add, cpu-remove, cpu-add,
     device-remove, device-add.
-    
+
     At least one of --cpus, --memory, or --devices must be specified.
-    
+
     Examples:
-    
+
         # Update CPUs only
         kerf update web-server --cpus=8-15
-        
+
         # Update memory only (auto-assign base address)
         kerf update web-server --memory=4GB
-        
+
         # Update memory with specific base address
         kerf update web-server --memory=4GB --memory-base=0x200000000
-        
+
         # Update devices
         kerf update web-server --devices=0000:09:00.0,0000:0a:00.0
-        
+
         # Update CPUs, memory, and devices
         kerf update web-server --cpus=8-15 --memory=4GB --devices=0000:09:00.0
-        
+
         # Validate without applying
         kerf update web-server --cpus=8-15 --memory=4GB --dry-run
     """
@@ -141,19 +141,19 @@ def update(
         if not cpus and not memory and not devices:
             click.echo("Error: At least one of --cpus, --memory, or --devices must be specified", err=True)
             sys.exit(2)
-        
+
         if memory_base and not memory:
             click.echo("Error: --memory-base requires --memory", err=True)
             sys.exit(2)
-        
+
         debug = ctx.obj.get('debug', False) if ctx and ctx.obj else False
-        
+
         manager = DeviceTreeManager()
-        
+
         if not manager.has_instance(name):
             click.echo(f"Error: Instance '{name}' does not exist", err=True)
             sys.exit(1)
-        
+
         cpu_list = None
         if cpus:
             try:
@@ -161,7 +161,7 @@ def update(
             except ValueError as e:
                 click.echo(f"Error: Invalid CPU specification '{cpus}': {e}", err=True)
                 sys.exit(2)
-        
+
         memory_bytes = None
         if memory:
             try:
@@ -169,7 +169,7 @@ def update(
             except ValueError as e:
                 click.echo(f"Error: Invalid memory specification '{memory}': {e}", err=True)
                 sys.exit(2)
-        
+
         memory_base_addr = None
         if memory_base:
             try:
@@ -177,7 +177,7 @@ def update(
             except ValueError as e:
                 click.echo(f"Error: Invalid memory base '{memory_base}': {e}", err=True)
                 sys.exit(2)
-        
+
         device_list = None
         if devices is not None:
             try:
@@ -185,27 +185,27 @@ def update(
             except ValueError as e:
                 click.echo(f"Error: Invalid device specification '{devices}': {e}", err=True)
                 sys.exit(2)
-        
+
         def update_instance_operation(current):
             """Operation function to update instance resources. Returns (old_instance, new_instance)."""
             nonlocal memory_base_addr
             nonlocal device_list
-            
+
             from pathlib import Path
             import libfdt
             import struct
             from ..models import Instance, InstanceResources
-            
+
             instance_dt_path = Path(f'/sys/fs/multikernel/instances/{name}/device_tree')
             if not instance_dt_path.exists():
                 raise ResourceError(f"Instance '{name}' device_tree not found at {instance_dt_path}")
-            
+
             try:
                 with open(instance_dt_path, 'rb') as f:
                     instance_dtb_data = f.read()
-                
+
                 fdt = libfdt.Fdt(instance_dtb_data)
-                
+
                 instance_offset = 0
                 instance_node_name = fdt.get_name(instance_offset)
 
@@ -215,16 +215,16 @@ def update(
                 resources_offset = fdt.first_subnode(instance_offset)
                 if resources_offset < 0:
                     raise ResourceError(f"No resources node found for instance '{instance_node_name}'")
-                
+
                 cpus_prop = fdt.getprop(resources_offset, 'cpus')
                 cpus = list(struct.unpack(f'>{len(cpus_prop)//4}I', cpus_prop))
-                
+
                 memory_base_prop = fdt.getprop(resources_offset, 'memory-base')
                 memory_base = struct.unpack('>Q', memory_base_prop)[0]
-                
+
                 memory_bytes_prop = fdt.getprop(resources_offset, 'memory-bytes')
                 memory_bytes_val = struct.unpack('>Q', memory_bytes_prop)[0]
-                
+
                 # Parse devices from resources/devices/ node
                 existing_device_list = []
                 try:
@@ -251,7 +251,7 @@ def update(
                             break
                 except libfdt.FdtException:
                     pass
-                
+
                 existing_instance = Instance(
                     name=instance_node_name,
                     id=instance_id,
@@ -262,23 +262,23 @@ def update(
                         devices=existing_device_list
                     )
                 )
-                
+
             except libfdt.FdtException as e:
                 raise ResourceError(f"Failed to parse instance '{name}' device_tree: {e}")
             except Exception as e:
                 raise ResourceError(f"Failed to read instance '{name}' device_tree: {e}")
-            
+
             modified = copy.deepcopy(current)
             modified.instances[instance_node_name] = copy.deepcopy(existing_instance)
-            
+
             if cpu_list is not None:
                 current_cpus = set(existing_instance.resources.cpus)
                 requested_cpus = set(cpu_list)
                 new_cpus = requested_cpus - current_cpus
-                
+
                 if new_cpus:
                     validate_cpu_allocation(modified, sorted(new_cpus), exclude_instance=instance_node_name)
-            
+
             if memory_bytes is not None:
                 if memory_base_addr is None:
                     found_base = find_available_memory_base(modified, memory_bytes)
@@ -303,22 +303,22 @@ def update(
                 updated_instance.resources.devices = device_list
 
             return (existing_instance, updated_instance)
-        
+
         if dry_run:
             try:
                 current = manager.read_baseline()
                 old_instance, new_instance = update_instance_operation(current)
-                
+
                 click.echo(f"✓ Validation passed for updating instance '{name}'")
                 if cpu_list is not None:
                     click.echo(f"  CPUs: {', '.join(map(str, new_instance.resources.cpus))}")
                 if memory_bytes is not None:
                     click.echo(f"  Memory: {memory} at {hex(new_instance.resources.memory_base)}")
-                
+
                 if debug:
                     dump_overlay_for_debug(manager, name, old_instance, new_instance, suffix="_dryrun")
                     click.echo()
-                
+
                 click.echo("\n✓ Instance would be updated (dry-run mode)")
                 click.echo("  Remove --dry-run to apply overlay to kernel")
             except (ResourceError, ValidationError) as e:
@@ -328,7 +328,7 @@ def update(
                 click.echo(f"Error: {e}", err=True)
                 sys.exit(1)
             return
-        
+
         try:
             if debug:
                 current = manager.read_baseline()
@@ -336,34 +336,34 @@ def update(
                 click.echo(f"\nDebug: Old instance: CPUs={old_instance.resources.cpus}, Devices={old_instance.resources.devices}")
                 click.echo(f"Debug: New instance: CPUs={new_instance.resources.cpus}, Devices={new_instance.resources.devices}")
                 dump_overlay_for_debug(manager, name, old_instance, new_instance)
-            
+
             def apply_update_operation(current):
                 old_instance, new_instance = update_instance_operation(current)
                 dtbo_data = manager.overlay_gen.generate_update_overlay(name, old_instance, new_instance)
                 return dtbo_data
-            
+
             with manager._acquire_lock():
                 current = manager.read_baseline()
                 dtbo_data = apply_update_operation(current)
-                
+
                 try:
                     if not manager.overlays_new.exists():
                         raise KernelInterfaceError(
                             f"Overlay interface not found: {manager.overlays_new}"
                         )
-                    
+
                     with open(manager.overlays_new, 'wb') as f:
                         f.write(dtbo_data)
-                    
+
                     tx_id = manager._find_latest_transaction()
                     if not tx_id:
                         raise KernelInterfaceError(
                             "Overlay written but kernel did not create transaction directory"
                         )
-                    
+
                     tx_dir = manager.overlays_dir / f"tx_{tx_id}"
                     status_file = tx_dir / "status"
-                    
+
                     if status_file.exists():
                         try:
                             with open(status_file, 'r') as f:
@@ -381,12 +381,12 @@ def update(
                                 raise KernelInterfaceError(error_msg)
                         except OSError:
                             pass
-                    
+
                 except OSError as e:
                     raise KernelInterfaceError(
                         f"Failed to write overlay to {manager.overlays_new}: {e}"
                     ) from e
-            
+
             click.echo(f"✓ Updated instance '{name}' (transaction {tx_id})")
             if verbose:
                 current = manager.read_baseline()
@@ -412,7 +412,7 @@ def update(
                 import traceback
                 traceback.print_exc()
             sys.exit(1)
-            
+
     except KeyboardInterrupt:
         click.echo("\nOperation cancelled", err=True)
         sys.exit(130)

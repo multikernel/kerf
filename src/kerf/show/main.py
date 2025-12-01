@@ -37,15 +37,15 @@ import libfdt
 def read_proc_kimage() -> str:
     """
     Read and return the contents of /proc/kimage.
-    
+
     Returns:
         Contents of /proc/kimage as a string, or empty string if file doesn't exist
     """
     kimage_path = Path('/proc/kimage')
-    
+
     if not kimage_path.exists():
         return ""
-    
+
     try:
         with open(kimage_path, 'r') as f:
             return f.read()
@@ -56,15 +56,15 @@ def read_proc_kimage() -> str:
 def get_all_instance_names() -> List[str]:
     """
     Get list of all instance names from /sys/fs/multikernel/instances/.
-    
+
     Returns:
         List of instance names (directory names)
     """
     instances_dir = Path('/sys/fs/multikernel/instances')
-    
+
     if not instances_dir.exists():
         return []
-    
+
     instance_names = []
     try:
         for inst_dir in instances_dir.iterdir():
@@ -72,17 +72,17 @@ def get_all_instance_names() -> List[str]:
                 instance_names.append(inst_dir.name)
     except (OSError, IOError):
         pass
-    
+
     return sorted(instance_names)
 
 
 def read_instance_info(name: str) -> Dict[str, Optional[str]]:
     """
     Read instance information from /sys/fs/multikernel/instances/{name}/.
-    
+
     Args:
         name: Instance name
-    
+
     Returns:
         Dictionary with instance information (id, status, etc.)
     """
@@ -91,12 +91,12 @@ def read_instance_info(name: str) -> Dict[str, Optional[str]]:
         'id': None,
         'status': None,
     }
-    
+
     instance_dir = Path(f'/sys/fs/multikernel/instances/{name}')
-    
+
     if not instance_dir.exists():
         return info
-    
+
     instance_id = get_instance_id_from_name(name)
     if instance_id is not None:
         info['id'] = str(instance_id)
@@ -104,7 +104,7 @@ def read_instance_info(name: str) -> Dict[str, Optional[str]]:
     status = get_instance_status(name)
     if status is not None:
         info['status'] = status
-    
+
     # Try to read any other files in the instance directory
     try:
         for file_path in instance_dir.iterdir():
@@ -135,36 +135,36 @@ def read_instance_info(name: str) -> Dict[str, Optional[str]]:
                     pass
     except (OSError, IOError):
         pass
-    
+
     return info
 
 
 def parse_kimage_table(kimage_content: str) -> Dict[int, Dict[str, str]]:
     """
     Parse /proc/kimage table format and extract information by MK_ID.
-    
+
     Expected format:
     MK_ID  Type        Start Address   Segments  Mode  Cmdline
     -----  ----------  --------------  --------  ----  -------
     1      KEXEC_FILE  0x1000000        ...       ...   ...
-    
+
     Args:
         kimage_content: Full content of /proc/kimage
-    
+
     Returns:
         Dictionary mapping MK_ID to a dict with parsed fields
     """
     kimage_data = {}
-    
+
     if not kimage_content:
         return kimage_data
-    
+
     lines = kimage_content.strip().split('\n')
-    
+
     header_line = None
     separator_line = None
     data_start_idx = 0
-    
+
     for i, line in enumerate(lines):
         if 'MK_ID' in line and 'Type' in line:
             header_line = line
@@ -174,7 +174,7 @@ def parse_kimage_table(kimage_content: str) -> Dict[int, Dict[str, str]]:
             else:
                 data_start_idx = i + 1
             break
-    
+
     if header_line is None:
         return kimage_data
 
@@ -216,7 +216,7 @@ def parse_kimage_table(kimage_content: str) -> Dict[int, Dict[str, str]]:
             else:
                 i += 1
         boundaries.append(len(header_line))
-    
+
     columns = []
     for i in range(len(boundaries) - 1):
         start = boundaries[i]
@@ -224,12 +224,12 @@ def parse_kimage_table(kimage_content: str) -> Dict[int, Dict[str, str]]:
         col_name = header_line[start:end].strip().lower().replace(' ', '_')
         if col_name:
             columns.append((col_name, start, end))
-    
+
     for line in lines[data_start_idx:]:
         line = line.rstrip()
         if not line.strip():
             continue
-        
+
         mk_id = None
         if columns:
             first_col_start = columns[0][1]
@@ -239,10 +239,10 @@ def parse_kimage_table(kimage_content: str) -> Dict[int, Dict[str, str]]:
                 mk_id = int(mk_id_str)
             except (ValueError, IndexError):
                 continue
-        
+
         if mk_id is None:
             continue
-        
+
         # Extract all columns
         row_data = {}
         for i, (col_name, start, end) in enumerate(columns):
@@ -252,16 +252,16 @@ def parse_kimage_table(kimage_content: str) -> Dict[int, Dict[str, str]]:
             else:
                 col_value = line[start:min(end, len(line))].strip()
             row_data[col_name] = col_value
-        
+
         kimage_data[mk_id] = row_data
-    
+
     return kimage_data
 
 
 def display_baseline_info(tree: GlobalDeviceTree, verbose: bool = False):
     """
     Display formatted baseline hardware information.
-    
+
     Args:
         tree: GlobalDeviceTree containing hardware resources
         verbose: Whether to show verbose information
@@ -269,20 +269,20 @@ def display_baseline_info(tree: GlobalDeviceTree, verbose: bool = False):
     click.echo(f"\n{'=' * 80}")
     click.echo(f"Baseline Hardware Resources")
     click.echo(f"{'=' * 80}")
-    
+
     hardware = tree.hardware
-    
+
     # CPU Information
     click.echo(f"\n  CPUs:")
     click.echo(f"    Total:           {hardware.cpus.total}")
     click.echo(f"    Host Reserved:   {len(hardware.cpus.host_reserved)} cpus: {hardware.cpus.host_reserved}")
     click.echo(f"    Available:       {len(hardware.cpus.available)} cpus: {hardware.cpus.available}")
-    
+
     if verbose and hardware.cpus.topology:
         click.echo(f"\n    Topology:")
         for cpu_id, topo in sorted(hardware.cpus.topology.items()):
             click.echo(f"      CPU {cpu_id}: NUMA {topo.numa_node}, Socket {topo.socket_id}, Core {topo.core_id}, Thread {topo.thread_id}")
-    
+
     # Memory Information
     click.echo(f"\n  Memory:")
     total_gb = hardware.memory.total_bytes / (1024 ** 3)
@@ -293,7 +293,7 @@ def display_baseline_info(tree: GlobalDeviceTree, verbose: bool = False):
     click.echo(f"    Pool Base:       0x{hardware.memory.memory_pool_base:x}")
     click.echo(f"    Pool Size:       {pool_gb:.2f} GB ({hardware.memory.memory_pool_bytes} bytes)")
     click.echo(f"    Pool End:        0x{hardware.memory.memory_pool_end:x}")
-    
+
     # NUMA Topology
     if hardware.topology and hardware.topology.numa_nodes:
         click.echo(f"\n  NUMA Topology:")
@@ -307,7 +307,7 @@ def display_baseline_info(tree: GlobalDeviceTree, verbose: bool = False):
                 click.echo(f"      Distance:")
                 for target_node, distance in sorted(numa_node.distance_matrix.items()):
                     click.echo(f"        -> Node {target_node}: {distance}")
-    
+
     # Devices
     if hardware.devices:
         click.echo(f"\n  Devices:")
@@ -333,7 +333,7 @@ def display_instance_info(instance_info: Dict[str, Optional[str]],
                          verbose: bool = False):
     """
     Display formatted instance information.
-    
+
     Args:
         instance_info: Instance information dictionary
         kimage_data: Optional kimage data for this instance
@@ -342,18 +342,18 @@ def display_instance_info(instance_info: Dict[str, Optional[str]],
     name = instance_info.get('name', 'unknown')
     instance_id = instance_info.get('id')
     status = instance_info.get('status')
-    
+
     # Header
     click.echo(f"\n{'=' * 80}")
     click.echo(f"Instance: {name}")
     click.echo(f"{'=' * 80}")
-    
+
     # Basic info
     if instance_id:
         click.echo(f"  ID:              {instance_id}")
     if status:
         click.echo(f"  Status:          {status}")
-    
+
     # Kernel image information from /proc/kimage
     if kimage_data:
         click.echo(f"\n  Kernel Image:")
@@ -363,7 +363,7 @@ def display_instance_info(instance_info: Dict[str, Optional[str]],
             click.echo(f"    {key_display:15} {value}")
     elif instance_id and verbose:
         click.echo(f"\n  Kernel Image:     (not loaded)")
-    
+
     # Device tree source
     if 'device_tree_source' in instance_info and instance_info['device_tree_source']:
         dts = instance_info['device_tree_source']
@@ -372,7 +372,7 @@ def display_instance_info(instance_info: Dict[str, Optional[str]],
                 dts = dts.decode('utf-8', errors='replace')
             elif not isinstance(dts, str):
                 dts = str(dts)
-            
+
             if dts.strip().startswith('/dts-v1/') or dts.strip().startswith('/'):
                 click.echo(f"\n  Device Tree:")
                 dts_lines = dts.split('\n')
@@ -383,7 +383,7 @@ def display_instance_info(instance_info: Dict[str, Optional[str]],
                 pass
         except (UnicodeDecodeError, AttributeError):
             pass
-    
+
     other_fields = {k: v for k, v in instance_info.items() 
                    if k not in ['name', 'id', 'status', 'device_tree_source'] and v
                    and isinstance(v, str) and len(v) < 1000  # Skip very long or binary data
@@ -406,16 +406,16 @@ def display_instance_info(instance_info: Dict[str, Optional[str]],
 def show(name: Optional[str], verbose: bool):
     """
     Show kernel instance information and baseline hardware resources.
-    
+
     This command combines information from /proc/kimage with instance information
     from /sys/fs/multikernel/instances/* and baseline hardware resources from
     /sys/fs/multikernel/device_tree in an organized format.
-    
+
     Without an instance name, it shows baseline and all instances.
     With a specific instance name, it shows only that instance (no baseline).
-    
+
     Examples:
-    
+
         kerf show
         kerf show web-server
         kerf show --verbose
@@ -424,11 +424,11 @@ def show(name: Optional[str], verbose: bool):
         # Read /proc/kimage content
         kimage_content = read_proc_kimage()
         kimage_table = parse_kimage_table(kimage_content)
-        
+
         if name:
             # Show specific instance
             instance_id = get_instance_id_from_name(name)
-            
+
             if instance_id is None:
                 click.echo(
                     f"Error: Instance '{name}' not found",
@@ -439,19 +439,19 @@ def show(name: Optional[str], verbose: bool):
                     err=True
                 )
                 sys.exit(1)
-            
+
             # Get instance information
             instance_info = read_instance_info(name)
-            
+
             # Get kimage data for this instance
             kimage_data = kimage_table.get(instance_id)
-            
+
             # Display information
             display_instance_info(instance_info, kimage_data, verbose)
         else:
             # Show all instances and baseline
             instance_names = get_all_instance_names()
-            
+
             # Try to read and display baseline
             baseline_manager = BaselineManager()
             try:
@@ -460,7 +460,7 @@ def show(name: Optional[str], verbose: bool):
             except (KernelInterfaceError, ParseError) as e:
                 if verbose:
                     click.echo(f"\nWarning: Could not read baseline: {e}", err=True)
-            
+
             if not instance_names:
                 click.echo("\n" + "=" * 80)
                 click.echo("No instances found in /sys/fs/multikernel/instances/")
@@ -469,7 +469,7 @@ def show(name: Optional[str], verbose: bool):
                     click.echo("=" * 80)
                     click.echo(kimage_content)
                 sys.exit(0)
-            
+
             # Display summary header
             click.echo(f"\n{'=' * 80}")
             click.echo("Multikernel Instances")
@@ -478,12 +478,12 @@ def show(name: Optional[str], verbose: bool):
             if kimage_table:
                 click.echo(f"Loaded kernels: {len(kimage_table)}")
             click.echo()
-            
+
             # Display each instance
             for inst_name in instance_names:
                 instance_info = read_instance_info(inst_name)
                 instance_id_str = instance_info.get('id')
-                
+
                 # Get kimage data for this instance
                 kimage_data = None
                 if instance_id_str:
@@ -492,11 +492,11 @@ def show(name: Optional[str], verbose: bool):
                         kimage_data = kimage_table.get(instance_id)
                     except (ValueError, TypeError):
                         pass
-                
+
                 display_instance_info(instance_info, kimage_data, verbose)
-            
+
             click.echo()
-    
+
     except KeyboardInterrupt:
         click.echo("\nOperation cancelled", err=True)
         sys.exit(130)

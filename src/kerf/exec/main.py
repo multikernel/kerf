@@ -66,12 +66,12 @@ class MultikernelBootArgs(ctypes.Structure):
 def boot_multikernel(mk_id: int) -> int:
     libc = ctypes.CDLL(None, use_errno=True)
     syscall_fn = libc.syscall
-    
+
     syscall_num = get_reboot_syscall()
-    
+
     args = MultikernelBootArgs()
     args.mk_id = mk_id
-    
+
     # syscall signature: long syscall(long number, ...)
     # reboot: long syscall(SYS_reboot, LINUX_REBOOT_MAGIC1, LINUX_REBOOT_MAGIC2,
     #                      LINUX_REBOOT_CMD_MULTIKERNEL, &args)
@@ -83,7 +83,7 @@ def boot_multikernel(mk_id: int) -> int:
         ctypes.POINTER(MultikernelBootArgs)  # &args
     ]
     syscall_fn.restype = ctypes.c_long
-    
+
     result = syscall_fn(
         syscall_num,
         LINUX_REBOOT_MAGIC1,
@@ -91,11 +91,11 @@ def boot_multikernel(mk_id: int) -> int:
         LINUX_REBOOT_CMD_MULTIKERNEL,
         ctypes.byref(args)
     )
-    
+
     if result < 0:
         errno_value = ctypes.get_errno()
         raise OSError(errno_value, os.strerror(errno_value))
-    
+
     return result
 
 
@@ -106,12 +106,12 @@ def boot_multikernel(mk_id: int) -> int:
 def exec_cmd(name: Optional[str], id: Optional[int], verbose: bool):
     """
     Boot a multikernel instance using the reboot syscall.
-    
+
     This command boots a previously loaded multikernel instance by name or ID using
     the reboot syscall with the MULTIKERNEL command.
-    
+
     Examples:
-    
+
         kerf exec web-server
         kerf exec --id=1
     """
@@ -126,15 +126,15 @@ def exec_cmd(name: Optional[str], id: Optional[int], verbose: bool):
                 err=True
             )
             sys.exit(2)
-        
+
         instance_name = None
         instance_id = None
-        
+
         if name:
             # Use name, convert to ID
             instance_name = name
             instance_id = get_instance_id_from_name(name)
-            
+
             if instance_id is None:
                 click.echo(
                     f"Error: Instance '{name}' not found",
@@ -145,20 +145,20 @@ def exec_cmd(name: Optional[str], id: Optional[int], verbose: bool):
                     err=True
                 )
                 sys.exit(1)
-            
+
             if verbose:
                 click.echo(f"Instance name: {name} (ID: {instance_id})")
         else:
             # Use ID directly, need to find name for status check
             instance_id = id
-            
+
             if instance_id < 1 or instance_id > 511:
                 click.echo(
                     f"Error: --id must be between 1 and 511 (got {instance_id})",
                     err=True
                 )
                 sys.exit(2)
-            
+
             instances_dir = Path('/sys/fs/multikernel/instances')
             if instances_dir.exists():
                 for inst_dir in instances_dir.iterdir():
@@ -167,7 +167,7 @@ def exec_cmd(name: Optional[str], id: Optional[int], verbose: bool):
                         if found_id == instance_id:
                             instance_name = inst_dir.name
                             break
-            
+
             if not instance_name:
                 click.echo(
                     f"Error: Instance with ID {instance_id} not found",
@@ -178,12 +178,12 @@ def exec_cmd(name: Optional[str], id: Optional[int], verbose: bool):
                     err=True
                 )
                 sys.exit(1)
-        
+
         status_path = Path(f'/sys/fs/multikernel/instances/{instance_name}/status')
         if verbose:
             click.echo(f"Checking if kernel image is loaded for instance '{instance_name}'...")
             click.echo(f"Status file: {status_path}")
-        
+
         if not status_path.exists():
             click.echo(
                 f"Error: Instance '{instance_name}' status file not found",
@@ -194,11 +194,11 @@ def exec_cmd(name: Optional[str], id: Optional[int], verbose: bool):
                 err=True
             )
             sys.exit(1)
-        
+
         try:
             with open(status_path, 'r') as f:
                 status = f.read().strip()
- 
+
             status_lower = status.lower()
             if status_lower != InstanceState.LOADED.value:
                 click.echo(
@@ -214,7 +214,7 @@ def exec_cmd(name: Optional[str], id: Optional[int], verbose: bool):
                     err=True
                 )
                 sys.exit(1)
-            
+
             if verbose:
                 click.echo(f"Instance status: '{status}'")
         except (OSError, IOError) as e:
@@ -227,7 +227,7 @@ def exec_cmd(name: Optional[str], id: Optional[int], verbose: bool):
                 err=True
             )
             sys.exit(1)
-        
+
         if verbose:
             click.echo(f"✓ Kernel image found for instance '{instance_name}'")
             click.echo(f"Instance ID to boot: {instance_id}")
@@ -235,17 +235,17 @@ def exec_cmd(name: Optional[str], id: Optional[int], verbose: bool):
             click.echo("Calling reboot syscall...")
         else:
             click.echo(f"Booting instance '{instance_name}' (ID: {instance_id})...")
-        
+
         result = boot_multikernel(instance_id)
-        
+
         if verbose:
             click.echo(f"✓ Boot command executed successfully (result: {result})")
         else:
             click.echo("✓ Boot command executed successfully")
-        
+
         # Note: If successful, this syscall will reboot the system and boot the
         # specified multikernel instance, so we may not reach this point.
-        
+
     except OSError as e:
         click.echo(f"Error: reboot syscall failed: {e}", err=True)
         if e.errno == 1:  # EPERM
@@ -268,7 +268,7 @@ def exec_cmd(name: Optional[str], id: Optional[int], verbose: bool):
                 err=True
             )
         sys.exit(1)
-    
+
     except Exception as e:
         click.echo(f"Unexpected error: {e}", err=True)
         if verbose:

@@ -74,24 +74,24 @@ def kexec_file_load(
 ) -> int:
     """
     Call kexec_file_load syscall.
-    
+
     Args:
         kernel_fd: File descriptor for kernel image
         initrd_fd: File descriptor for initrd (use -1 if not provided)
         cmdline: Boot command line string
         flags: KEXEC flags (e.g., KEXEC_MULTIKERNEL | KEXEC_MK_ID(id))
-    
+
     Returns:
         0 on success, -errno on failure
-    
+
     Raises:
         OSError: If syscall fails
     """
     libc = ctypes.CDLL(None, use_errno=True)
     syscall_fn = libc.syscall
-    
+
     syscall_num = get_kexec_file_load_syscall()
-    
+
     # Prepare cmdline
     # kexec_file_load expects: cmdline_len is length INCLUDING null terminator
     #                         cmdline is pointer to null-terminated string (or NULL)
@@ -105,7 +105,7 @@ def kexec_file_load(
     else:
         cmdline_len = 0
         cmdline_ptr = None
-    
+
     # syscall signature: long syscall(long number, ...)
     # kexec_file_load: long kexec_file_load(int kernel_fd, int initrd_fd,
     #                                       unsigned long cmdline_len,
@@ -120,7 +120,7 @@ def kexec_file_load(
         ctypes.c_ulong      # flags
     ]
     syscall_fn.restype = ctypes.c_long
-    
+
     if debug:
         click.echo(f"DEBUG: syscall_num={syscall_num}, kernel_fd={kernel_fd}, initrd_fd={initrd_fd}, cmdline_len={cmdline_len}, flags=0x{flags:x}", err=True)
         click.echo(f"DEBUG: KEXEC_MULTIKERNEL=0x{KEXEC_MULTIKERNEL:x}, KEXEC_MK_ID_MASK=0x{KEXEC_MK_ID_MASK:x}, KEXEC_MK_ID_SHIFT={KEXEC_MK_ID_SHIFT}", err=True)
@@ -151,7 +151,7 @@ def kexec_file_load(
             # This handles cases where the syscall returns -errno directly
             errno_value = -result
         raise OSError(errno_value, os.strerror(errno_value))
-    
+
     return result
 
 
@@ -167,12 +167,12 @@ def load(ctx: click.Context, name: Optional[str], kernel: str, initrd: Optional[
          cmdline: Optional[str], id: Optional[int], verbose: bool):
     """
     Load kernel image and initrd using kexec_file_load syscall.
-    
+
     This command loads a kernel image into memory using the kexec_file_load
     syscall. The kernel is loaded in multikernel mode with the specified ID.
-    
+
     Examples:
-    
+
         kerf load web-server --kernel=/boot/vmlinuz --initrd=/boot/initrd.img \\
                  --cmdline="root=/dev/sda1"
         kerf load --kernel=/boot/vmlinuz --initrd=/boot/initrd.img \\
@@ -189,14 +189,14 @@ def load(ctx: click.Context, name: Optional[str], kernel: str, initrd: Optional[
                 err=True
             )
             sys.exit(2)
-        
+
         instance_name = None
         instance_id = None
-        
+
         if name:
             instance_name = name
             instance_id = get_instance_id_from_name(name)
-            
+
             if instance_id is None:
                 click.echo(
                     f"Error: Instance '{name}' not found",
@@ -207,19 +207,19 @@ def load(ctx: click.Context, name: Optional[str], kernel: str, initrd: Optional[
                     err=True
                 )
                 sys.exit(1)
-            
+
             if verbose:
                 click.echo(f"Instance name: {name} (ID: {instance_id})")
         else:
             instance_id = id
-            
+
             if instance_id < 1 or instance_id > 511:
                 click.echo(
                     f"Error: --id must be between 1 and 511 (got {instance_id})",
                     err=True
                 )
                 sys.exit(2)
-            
+
             instance_name = get_instance_name_from_id(instance_id)
             if not instance_name:
                 click.echo(
@@ -231,23 +231,23 @@ def load(ctx: click.Context, name: Optional[str], kernel: str, initrd: Optional[
                     err=True
                 )
                 sys.exit(1)
-            
+
             if verbose:
                 click.echo(f"Instance name: {instance_name} (ID: {instance_id})")
-        
+
         # Validate kernel file
         kernel_path = Path(kernel)
         if not kernel_path.exists():
             click.echo(f"Error: Kernel image '{kernel}' does not exist", err=True)
             sys.exit(3)  # File I/O error
-        
+
         if not kernel_path.is_file():
             click.echo(f"Error: '{kernel}' is not a regular file", err=True)
             sys.exit(3)
-        
+
         if verbose:
             click.echo(f"Kernel image: {kernel_path}")
-        
+
         # Validate initrd file if provided
         initrd_path = None
         if initrd:
@@ -255,36 +255,36 @@ def load(ctx: click.Context, name: Optional[str], kernel: str, initrd: Optional[
             if not initrd_path.exists():
                 click.echo(f"Error: Initrd image '{initrd}' does not exist", err=True)
                 sys.exit(3)
-            
+
             if not initrd_path.is_file():
                 click.echo(f"Error: '{initrd}' is not a regular file", err=True)
                 sys.exit(3)
-            
+
             if verbose:
                 click.echo(f"Initrd image: {initrd_path}")
-        
+
         # Always enable multikernel mode
         mk_id_flags = KEXEC_MK_ID(instance_id)
         flags = KEXEC_MULTIKERNEL | mk_id_flags
-        
+
         if verbose:
             click.echo(f"Multikernel mode enabled with ID: {instance_id}")
             click.echo(f"Flags: KEXEC_MULTIKERNEL=0x{KEXEC_MULTIKERNEL:x}, KEXEC_MK_ID({instance_id})=0x{mk_id_flags:x}, combined=0x{flags:x}")
 
         # Prepare command line (default to empty string if not provided)
         cmdline_str = cmdline if cmdline else ''
-        
+
         if verbose:
             click.echo(f"Command line: {cmdline_str if cmdline_str else '(empty)'}")
             click.echo(f"Flags: 0x{flags:x}")
-        
+
         # Open kernel file
         try:
             kernel_fd = os.open(str(kernel_path), os.O_RDONLY)
         except OSError as e:
             click.echo(f"Error: Failed to open kernel image: {e}", err=True)
             sys.exit(3)
-        
+
         # Open initrd file if provided
         initrd_fd = -1
         if initrd_path:
@@ -294,20 +294,20 @@ def load(ctx: click.Context, name: Optional[str], kernel: str, initrd: Optional[
                 os.close(kernel_fd)
                 click.echo(f"Error: Failed to open initrd image: {e}", err=True)
                 sys.exit(3)
-        
+
         try:
             # Call kexec_file_load syscall
             if verbose:
                 click.echo("Calling kexec_file_load syscall...")
-            
+
             debug = ctx.obj.get('debug', False) if ctx and ctx.obj else False
             result = kexec_file_load(kernel_fd, initrd_fd, cmdline_str, flags, debug=debug)
-            
+
             if verbose:
                 click.echo(f"✓ Kernel loaded successfully (result: {result})")
             else:
                 click.echo("✓ Kernel loaded successfully")
-            
+
         except OSError as e:
             click.echo(f"Error: kexec_file_load failed: {e}", err=True)
             if e.errno == 1:  # EPERM
@@ -326,13 +326,13 @@ def load(ctx: click.Context, name: Optional[str], kernel: str, initrd: Optional[
                     err=True
                 )
             sys.exit(1)
-        
+
         finally:
             # Clean up file descriptors
             os.close(kernel_fd)
             if initrd_fd >= 0:
                 os.close(initrd_fd)
-    
+
     except Exception as e:
         click.echo(f"Unexpected error: {e}", err=True)
         if verbose:
