@@ -23,6 +23,37 @@ pytest-cov = "^4.0.0"
 black = "^22.0.0"
 flake8 = "^5.0.0"
 mypy = "^1.0.0"
+pylint = "^3.0.0"
 
 [tool.poetry.scripts]
 kerf = "kerf.cli:main"
+
+[tool.pylint.main]
+py-version = "3.8"
+jobs = 0
+ignore-patterns = ["^\\.#"]
+suggestion-mode = true
+
+[tool.pylint.messages_control]
+disable = [
+    "missing-module-docstring",
+    "missing-class-docstring",
+    "missing-function-docstring",
+    "too-few-public-methods",
+    "too-many-arguments",
+    "too-many-locals",
+    "too-many-branches",
+    "too-many-statements",
+    "invalid-name",
+]
+
+[tool.pylint.format]
+max-line-length = 100
+indent-string = "    "
+
+[tool.pylint.basic]
+good-names = ["i", "j", "k", "ex", "Run", "_", "fd", "dt", "id"]
+
+[tool.pylint.design]
+max-attributes = 10
+max-returns = 6
