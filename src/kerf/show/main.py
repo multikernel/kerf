@@ -13,10 +13,11 @@
 # limitations under the License.
 
 """
-Show kernel instance information command.
+Show kernel instance information and baseline hardware resources.
 
-This command displays information from /proc/kimage combined with
-/sys/fs/multikernel/instances/* information.
+This command displays baseline hardware resources from /sys/fs/multikernel/device_tree,
+instance information from /sys/fs/multikernel/instances/*, and kernel image information
+from /proc/kimage in an organized format.
 """
 
 import sys
@@ -27,6 +28,9 @@ import click
 
 from ..utils import get_instance_id_from_name, get_instance_status
 from ..dtc.parser import DeviceTreeParser
+from ..baseline import BaselineManager
+from ..models import GlobalDeviceTree
+from ..exceptions import KernelInterfaceError, ParseError
 import libfdt
 
 
@@ -254,6 +258,76 @@ def parse_kimage_table(kimage_content: str) -> Dict[int, Dict[str, str]]:
     return kimage_data
 
 
+def display_baseline_info(tree: GlobalDeviceTree, verbose: bool = False):
+    """
+    Display formatted baseline hardware information.
+    
+    Args:
+        tree: GlobalDeviceTree containing hardware resources
+        verbose: Whether to show verbose information
+    """
+    click.echo(f"\n{'=' * 80}")
+    click.echo(f"Baseline Hardware Resources")
+    click.echo(f"{'=' * 80}")
+    
+    hardware = tree.hardware
+    
+    # CPU Information
+    click.echo(f"\n  CPUs:")
+    click.echo(f"    Total:           {hardware.cpus.total}")
+    click.echo(f"    Host Reserved:   {len(hardware.cpus.host_reserved)} cpus: {hardware.cpus.host_reserved}")
+    click.echo(f"    Available:       {len(hardware.cpus.available)} cpus: {hardware.cpus.available}")
+    
+    if verbose and hardware.cpus.topology:
+        click.echo(f"\n    Topology:")
+        for cpu_id, topo in sorted(hardware.cpus.topology.items()):
+            click.echo(f"      CPU {cpu_id}: NUMA {topo.numa_node}, Socket {topo.socket_id}, Core {topo.core_id}, Thread {topo.thread_id}")
+    
+    # Memory Information
+    click.echo(f"\n  Memory:")
+    total_gb = hardware.memory.total_bytes / (1024 ** 3)
+    reserved_gb = hardware.memory.host_reserved_bytes / (1024 ** 3)
+    pool_gb = hardware.memory.memory_pool_bytes / (1024 ** 3)
+    click.echo(f"    Total:           {total_gb:.2f} GB ({hardware.memory.total_bytes} bytes)")
+    click.echo(f"    Host Reserved:   {reserved_gb:.2f} GB ({hardware.memory.host_reserved_bytes} bytes)")
+    click.echo(f"    Pool Base:       0x{hardware.memory.memory_pool_base:x}")
+    click.echo(f"    Pool Size:       {pool_gb:.2f} GB ({hardware.memory.memory_pool_bytes} bytes)")
+    click.echo(f"    Pool End:        0x{hardware.memory.memory_pool_end:x}")
+    
+    # NUMA Topology
+    if hardware.topology and hardware.topology.numa_nodes:
+        click.echo(f"\n  NUMA Topology:")
+        for node_id, numa_node in sorted(hardware.topology.numa_nodes.items()):
+            mem_gb = numa_node.memory_size / (1024 ** 3)
+            click.echo(f"    Node {node_id}:")
+            click.echo(f"      Memory:        {mem_gb:.2f} GB (base: 0x{numa_node.memory_base:x})")
+            click.echo(f"      CPUs:          {numa_node.cpus}")
+            click.echo(f"      Type:          {numa_node.memory_type}")
+            if verbose and numa_node.distance_matrix:
+                click.echo(f"      Distance:")
+                for target_node, distance in sorted(numa_node.distance_matrix.items()):
+                    click.echo(f"        -> Node {target_node}: {distance}")
+    
+    # Devices
+    if hardware.devices:
+        click.echo(f"\n  Devices:")
+        for device_name, device_info in sorted(hardware.devices.items()):
+            click.echo(f"    {device_name}:")
+            click.echo(f"      Compatible:    {device_info.compatible}")
+            if device_info.device_type:
+                click.echo(f"      Type:          {device_info.device_type}")
+            if device_info.pci_id:
+                click.echo(f"      PCI ID:        {device_info.pci_id}")
+            if device_info.sriov_vfs:
+                click.echo(f"      SR-IOV VFs:    {device_info.sriov_vfs} total")
+                if device_info.available_vfs:
+                    click.echo(f"      Available VFs: {device_info.available_vfs}")
+            if device_info.namespaces:
+                click.echo(f"      Namespaces:    {device_info.namespaces} total")
+                if device_info.available_ns:
+                    click.echo(f"      Available NS:  {device_info.available_ns}")
+
+
 def display_instance_info(instance_info: Dict[str, Optional[str]], 
                          kimage_data: Optional[Dict[str, str]] = None,
                          verbose: bool = False):
@@ -331,13 +405,14 @@ def display_instance_info(instance_info: Dict[str, Optional[str]],
 @click.option('--verbose', '-v', is_flag=True, help='Verbose output')
 def show(name: Optional[str], verbose: bool):
     """
-    Show kernel instance information.
+    Show kernel instance information and baseline hardware resources.
     
     This command combines information from /proc/kimage with instance information
-    from /sys/fs/multikernel/instances/* in an organized format.
+    from /sys/fs/multikernel/instances/* and baseline hardware resources from
+    /sys/fs/multikernel/device_tree in an organized format.
     
-    Without an instance name, it shows all instances.
-    With a specific instance name, it shows only that instance.
+    Without an instance name, it shows baseline and all instances.
+    With a specific instance name, it shows only that instance (no baseline).
     
     Examples:
     
@@ -374,10 +449,20 @@ def show(name: Optional[str], verbose: bool):
             # Display information
             display_instance_info(instance_info, kimage_data, verbose)
         else:
-            # Show all instances
+            # Show all instances and baseline
             instance_names = get_all_instance_names()
             
+            # Try to read and display baseline
+            baseline_manager = BaselineManager()
+            try:
+                tree = baseline_manager.read_baseline()
+                display_baseline_info(tree, verbose)
+            except (KernelInterfaceError, ParseError) as e:
+                if verbose:
+                    click.echo(f"\nWarning: Could not read baseline: {e}", err=True)
+            
             if not instance_names:
+                click.echo("\n" + "=" * 80)
                 click.echo("No instances found in /sys/fs/multikernel/instances/")
                 if kimage_content:
                     click.echo("\n/proc/kimage:")
@@ -386,6 +471,7 @@ def show(name: Optional[str], verbose: bool):
                 sys.exit(0)
             
             # Display summary header
+            click.echo(f"\n{'=' * 80}")
             click.echo("Multikernel Instances")
             click.echo("=" * 80)
             click.echo(f"Total instances: {len(instance_names)}")
