@@ -127,8 +127,11 @@ Baseline DTB (static)
 
 ### Command Line Interface
 ```bash
-# Initialize resource pool from baseline DTS
-kerf init --input=baseline.dts
+# Initialize resource pool with CPUs (memory parsed from /proc/iomem)
+kerf init --cpus=4-7
+
+# Initialize with CPUs and devices
+kerf init --cpus=4-31 --devices=enp9s0_dev,nvme0
 
 # Create kernel instance with resource allocation
 kerf create web-server --cpus=4-7 --memory=2GB
@@ -155,21 +158,6 @@ kerf delete web-server
 kerf --help
 kerf <command> --help
 ```
-
-### Modular Architecture
-The `kerf` system is designed with a modular architecture that supports incremental development:
-
-- **`kerf init`**: Initialize resource pool from baseline DTS
-- **`kerf create`**: Create a kernel instance
-- **`kerf load`**: Load kernel image via kexec_file_load syscall
-- **`kerf exec`**: Execute kernel via reboot syscall with MULTIKERNEL command
-- **`kerf unload`**: Unload kernel image from a multikernel instance
-- **`kerf delete`**: Delete a kernel instance
-- **`kerf show`**: Show kernel instance information
-- **`kerf update`**: Update a kernel instance (future)
-- **`kerf kill`**: Kill a kernel instance (future)
-
-This modular design allows users to adopt `kerf` incrementally, starting with resource pool initialization and expanding to full multikernel management as features become available.
 
 ### Technical Foundation
 The current resource pool management provides essential building blocks for future multikernel capabilities:
