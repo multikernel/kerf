@@ -11,18 +11,9 @@
     compatible = "linux,multikernel-host";
 
     resources {
-        cpus {
-            total = <16>;
-            host-reserved = <0 1>;
-            available = <2 3 4 5 6 7 8 9 10 11 12 13 14 15>;
-        };
-        
-        memory {
-            total-bytes = <0x0 0x800000000>;      // 32GB
-            host-reserved-bytes = <0x0 0x200000000>; // 8GB
-            memory-pool-base = <0x200000000>;
-            memory-pool-bytes = <0x0 0x600000000>;   // 24GB
-        };
+        cpus = <2 3 4 5 6 7 8 9 10 11 12 13 14 15>;
+        memory-base = <0x200000000>;
+        memory-bytes = <0x0 0x600000000>;   // 24GB
         
         devices {
             eth0: ethernet@0 {

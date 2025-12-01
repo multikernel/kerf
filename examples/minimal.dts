@@ -11,17 +11,8 @@
     compatible = "linux,multikernel-host";
 
     resources {
-        cpus {
-            total = <8>;
-            host-reserved = <0 1>;
-            available = <2 3 4 5 6 7>;
-        };
-        
-        memory {
-            total-bytes = <0x0 0x200000000>;      // 8GB
-            host-reserved-bytes = <0x0 0x40000000>; // 1GB
-            memory-pool-base = <0x40000000>;
-            memory-pool-bytes = <0x0 0x1C000000>;   // 7GB
-        };
+        cpus = <2 3 4 5 6 7>;
+        memory-base = <0x40000000>;
+        memory-bytes = <0x0 0x1C0000000>;   // 7GB
     };
 };
