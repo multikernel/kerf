@@ -196,49 +196,7 @@ The baseline device tree contains only the **Resources** section, which describe
 
 ### Baseline Example
 
-The baseline DTS file contains only hardware resources. Instances are created dynamically via overlays using `kerf create`.
-
-```dts
-/multikernel-v1/;
-
-/ {
-    compatible = "linux,multikernel-host";
-    
-    resources {
-        cpus {
-            total = <32>;
-            host-reserved = <0 1 2 3>;
-            available = <4 5 6 7 8 9 10 11 12 13 14 15 
-                        16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31>;
-        };
-        
-        memory {
-            total-bytes = <0x0 0x400000000>;      // 16GB
-            host-reserved-bytes = <0x0 0x80000000>; // 2GB
-            memory-pool-base = <0x80000000>;
-            memory-pool-bytes = <0x0 0x380000000>;  // 14GB
-        };
-        
-        devices {
-            eth0: ethernet@0 {
-                compatible = "intel,i40e";
-                pci-id = "0000:01:00.0";
-                sriov-vfs = <8>;
-                host-reserved-vf = <0>;
-                available-vfs = <1 2 3 4 5 6 7>;
-            };
-            
-            nvme0: storage@0 {
-                compatible = "nvme";
-                pci-id = "0000:02:00.0";
-                namespaces = <4>;
-                host-reserved-ns = <1>;
-                available-ns = <2 3 4>;
-            };
-        };
-    };
-};
-```
+The baseline contains hardware resources used for allocation. Resources are typically passed via command line arguments during the `kerf init` command. Instances are created dynamically via overlays using `kerf create`.
 
 ### Mapping to Kernel Filesystem Interface
 
@@ -398,36 +356,6 @@ Kerf provides comprehensive support for CPU and NUMA topology management:
 - **NUMA Awareness**: NUMA node definition with memory regions and CPU assignments
 - **Topology Policies**: CPU affinity (`compact`, `spread`, `local`) and memory policies (`local`, `interleave`, `bind`)
 - **Performance Validation**: Automatic validation of topology constraints and performance warnings
-
-### Example NUMA Configuration
-```dts
-resources {
-    cpus {
-        total = <32>;
-        host-reserved = <0 1 2 3>;
-        available = <4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 
-                    20 21 22 23 24 25 26 27 28 29 30 31>;
-    };
-    
-    topology {
-        numa-nodes {
-            node@0 {
-                node-id = <0>;
-                memory-base = <0x0 0x0>;
-                memory-size = <0x0 0x800000000>;  // 16GB
-                cpus = <0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15>;
-            };
-            
-            node@1 {
-                node-id = <1>;
-                memory-base = <0x0 0x800000000>;
-                memory-size = <0x0 0x800000000>;  // 16GB
-                cpus = <16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31>;
-            };
-        };
-    };
-};
-```
 
 For detailed information about CPU and NUMA topology support, see [CPU_NUMA_TOPOLOGY.md](docs/CPU_NUMA_TOPOLOGY.md).
 
