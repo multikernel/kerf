@@ -148,6 +148,9 @@ kerf exec web-server
 kerf show
 kerf show web-server
 
+# Shutdown a running kernel instance
+kerf kill web-server
+
 # Unload kernel image from an instance
 kerf unload web-server
 
