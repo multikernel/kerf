@@ -9,7 +9,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: ["3.8", "3.9", "3.10"]
+        python-version: ["3.9", "3.10"]
     steps:
     - uses: actions/checkout@v4
     - name: Set up Python ${{ matrix.python-version }}
@@ -19,7 +19,8 @@ jobs:
     - uses: snok/install-poetry@v1
     - name: Install dependencies
       run: |
-        poetry install
+        poetry install --no-interaction
     - name: Analysing the code with pylint
       run: |
+        source .venv/bin/activate
         pylint $(git ls-files '*.py')
