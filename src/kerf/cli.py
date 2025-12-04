@@ -29,12 +29,12 @@ from .show.main import show
 
 @click.group()
 @click.version_option(version="0.1.0", prog_name="kerf")
-@click.option('--debug', is_flag=True, help='Enable debug mode')
+@click.option("--debug", is_flag=True, help="Enable debug mode")
 @click.pass_context
 def main(ctx, debug):
     """kerf: Multikernel Management System - Device Tree Foundation."""
     ctx.ensure_object(dict)
-    ctx.obj['debug'] = debug
+    ctx.obj["debug"] = debug
 
 
 # Add subcommands
@@ -48,5 +48,5 @@ main.add_command(delete)
 main.add_command(show)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

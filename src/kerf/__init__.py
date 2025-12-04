@@ -15,7 +15,8 @@
 """
 kerf: Multikernel Management System
 
-A comprehensive multikernel management system designed to orchestrate and manage multiple kernel instances on a single host.
+A comprehensive multikernel management system designed to orchestrate
+and manage multiple kernel instances on a single host.
 """
 
 __version__ = "0.1.0"
@@ -48,26 +49,26 @@ from .resources import (
 
 __all__ = [
     # Core classes
-    'DeviceTreeManager',
-    'BaselineManager',
-    'OverlayGenerator',
+    "DeviceTreeManager",
+    "BaselineManager",
+    "OverlayGenerator",
     # Models
-    'InstanceState',
+    "InstanceState",
     # Exceptions
-    'KerfError',
-    'ValidationError',
-    'ParseError',
-    'ResourceConflictError',
-    'ResourceExhaustionError',
-    'InvalidReferenceError',
-    'KernelInterfaceError',
-    'ResourceError',
+    "KerfError",
+    "ValidationError",
+    "ParseError",
+    "ResourceConflictError",
+    "ResourceExhaustionError",
+    "InvalidReferenceError",
+    "KernelInterfaceError",
+    "ResourceError",
     # Resource utilities
-    'get_available_cpus',
-    'get_allocated_cpus',
-    'get_allocated_memory_regions',
-    'find_available_memory_base',
-    'validate_cpu_allocation',
-    'validate_memory_allocation',
-    'find_next_instance_id',
+    "get_available_cpus",
+    "get_allocated_cpus",
+    "get_allocated_memory_regions",
+    "find_available_memory_base",
+    "validate_cpu_allocation",
+    "validate_memory_allocation",
+    "find_next_instance_id",
 ]

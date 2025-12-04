@@ -19,39 +19,31 @@ Exception classes for kerf validation and processing errors.
 
 class KerfError(Exception):
     """Base exception for all kerf errors."""
-    pass
 
 
 class ValidationError(KerfError):
     """Raised when validation fails."""
-    pass
 
 
 class ParseError(KerfError):
     """Raised when parsing DTS/DTB fails."""
-    pass
 
 
 class ResourceConflictError(ValidationError):
     """Raised when resource conflicts are detected."""
-    pass
 
 
 class ResourceExhaustionError(ValidationError):
     """Raised when resources are over-allocated."""
-    pass
 
 
 class InvalidReferenceError(ValidationError):
     """Raised when invalid device references are found."""
-    pass
 
 
 class KernelInterfaceError(KerfError):
     """Raised when kernel interface operations fail."""
-    pass
 
 
 class ResourceError(KerfError):
     """Raised when resource allocation operations fail."""
-    pass

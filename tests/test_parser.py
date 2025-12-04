@@ -37,8 +37,14 @@ class TestDeviceTreeParser:
 
         # Verify resources match
         assert parsed_tree.hardware.cpus.available == sample_tree.hardware.cpus.available
-        assert parsed_tree.hardware.memory.memory_pool_base == sample_tree.hardware.memory.memory_pool_base
-        assert parsed_tree.hardware.memory.memory_pool_bytes == sample_tree.hardware.memory.memory_pool_bytes
+        assert (
+            parsed_tree.hardware.memory.memory_pool_base
+            == sample_tree.hardware.memory.memory_pool_base
+        )
+        assert (
+            parsed_tree.hardware.memory.memory_pool_bytes
+            == sample_tree.hardware.memory.memory_pool_bytes
+        )
 
         # Verify instances match
         assert len(parsed_tree.instances) == len(sample_tree.instances)
@@ -55,11 +61,7 @@ class TestDeviceTreeParser:
         """Test parsing DTB with no instances."""
         from kerf.models import GlobalDeviceTree
 
-        tree = GlobalDeviceTree(
-            hardware=sample_hardware,
-            instances={},
-            device_references={}
-        )
+        tree = GlobalDeviceTree(hardware=sample_hardware, instances={}, device_references={})
 
         extractor = InstanceExtractor()
         dtb_data = extractor.generate_global_dtb(tree)
@@ -75,7 +77,7 @@ class TestDeviceTreeParser:
         parser = DeviceTreeParser()
 
         # Invalid data
-        invalid_data = b'not a valid dtb'
+        invalid_data = b"not a valid dtb"
 
         with pytest.raises(ParseError, match="Failed to parse DTB"):
             parser.parse_dtb_from_bytes(invalid_data)
@@ -85,7 +87,7 @@ class TestDeviceTreeParser:
         parser = DeviceTreeParser()
 
         # Empty data
-        empty_data = b''
+        empty_data = b""
 
         with pytest.raises(ParseError):
             parser.parse_dtb_from_bytes(empty_data)
@@ -100,10 +102,10 @@ class TestDeviceTreeParser:
         parsed_tree = parser.parse_dtb_from_bytes(dtb_data)
 
         # Check devices are parsed
-        assert 'eth0' in parsed_tree.hardware.devices
-        device = parsed_tree.hardware.devices['eth0']
-        assert device.name == 'eth0'
-        assert device.compatible == 'intel,i40e'
+        assert "eth0" in parsed_tree.hardware.devices
+        device = parsed_tree.hardware.devices["eth0"]
+        assert device.name == "eth0"
+        assert device.compatible == "intel,i40e"
         assert device.sriov_vfs == 8
 
 
@@ -120,18 +122,15 @@ class TestInstanceExtractor:
 
         # Should be valid FDT with magic number
         import struct
-        magic = struct.unpack('>I', dtb_data[:4])[0]
-        assert magic == 0xd00dfeed  # FDT magic number
+
+        magic = struct.unpack(">I", dtb_data[:4])[0]
+        assert magic == 0xD00DFEED  # FDT magic number
 
     def test_generate_global_dtb_empty_instances(self, sample_hardware):
         """Test generating DTB with no instances."""
         from kerf.models import GlobalDeviceTree
 
-        tree = GlobalDeviceTree(
-            hardware=sample_hardware,
-            instances={},
-            device_references={}
-        )
+        tree = GlobalDeviceTree(hardware=sample_hardware, instances={}, device_references={})
 
         extractor = InstanceExtractor()
         dtb_data = extractor.generate_global_dtb(tree)
@@ -144,15 +143,12 @@ class TestInstanceExtractor:
         from kerf.models import Instance, InstanceResources
 
         # Add another instance
-        sample_tree.instances['test'] = Instance(
-            name='test',
+        sample_tree.instances["test"] = Instance(
+            name="test",
             id=3,
             resources=InstanceResources(
-                cpus=[16, 17],
-                memory_base=0x200000000,
-                memory_bytes=1024**3,
-                devices=[]
-            )
+                cpus=[16, 17], memory_base=0x200000000, memory_bytes=1024**3, devices=[]
+            ),
         )
 
         extractor = InstanceExtractor()
@@ -163,5 +159,4 @@ class TestInstanceExtractor:
         parsed_tree = parser.parse_dtb_from_bytes(dtb_data)
 
         assert len(parsed_tree.instances) == 3
-        assert 'test' in parsed_tree.instances
-
+        assert "test" in parsed_tree.instances

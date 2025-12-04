@@ -20,9 +20,10 @@ Resources are validated against the baseline and existing instances before
 creating an overlay and applying it to the kernel.
 """
 
+import copy
 import sys
-import re
-from typing import List, Optional, Tuple, Union
+import traceback
+from typing import List, Optional
 import click
 
 from ..runtime import DeviceTreeManager
@@ -31,8 +32,7 @@ from ..resources import (
     validate_cpu_allocation,
     validate_memory_allocation,
     find_available_memory_base,
-    find_next_instance_id,
-    get_available_cpus
+    get_available_cpus,
 )
 from ..exceptions import ValidationError, KernelInterfaceError, ResourceError, ParseError
 
@@ -62,26 +62,26 @@ def parse_cpu_spec(cpu_spec: str) -> List[int]:
     cpus = set()
 
     # Split by comma
-    parts = [p.strip() for p in cpu_spec.split(',')]
+    parts = [p.strip() for p in cpu_spec.split(",")]
 
     for part in parts:
-        if '-' in part:
+        if "-" in part:
             # Range format: "4-7"
             try:
-                start, end = part.split('-', 1)
+                start, end = part.split("-", 1)
                 start = int(start.strip())
                 end = int(end.strip())
                 if start > end:
                     raise ValueError(f"Invalid CPU range: {start} > {end}")
                 cpus.update(range(start, end + 1))
             except ValueError as e:
-                raise ValueError(f"Invalid CPU range format '{part}': {e}")
+                raise ValueError(f"Invalid CPU range format '{part}': {e}") from e
         else:
             # Single CPU
             try:
                 cpus.add(int(part.strip()))
             except ValueError as e:
-                raise ValueError(f"Invalid CPU ID '{part}': {e}")
+                raise ValueError(f"Invalid CPU ID '{part}': {e}") from e
 
     if not cpus:
         raise ValueError("CPU specification must include at least one CPU")
@@ -89,11 +89,122 @@ def parse_cpu_spec(cpu_spec: str) -> List[int]:
     return sorted(list(cpus))
 
 
+def _find_consecutive_cpus(cpu_list: List[int], count: int) -> Optional[List[int]]:
+    """Find a consecutive range of CPUs in the list."""
+    for i in range(len(cpu_list) - count + 1):
+        is_consecutive = all(cpu_list[i + j + 1] == cpu_list[i + j] + 1 for j in range(count - 1))
+        if is_consecutive:
+            return cpu_list[i : i + count]
+    return None
+
+
+def _allocate_compact(
+    tree, available: List[int], count: int, numa_nodes: Optional[List[int]]
+) -> List[int]:
+    """Allocate CPUs with compact affinity policy."""
+    if numa_nodes and tree.hardware.topology and tree.hardware.topology.numa_nodes:
+        for numa_node_id in numa_nodes:
+            numa_cpus = [
+                cpu
+                for cpu in available
+                if tree.hardware.topology.get_numa_node_for_cpu(cpu) == numa_node_id
+            ]
+            if len(numa_cpus) >= count:
+                consecutive = _find_consecutive_cpus(numa_cpus, count)
+                if consecutive:
+                    return sorted(consecutive)
+                return sorted(numa_cpus[:count])
+
+    consecutive = _find_consecutive_cpus(available, count)
+    if consecutive:
+        return consecutive
+    return available[:count]
+
+
+def _allocate_spread(
+    tree, available: List[int], count: int, numa_nodes: Optional[List[int]]
+) -> List[int]:
+    """Allocate CPUs with spread affinity policy."""
+    if numa_nodes and tree.hardware.topology and tree.hardware.topology.numa_nodes:
+        numa_cpu_lists = {}
+        for numa_node_id in numa_nodes:
+            numa_cpus = [
+                cpu
+                for cpu in available
+                if tree.hardware.topology.get_numa_node_for_cpu(cpu) == numa_node_id
+            ]
+            if numa_cpus:
+                numa_cpu_lists[numa_node_id] = sorted(numa_cpus)
+
+        if not numa_cpu_lists:
+            raise ResourceError(f"No available CPUs in specified NUMA nodes: {numa_nodes}")
+
+        allocated = []
+        numa_indices = {node_id: 0 for node_id in numa_cpu_lists}
+
+        for i in range(count):
+            numa_idx = i % len(numa_cpu_lists)
+            numa_node_id = list(numa_cpu_lists.keys())[numa_idx]
+            cpu_list = numa_cpu_lists[numa_node_id]
+
+            if numa_indices[numa_node_id] < len(cpu_list):
+                allocated.append(cpu_list[numa_indices[numa_node_id]])
+                numa_indices[numa_node_id] += 1
+            else:
+                for next_numa_id, next_cpu_list in numa_cpu_lists.items():
+                    if numa_indices[next_numa_id] < len(next_cpu_list):
+                        allocated.append(next_cpu_list[numa_indices[next_numa_id]])
+                        numa_indices[next_numa_id] += 1
+                        break
+
+        return sorted(allocated)
+
+    if count == 1:
+        return [available[0]]
+
+    step = (len(available) - 1) / (count - 1) if count > 1 else 1
+    indices = [int(i * step) for i in range(count)]
+    return sorted([available[i] for i in indices])
+
+
+def _allocate_local(
+    tree, available: List[int], count: int, numa_nodes: Optional[List[int]]
+) -> List[int]:
+    """Allocate CPUs with local affinity policy."""
+    if not tree.hardware.topology or not tree.hardware.topology.numa_nodes:
+        raise ResourceError(
+            "CPU affinity 'local' requires NUMA topology information. "
+            "Use 'compact' or 'spread' instead, or specify NUMA topology in baseline."
+        )
+
+    if numa_nodes and len(numa_nodes) > 0:
+        numa_node_id = numa_nodes[0]
+        numa_cpus = [
+            cpu
+            for cpu in available
+            if tree.hardware.topology.get_numa_node_for_cpu(cpu) == numa_node_id
+        ]
+        if len(numa_cpus) >= count:
+            return sorted(numa_cpus[:count])
+        raise ResourceError(
+            f"Not enough CPUs in NUMA node {numa_node_id}: "
+            f"requested {count}, but only {len(numa_cpus)} available"
+        )
+
+    for numa_node_id in tree.hardware.topology.numa_nodes:
+        numa_cpus = [
+            cpu
+            for cpu in available
+            if tree.hardware.topology.get_numa_node_for_cpu(cpu) == numa_node_id
+        ]
+        if len(numa_cpus) >= count:
+            return sorted(numa_cpus[:count])
+
+    raise ResourceError(f"No single NUMA node has {count} available CPUs for 'local' affinity")
+
+
 def allocate_cpus_from_pool(
-    tree,
-    count: int,
-    cpu_affinity: str = "compact",
-    numa_nodes: Optional[List[int]] = None
+    tree, count: int, cpu_affinity: str = "compact", numa_nodes: Optional[List[int]] = None
 ) -> List[int]:
     """
     Allocate specified number of CPUs from available pool with topology awareness.
@@ -128,139 +239,18 @@ def allocate_cpus_from_pool(
                 f"Not enough CPUs available in NUMA nodes {numa_nodes}: "
                 f"requested {count}, but only {len(available)} available"
             )
-        else:
-            raise ResourceError(
-                f"Not enough CPUs available: requested {count}, "
-                f"but only {len(available)} available in pool"
-            )
+        raise ResourceError(
+            f"Not enough CPUs available: requested {count}, "
+            f"but only {len(available)} available in pool"
+        )
 
     if cpu_affinity == "compact":
-        # Allocate from same NUMA node, preferably consecutive CPUs
-        if numa_nodes and tree.hardware.topology and tree.hardware.topology.numa_nodes:
-            # Try to allocate all from single NUMA node
-            for numa_node_id in numa_nodes:
-                numa_cpus = [
-                    cpu for cpu in available
-                    if tree.hardware.topology.get_numa_node_for_cpu(cpu) == numa_node_id
-                ]
-                if len(numa_cpus) >= count:
-                    # Find consecutive CPUs in this NUMA node
-                    for i in range(len(numa_cpus) - count + 1):
-                        consecutive = True
-                        for j in range(count - 1):
-                            if numa_cpus[i + j + 1] != numa_cpus[i + j] + 1:
-                                consecutive = False
-                                break
-                        if consecutive:
-                            return sorted(numa_cpus[i:i+count])
-                    # No consecutive range, take first N
-                    return sorted(numa_cpus[:count])
-
-        # No NUMA topology or not constrained to specific nodes
-        # Find consecutive CPUs
-        for i in range(len(available) - count + 1):
-            consecutive = True
-            for j in range(count - 1):
-                if available[i + j + 1] != available[i + j] + 1:
-                    consecutive = False
-                    break
-            if consecutive:
-                return available[i:i+count]
-
-        # If no consecutive range found, take first N
-        return available[:count]
-
-    elif cpu_affinity == "spread":
-        # Distribute CPUs across NUMA nodes if topology available
-        if numa_nodes and tree.hardware.topology and tree.hardware.topology.numa_nodes:
-            # Spread across specified NUMA nodes
-            numa_cpu_lists = {}
-            for numa_node_id in numa_nodes:
-                numa_cpus = [
-                    cpu for cpu in available
-                    if tree.hardware.topology.get_numa_node_for_cpu(cpu) == numa_node_id
-                ]
-                if numa_cpus:
-                    numa_cpu_lists[numa_node_id] = sorted(numa_cpus)
-
-            if not numa_cpu_lists:
-                raise ResourceError(
-                    f"No available CPUs in specified NUMA nodes: {numa_nodes}"
-                )
-
-            # Distribute evenly across NUMA nodes
-            allocated = []
-            numa_indices = {node_id: 0 for node_id in numa_cpu_lists.keys()}
-
-            for i in range(count):
-                # Round-robin across NUMA nodes
-                numa_idx = i % len(numa_cpu_lists)
-                numa_node_id = list(numa_cpu_lists.keys())[numa_idx]
-                cpu_list = numa_cpu_lists[numa_node_id]
-
-                if numa_indices[numa_node_id] < len(cpu_list):
-                    allocated.append(cpu_list[numa_indices[numa_node_id]])
-                    numa_indices[numa_node_id] += 1
-                else:
-                    # This NUMA node exhausted, try next
-                    for next_numa_id in numa_cpu_lists.keys():
-                        if numa_indices[next_numa_id] < len(numa_cpu_lists[next_numa_id]):
-                            allocated.append(numa_cpu_lists[next_numa_id][numa_indices[next_numa_id]])
-                            numa_indices[next_numa_id] += 1
-                            break
-
-            return sorted(allocated)
-
-        # No NUMA topology, spread evenly across available range
-        if count == 1:
-            return [available[0]]
-
-        step = (len(available) - 1) / (count - 1) if count > 1 else 1
-        indices = [int(i * step) for i in range(count)]
-        return sorted([available[i] for i in indices])
-
-    elif cpu_affinity == "local":
-        # Allocate CPUs and ensure they're co-located with memory on same NUMA node
-        # This requires NUMA topology
-        if not tree.hardware.topology or not tree.hardware.topology.numa_nodes:
-            raise ResourceError(
-                "CPU affinity 'local' requires NUMA topology information. "
-                "Use 'compact' or 'spread' instead, or specify NUMA topology in baseline."
-            )
-
-        # For 'local', we need to ensure CPUs are from same NUMA node as memory
-        # This will be validated later when memory is allocated
-        # For now, prefer single NUMA node allocation
-        if numa_nodes and len(numa_nodes) > 0:
-            # Use first specified NUMA node
-            numa_node_id = numa_nodes[0]
-            numa_cpus = [
-                cpu for cpu in available
-                if tree.hardware.topology.get_numa_node_for_cpu(cpu) == numa_node_id
-            ]
-            if len(numa_cpus) >= count:
-                return sorted(numa_cpus[:count])
-            else:
-                raise ResourceError(
-                    f"Not enough CPUs in NUMA node {numa_node_id}: "
-                    f"requested {count}, but only {len(numa_cpus)} available"
-                )
-        else:
-            # Find first NUMA node with enough CPUs
-            for numa_node_id, numa_node in tree.hardware.topology.numa_nodes.items():
-                numa_cpus = [
-                    cpu for cpu in available
-                    if tree.hardware.topology.get_numa_node_for_cpu(cpu) == numa_node_id
-                ]
-                if len(numa_cpus) >= count:
-                    return sorted(numa_cpus[:count])
-
-            raise ResourceError(
-                f"No single NUMA node has {count} available CPUs for 'local' affinity"
-            )
-
-    else:
-        raise ValueError(f"Unknown CPU affinity policy: {cpu_affinity}")
+        return _allocate_compact(tree, available, count, numa_nodes)
+    if cpu_affinity == "spread":
+        return _allocate_spread(tree, available, count, numa_nodes)
+    if cpu_affinity == "local":
+        return _allocate_local(tree, available, count, numa_nodes)
+    raise ValueError(f"Unknown CPU affinity policy: {cpu_affinity}")
 
 
 def parse_memory_spec(memory_spec: str) -> int:
@@ -286,25 +276,30 @@ def parse_memory_spec(memory_spec: str) -> int:
 
     # Check for unit suffix
     multipliers = {
-        'KB': 1024,
-        'MB': 1024 ** 2,
-        'GB': 1024 ** 3,
-        'TB': 1024 ** 4,
+        "KB": 1024,
+        "MB": 1024**2,
+        "GB": 1024**3,
+        "TB": 1024**4,
     }
 
     for unit, multiplier in multipliers.items():
         if memory_spec.endswith(unit):
             try:
-                value = float(memory_spec[:-len(unit)].strip())
+                value = float(memory_spec[: -len(unit)].strip())
                 return int(value * multiplier)
-            except ValueError:
-                raise ValueError(f"Invalid memory value '{memory_spec}': expected number before {unit}")
+            except ValueError as exc:
+                raise ValueError(
+                    f"Invalid memory value '{memory_spec}': " f"expected number before {unit}"
+                ) from exc
 
     # No unit, assume bytes
     try:
         return int(memory_spec)
-    except ValueError:
-        raise ValueError(f"Invalid memory specification '{memory_spec}': expected size with unit (GB/MB/KB) or bytes")
+    except ValueError as exc:
+        raise ValueError(
+            f"Invalid memory specification '{memory_spec}': "
+            "expected size with unit (GB/MB/KB) or bytes"
+        ) from exc
 
 
 def parse_memory_base(base_spec: str) -> int:
@@ -326,16 +321,15 @@ def parse_memory_base(base_spec: str) -> int:
     """
     base_spec = base_spec.strip()
 
-    if base_spec.startswith('0x') or base_spec.startswith('0X'):
+    if base_spec.startswith("0x") or base_spec.startswith("0X"):
         try:
             return int(base_spec, 16)
-        except ValueError:
-            raise ValueError(f"Invalid hexadecimal base address '{base_spec}'")
-    else:
-        try:
-            return int(base_spec)
-        except ValueError:
-            raise ValueError(f"Invalid base address '{base_spec}'")
+        except ValueError as exc:
+            raise ValueError(f"Invalid hexadecimal base address '{base_spec}'") from exc
+    try:
+        return int(base_spec)
+    except ValueError as exc:
+        raise ValueError(f"Invalid base address '{base_spec}'") from exc
 
 
 def parse_device_list(device_spec: Optional[str]) -> List[str]:
@@ -357,16 +351,12 @@ def parse_device_list(device_spec: Optional[str]) -> List[str]:
     if not device_spec:
         return []
 
-    devices = [d.strip() for d in device_spec.split(',') if d.strip()]
+    devices = [d.strip() for d in device_spec.split(",") if d.strip()]
     return devices
 
 
 def dump_overlay_for_debug(
-    manager: DeviceTreeManager,
-    current,
-    modified,
-    instance_name: str,
-    suffix: str = ""
+    manager: DeviceTreeManager, current, modified, instance_name: str, suffix: str = ""
 ) -> None:
     """
     Dump overlay DTS source to stdout for debugging when --debug is enabled.
@@ -381,46 +371,83 @@ def dump_overlay_for_debug(
     dtbo_data = manager.overlay_gen.generate_overlay(current, modified)
 
     try:
+        # pylint: disable=import-outside-toplevel
         from ..dtc.parser import DeviceTreeParser
-        import libfdt
+        import libfdt  # pylint: disable=import-error
 
         fdt = libfdt.Fdt(dtbo_data)
         parser = DeviceTreeParser()
         parser.fdt = fdt
+        # pylint: disable=protected-access
         dts_lines = parser._fdt_to_dts_recursive(0, 0)
-        dts_content = '\n'.join(dts_lines)
+        dts_content = "\n".join(dts_lines)
 
         click.echo(f"Debug: Overlay DTS source for '{instance_name}'{suffix}:")
         click.echo("─" * 70)
         click.echo(dts_content)
         click.echo("─" * 70)
-    except Exception as e:
+    except (ImportError, AttributeError, RuntimeError) as e:
         click.echo(f"Debug: Failed to convert overlay to DTS: {e}", err=True)
 
 
-@click.command(context_settings={'allow_extra_args': True})
+@click.command(context_settings={"allow_extra_args": True})
 @click.pass_context
-@click.argument('name', required=False)
-@click.option('--id', type=int, help='Instance ID (1-511, auto-assigned if not specified)')
-@click.option('--cpus', '-c', 
-              help='Explicit CPU allocation: CPU IDs (e.g., "4" for CPU 4, "4-7" for range, "4,5,6,7" for list, "4-7,10-12" for mixed). Mutually exclusive with --cpu-count')
-@click.option('--cpu-count', type=int,
-              help='Auto-allocate specified number of CPUs from available pool. Mutually exclusive with --cpus')
-@click.option('--cpu-affinity', type=click.Choice(['compact', 'spread', 'local']), default='compact',
-              help='CPU affinity policy: compact (same NUMA node, consecutive), spread (across NUMA nodes), or local (co-locate with memory)')
-@click.option('--numa-nodes', help='Preferred NUMA node IDs (comma-separated, e.g., "0" or "0,1"). CPUs allocated from these nodes only')
-@click.option('--memory-policy', type=click.Choice(['local', 'interleave', 'bind']),
-              help='Memory allocation policy: local (same NUMA as CPUs), interleave (across NUMA nodes), or bind (specific NUMA nodes)')
-@click.option('--memory', '-m', required=True, help='Memory allocation (e.g., "2GB", "2048MB", or bytes)')
-@click.option('--memory-base', help='Memory base address (hex: 0x80000000 or decimal, auto-assigned if not specified)')
-@click.option('--devices', '-d', help='Device names (comma-separated, e.g., "enp9s0_dev,nvme0"). Device names must match device node names in the baseline DTB.')
-@click.option('--enable-host-kcore', is_flag=True, help='Enable host kcore access for this instance')
-@click.option('--dry-run', is_flag=True, help='Validate without applying to kernel')
-@click.option('--verbose', '-v', is_flag=True, help='Verbose output')
-def create(
+@click.argument("name", required=False)
+@click.option(
+    "--id", "instance_id", type=int, help="Instance ID (1-511, auto-assigned if not specified)"
+)
+@click.option(
+    "--cpus",
+    "-c",
+    help='Explicit CPU allocation: CPU IDs (e.g., "4" for CPU 4, "4-7" for range, '
+    '"4,5,6,7" for list, "4-7,10-12" for mixed). Mutually exclusive with --cpu-count',
+)
+@click.option(
+    "--cpu-count",
+    type=int,
+    help="Auto-allocate specified number of CPUs from available pool. "
+    "Mutually exclusive with --cpus",
+)
+@click.option(
+    "--cpu-affinity",
+    type=click.Choice(["compact", "spread", "local"]),
+    default="compact",
+    help="CPU affinity policy: compact (same NUMA node, consecutive), "
+    "spread (across NUMA nodes), or local (co-locate with memory)",
+)
+@click.option(
+    "--numa-nodes",
+    help='Preferred NUMA node IDs (comma-separated, e.g., "0" or "0,1"). '
+    "CPUs allocated from these nodes only",
+)
+@click.option(
+    "--memory-policy",
+    type=click.Choice(["local", "interleave", "bind"]),
+    help="Memory allocation policy: local (same NUMA as CPUs), "
+    "interleave (across NUMA nodes), or bind (specific NUMA nodes)",
+)
+@click.option(
+    "--memory", "-m", required=True, help='Memory allocation (e.g., "2GB", "2048MB", or bytes)'
+)
+@click.option(
+    "--memory-base",
+    help="Memory base address (hex: 0x80000000 or decimal, auto-assigned if not specified)",
+)
+@click.option(
+    "--devices",
+    "-d",
+    help='Device names (comma-separated, e.g., "enp9s0_dev,nvme0"). '
+    "Device names must match device node names in the baseline DTB.",
+)
+@click.option(
+    "--enable-host-kcore", is_flag=True, help="Enable host kcore access for this instance"
+)
+@click.option("--dry-run", is_flag=True, help="Validate without applying to kernel")
+@click.option("--verbose", "-v", is_flag=True, help="Verbose output")
+def create(  # pylint: disable=too-many-arguments,too-many-positional-arguments
     ctx: click.Context,
     name: Optional[str],
-    id: Optional[int],
+    instance_id: Optional[int],
     cpus: Optional[str],
     cpu_count: Optional[int],
     cpu_affinity: str,
@@ -431,7 +458,7 @@ def create(
     devices: Optional[str],
     enable_host_kcore: bool,
     dry_run: bool,
-    verbose: bool
+    verbose: bool,
 ):
     """
     Create a new kernel instance with specified resources.
@@ -478,7 +505,7 @@ def create(
             remaining_args = ctx.args
             for arg in remaining_args:
                 # First non-option argument is the name
-                if not arg.startswith('-') and arg:
+                if not arg.startswith("-") and arg:
                     name = arg
                     break
 
@@ -491,7 +518,10 @@ def create(
 
         # Validate that exactly one of --cpus or --cpu-count is provided
         if cpus and cpu_count is not None:
-            click.echo("Error: --cpus and --cpu-count are mutually exclusive. Specify either explicit CPUs (--cpus) or a count (--cpu-count)", err=True)
+            click.echo(
+                "Error: --cpus and --cpu-count are mutually exclusive. Specify either explicit CPUs (--cpus) or a count (--cpu-count)",
+                err=True,
+            )
             sys.exit(2)
 
         if not cpus and cpu_count is None:
@@ -499,7 +529,7 @@ def create(
             sys.exit(2)
 
         # Parse CPU specification
-        is_count = (cpu_count is not None)
+        is_count = cpu_count is not None
         if is_count:
             if cpu_count <= 0:
                 click.echo(f"Error: CPU count must be positive, got {cpu_count}", err=True)
@@ -535,7 +565,7 @@ def create(
         numa_node_list = None
         if numa_nodes:
             try:
-                numa_node_list = [int(n.strip()) for n in numa_nodes.split(',') if n.strip()]
+                numa_node_list = [int(n.strip()) for n in numa_nodes.split(",") if n.strip()]
                 if not numa_node_list:
                     click.echo(f"Error: Invalid NUMA nodes specification '{numa_nodes}'", err=True)
                     sys.exit(2)
@@ -544,12 +574,14 @@ def create(
                 sys.exit(2)
 
         # Validate instance ID if specified
-        if id is not None:
-            if id < 1 or id > 511:
-                click.echo(f"Error: Instance ID must be in range 1-511, got {id}", err=True)
+        if instance_id is not None:
+            if instance_id < 1 or instance_id > 511:
+                click.echo(
+                    f"Error: Instance ID must be in range 1-511, got {instance_id}", err=True
+                )
                 sys.exit(2)
 
-        debug = ctx.obj.get('debug', False) if ctx and ctx.obj else False
+        debug = ctx.obj.get("debug", False) if ctx and ctx.obj else False
 
         # Initialize manager
         manager = DeviceTreeManager()
@@ -557,7 +589,6 @@ def create(
         # Define operation to create instance
         def create_instance_operation(current):
             """Operation function to create instance in device tree."""
-            import copy
             nonlocal memory_base_addr  # Allow modification of outer scope variable
 
             if manager.has_instance(name):
@@ -569,27 +600,30 @@ def create(
             modified = copy.deepcopy(current)
 
             # Check if instance ID is already in use (if specified)
-            if id is not None:
-                existing_ids = {inst.id for inst in modified.instances.values() if inst.id is not None}
-                if id in existing_ids:
+            if instance_id is not None:
+                existing_ids = {
+                    inst.id for inst in modified.instances.values() if inst.id is not None
+                }
+                if instance_id in existing_ids:
                     # Find which instance uses this ID
                     for inst_name, inst in modified.instances.items():
-                        if inst.id == id:
+                        if inst.id == instance_id:
                             raise ResourceError(
-                                f"Instance ID {id} is already in use by instance '{inst_name}'"
+                                f"Instance ID {instance_id} is already in use "
+                                f"by instance '{inst_name}'"
                             )
-                instance_id = id
+                final_instance_id = instance_id
             else:
-                instance_id = None
+                final_instance_id = None
 
             # Allocate CPUs based on specification
             if is_count:
                 # Allocate CPUs automatically from available pool with topology awareness
                 cpu_list = allocate_cpus_from_pool(
-                    modified, 
+                    modified,
                     cpu_spec_value,  # cpu_spec_value is int (count)
                     cpu_affinity=cpu_affinity,
-                    numa_nodes=numa_node_list
+                    numa_nodes=numa_node_list,
                 )
             else:
                 # Use explicitly specified CPUs
@@ -611,9 +645,6 @@ def create(
                 # Validate specified memory base
                 validate_memory_allocation(modified, memory_base_addr, memory_bytes)
 
-            # Validate devices (if specified)
-            # TODO: Add device validation when device reference parsing is implemented
-
             # Create instance resources with topology settings
             resources = InstanceResources(
                 cpus=cpu_list,
@@ -622,19 +653,16 @@ def create(
                 devices=device_list,
                 numa_nodes=numa_node_list,
                 cpu_affinity=cpu_affinity,
-                memory_policy=memory_policy
+                memory_policy=memory_policy,
             )
 
             options = None
             if enable_host_kcore:
-                options = {'enable-host-kcore': True}
+                options = {"enable-host-kcore": True}
 
             # Create instance
             instance = Instance(
-                name=name,
-                id=instance_id,
-                resources=resources,
-                options=options
+                name=name, id=final_instance_id, resources=resources, options=options
             )
 
             # Add to modified state
@@ -653,13 +681,16 @@ def create(
 
                 click.echo(f"✓ Validation passed for instance '{name}'")
                 if is_count:
-                    click.echo(f"  CPUs: {cpu_spec_value} CPUs auto-allocated: {', '.join(map(str, instance.resources.cpus))}")
+                    cpus_str = ", ".join(map(str, instance.resources.cpus))
+                    click.echo(f"  CPUs: {cpu_spec_value} CPUs auto-allocated: {cpus_str}")
                 else:
                     click.echo(f"  CPUs: {', '.join(map(str, instance.resources.cpus))}")
                 if instance.resources.cpu_affinity:
                     click.echo(f"  CPU Affinity: {instance.resources.cpu_affinity}")
                 if instance.resources.numa_nodes:
-                    click.echo(f"  NUMA Nodes: {', '.join(map(str, instance.resources.numa_nodes))}")
+                    click.echo(
+                        f"  NUMA Nodes: {', '.join(map(str, instance.resources.numa_nodes))}"
+                    )
                 click.echo(f"  Memory: {memory} at {hex(instance.resources.memory_base)}")
                 if instance.resources.memory_policy:
                     click.echo(f"  Memory Policy: {instance.resources.memory_policy}")
@@ -698,7 +729,8 @@ def create(
                 if instance.resources.cpu_affinity:
                     click.echo(f"  CPU Affinity: {instance.resources.cpu_affinity}")
                 if instance.resources.numa_nodes:
-                    click.echo(f"  NUMA Nodes: {', '.join(map(str, instance.resources.numa_nodes))}")
+                    numa_str = ", ".join(map(str, instance.resources.numa_nodes))
+                    click.echo(f"  NUMA Nodes: {numa_str}")
                 click.echo(f"  Memory: {memory} at {hex(instance.resources.memory_base)}")
                 if instance.resources.memory_policy:
                     click.echo(f"  Memory Policy: {instance.resources.memory_policy}")
@@ -707,33 +739,28 @@ def create(
         except ResourceError as e:
             click.echo(f"Error: Resource allocation failed: {e}", err=True)
             if verbose:
-                import traceback
                 traceback.print_exc()
             sys.exit(1)
         except ValidationError as e:
             click.echo(f"Error: Validation failed: {e}", err=True)
             if verbose:
-                import traceback
                 traceback.print_exc()
             sys.exit(1)
         except KernelInterfaceError as e:
             click.echo(f"Error: Kernel interface error: {e}", err=True)
             if verbose:
-                import traceback
                 traceback.print_exc()
             sys.exit(1)
 
     except KeyboardInterrupt:
         click.echo("\nOperation cancelled", err=True)
         sys.exit(130)
-    except Exception as e:
+    except (RuntimeError, OSError) as e:
         click.echo(f"Unexpected error: {e}", err=True)
         if verbose:
-            import traceback
             traceback.print_exc()
         sys.exit(1)
 
 
-if __name__ == '__main__':
-    create()
-
+if __name__ == "__main__":
+    create()  # pylint: disable=no-value-for-parameter

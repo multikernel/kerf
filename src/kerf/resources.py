@@ -20,8 +20,8 @@ These utilities assist with allocating CPUs, memory, and devices when
 creating or updating kernel instances.
 """
 
-from typing import List, Set, Optional, Dict
-from .models import GlobalDeviceTree, Instance, InstanceResources
+from typing import List, Set, Optional
+from .models import GlobalDeviceTree
 from .exceptions import ResourceError
 
 
@@ -76,14 +76,15 @@ def get_allocated_memory_regions_from_iomem() -> List[tuple[int, int]]:
     try:
         from pathlib import Path
         import re
-        iomem_path = Path('/proc/iomem')
+
+        iomem_path = Path("/proc/iomem")
         if not iomem_path.exists():
             return regions
 
-        with open(iomem_path, 'r') as f:
+        with open(iomem_path, "r", encoding="utf-8") as f:
             for line in f:
-                if 'mk-instance-' in line:
-                    match = re.search(r'([0-9a-fA-F]+)-([0-9a-fA-F]+)', line)
+                if "mk-instance-" in line:
+                    match = re.search(r"([0-9a-fA-F]+)-([0-9a-fA-F]+)", line)
                     if match:
                         base = int(match.group(1), 16)
                         end = int(match.group(2), 16)
@@ -93,6 +94,7 @@ def get_allocated_memory_regions_from_iomem() -> List[tuple[int, int]]:
         pass
 
     return regions
+
 
 def get_allocated_memory_regions(tree: GlobalDeviceTree) -> List[tuple[int, int]]:
     """
@@ -111,18 +113,12 @@ def get_allocated_memory_regions(tree: GlobalDeviceTree) -> List[tuple[int, int]
     regions = []
     for instance in tree.instances.values():
         if instance.resources.memory_base > 0:  # Only include if memory_base is set
-            regions.append((
-                instance.resources.memory_base,
-                instance.resources.memory_bytes
-            ))
+            regions.append((instance.resources.memory_base, instance.resources.memory_bytes))
     return regions
 
 
 def find_available_memory_base(
-    tree: GlobalDeviceTree,
-    size_bytes: int,
-    alignment: int = 0x1000,
-    use_iomem: bool = True
+    tree: GlobalDeviceTree, size_bytes: int, alignment: int = 0x1000, use_iomem: bool = True
 ) -> Optional[int]:
     """
     Find available memory region for allocation.
@@ -182,9 +178,7 @@ def find_available_memory_base(
 
 
 def validate_cpu_allocation(
-    tree: GlobalDeviceTree,
-    requested_cpus: List[int],
-    exclude_instance: Optional[str] = None
+    tree: GlobalDeviceTree, requested_cpus: List[int], exclude_instance: Optional[str] = None
 ) -> None:
     """
     Validate that requested CPUs are available for allocation.
@@ -229,16 +223,14 @@ def validate_cpu_allocation(
                 conflicts.append(f"{instance.name} uses CPUs {sorted(conflict_cpus)}")
 
         conflict_msg = ", ".join(conflicts) if conflicts else "allocated to other instances"
-        raise ResourceError(
-            f"CPUs {sorted(unavailable)} are not available ({conflict_msg})"
-        )
+        raise ResourceError(f"CPUs {sorted(unavailable)} are not available ({conflict_msg})")
 
 
 def validate_memory_allocation(
     tree: GlobalDeviceTree,
     memory_base: int,
     memory_bytes: int,
-    exclude_instance: Optional[str] = None
+    exclude_instance: Optional[str] = None,
 ) -> None:
     """
     Validate that memory region is available for allocation.
@@ -259,9 +251,7 @@ def validate_memory_allocation(
 
     # Check memory is within pool
     if memory_base < pool_base:
-        raise ResourceError(
-            f"Memory base {hex(memory_base)} is below pool base {hex(pool_base)}"
-        )
+        raise ResourceError(f"Memory base {hex(memory_base)} is below pool base {hex(pool_base)}")
 
     if memory_end > pool_end:
         raise ResourceError(
@@ -271,9 +261,7 @@ def validate_memory_allocation(
 
     # Check alignment (4KB)
     if memory_base % 0x1000 != 0:
-        raise ResourceError(
-            f"Memory base {hex(memory_base)} is not 4KB-aligned"
-        )
+        raise ResourceError(f"Memory base {hex(memory_base)} is not 4KB-aligned")
 
     # Check for overlaps with other instances
     for instance in tree.instances.values():
@@ -313,4 +301,3 @@ def find_next_instance_id(tree: GlobalDeviceTree) -> int:
             return instance_id
 
     raise ResourceError("No available instance IDs (all 1-511 are in use)")
-

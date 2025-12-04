@@ -18,9 +18,13 @@ Tests for kerf resource allocation utilities.
 
 import pytest
 from kerf.resources import (
-    get_available_cpus, get_allocated_cpus, get_allocated_memory_regions,
-    find_available_memory_base, validate_cpu_allocation, validate_memory_allocation,
-    find_next_instance_id
+    get_available_cpus,
+    get_allocated_cpus,
+    get_allocated_memory_regions,
+    find_available_memory_base,
+    validate_cpu_allocation,
+    validate_memory_allocation,
+    find_next_instance_id,
 )
 from kerf.exceptions import ResourceError
 
@@ -75,7 +79,7 @@ class TestCPUAllocation:
         requested_cpus = [4, 5, 6, 7]
 
         # Should not raise because web-server is excluded
-        validate_cpu_allocation(sample_tree, requested_cpus, exclude_instance='web-server')
+        validate_cpu_allocation(sample_tree, requested_cpus, exclude_instance="web-server")
 
 
 class TestMemoryAllocation:
@@ -98,11 +102,7 @@ class TestMemoryAllocation:
         from kerf.models import GlobalDeviceTree
 
         # Create tree with no instances
-        tree = GlobalDeviceTree(
-            hardware=sample_hardware,
-            instances={},
-            device_references={}
-        )
+        tree = GlobalDeviceTree(hardware=sample_hardware, instances={}, device_references={})
 
         # Request 1GB
         size = 1024**3
@@ -175,7 +175,7 @@ class TestMemoryAllocation:
 
         # Should not raise because web-server is excluded
         validate_memory_allocation(
-            sample_tree, memory_base, memory_bytes, exclude_instance='web-server'
+            sample_tree, memory_base, memory_bytes, exclude_instance="web-server"
         )
 
 
@@ -186,11 +186,7 @@ class TestInstanceID:
         """Test finding next ID with no instances."""
         from kerf.models import GlobalDeviceTree
 
-        tree = GlobalDeviceTree(
-            hardware=sample_hardware,
-            instances={},
-            device_references={}
-        )
+        tree = GlobalDeviceTree(hardware=sample_hardware, instances={}, device_references={})
 
         next_id = find_next_instance_id(tree)
         assert next_id == 1
@@ -204,7 +200,7 @@ class TestInstanceID:
     def test_find_next_instance_id_gaps(self, sample_tree):
         """Test finding next ID with gaps in sequence."""
         # Remove an instance to create a gap
-        del sample_tree.instances['web-server']
+        del sample_tree.instances["web-server"]
 
         # Should find ID 1 (now available)
         next_id = find_next_instance_id(sample_tree)
@@ -217,23 +213,18 @@ class TestInstanceID:
         # Create instances with all IDs from 1-511
         instances = {}
         for i in range(1, 512):
-            instances[f'inst{i}'] = Instance(
-                name=f'inst{i}',
+            instances[f"inst{i}"] = Instance(
+                name=f"inst{i}",
                 id=i,
                 resources=InstanceResources(
                     cpus=[4],
                     memory_base=0x80000000 + i * 0x1000000,
                     memory_bytes=0x1000000,
-                    devices=[]
-                )
+                    devices=[],
+                ),
             )
 
-        tree = GlobalDeviceTree(
-            hardware=sample_hardware,
-            instances=instances,
-            device_references={}
-        )
+        tree = GlobalDeviceTree(hardware=sample_hardware, instances=instances, device_references={})
 
         with pytest.raises(ResourceError, match="No available instance IDs"):
             find_next_instance_id(tree)
-

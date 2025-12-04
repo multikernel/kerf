@@ -16,13 +16,13 @@
 Tests for kerf baseline manager.
 """
 
-import pytest
-import tempfile
 import os
-from pathlib import Path
+import tempfile
+
+import pytest
+
 from kerf.baseline import BaselineManager
-from kerf.exceptions import ValidationError, KernelInterfaceError
-from kerf.models import GlobalDeviceTree
+from kerf.exceptions import KernelInterfaceError, ValidationError
 
 
 class TestBaselineManager:
@@ -33,9 +33,7 @@ class TestBaselineManager:
         from kerf.models import GlobalDeviceTree
 
         tree = GlobalDeviceTree(
-            hardware=sample_hardware,
-            instances={},  # No instances
-            device_references={}
+            hardware=sample_hardware, instances={}, device_references={}  # No instances
         )
 
         manager = BaselineManager()
@@ -53,11 +51,7 @@ class TestBaselineManager:
         """Test baseline validation fails without hardware."""
         from kerf.models import GlobalDeviceTree
 
-        tree = GlobalDeviceTree(
-            hardware=None,
-            instances={},
-            device_references={}
-        )
+        tree = GlobalDeviceTree(hardware=None, instances={}, device_references={})
 
         manager = BaselineManager()
 
@@ -72,15 +66,15 @@ class TestBaselineManager:
             hardware=HardwareInventory(
                 cpus=None,
                 memory=MemoryAllocation(
-                    total_bytes=16*1024**3,
-                    host_reserved_bytes=2*1024**3,
+                    total_bytes=16 * 1024**3,
+                    host_reserved_bytes=2 * 1024**3,
                     memory_pool_base=0x80000000,
-                    memory_pool_bytes=14*1024**3
+                    memory_pool_bytes=14 * 1024**3,
                 ),
-                devices={}
+                devices={},
             ),
             instances={},
-            device_references={}
+            device_references={},
         )
 
         manager = BaselineManager()
@@ -97,11 +91,7 @@ class TestBaselineManager:
             baseline_path = f.name
 
         try:
-            tree = GlobalDeviceTree(
-                hardware=sample_hardware,
-                instances={},
-                device_references={}
-            )
+            tree = GlobalDeviceTree(hardware=sample_hardware, instances={}, device_references={})
 
             manager = BaselineManager(baseline_path=baseline_path)
             manager.write_baseline(tree)
@@ -111,7 +101,10 @@ class TestBaselineManager:
 
             # Verify
             assert read_tree.hardware.cpus.available == sample_hardware.cpus.available
-            assert read_tree.hardware.memory.memory_pool_base == sample_hardware.memory.memory_pool_base
+            assert (
+                read_tree.hardware.memory.memory_pool_base
+                == sample_hardware.memory.memory_pool_base
+            )
             assert len(read_tree.instances) == 0
         finally:
             # Cleanup
@@ -120,7 +113,7 @@ class TestBaselineManager:
 
     def test_read_baseline_not_found(self):
         """Test reading baseline when file doesn't exist."""
-        manager = BaselineManager(baseline_path='/nonexistent/path')
+        manager = BaselineManager(baseline_path="/nonexistent/path")
 
         with pytest.raises(KernelInterfaceError, match="not found"):
             manager.read_baseline()
@@ -139,4 +132,3 @@ class TestBaselineManager:
         finally:
             if os.path.exists(baseline_path):
                 os.unlink(baseline_path)
-

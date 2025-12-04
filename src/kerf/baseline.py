@@ -85,9 +85,7 @@ class BaselineManager:
 
         # Baseline must contain resources
         if not tree.hardware:
-            raise ValidationError(
-                "Baseline device tree must contain hardware resources section."
-            )
+            raise ValidationError("Baseline device tree must contain hardware resources section.")
 
         # Validate resources structure
         if not tree.hardware.cpus:
@@ -124,27 +122,26 @@ class BaselineManager:
         try:
             dtb_data = self.extractor.generate_global_dtb(tree)
         except Exception as e:
-            raise KernelInterfaceError(
-                f"Failed to generate baseline device tree blob: {e}"
-            ) from e
+            raise KernelInterfaceError(f"Failed to generate baseline device tree blob: {e}") from e
 
         # The kernfs write operation is handled atomically by the kernel
         try:
-            with open(self.baseline_path, 'wb') as f:
+            with open(self.baseline_path, "wb") as f:
                 f.write(dtb_data)
                 f.flush()
                 os.fsync(f.fileno())
 
             if not self.baseline_path.exists():
                 raise KernelInterfaceError(
-                    f"Baseline DTB write completed but file does not exist at {self.baseline_path}. "
-                    f"Kernel may have rejected the write operation."
+                    f"Baseline DTB write completed but file does not exist at "
+                    f"{self.baseline_path}. "
+                    "Kernel may have rejected the write operation."
                 )
             file_size = self.baseline_path.stat().st_size
             if file_size == 0:
                 raise KernelInterfaceError(
-                    f"Baseline DTB written but file is empty. "
-                    f"Kernel may have rejected the DTB format."
+                    "Baseline DTB written but file is empty. "
+                    "Kernel may have rejected the DTB format."
                 )
 
         except OSError as e:
@@ -170,13 +167,12 @@ class BaselineManager:
                     "Initialize it first with 'kerf init'."
                 )
 
-            with open(self.baseline_path, 'rb') as f:
+            with open(self.baseline_path, "rb") as f:
                 dtb_data = f.read()
 
             if not dtb_data:
                 raise KernelInterfaceError(
-                    f"Root device tree is empty. "
-                    "Initialize it first with 'kerf init'."
+                    "Root device tree is empty. Initialize it first with 'kerf init'."
                 )
 
             tree = self.parser.parse_dtb_from_bytes(dtb_data)
@@ -188,7 +184,4 @@ class BaselineManager:
                 f"Failed to read root device tree from {self.baseline_path}: {e}"
             ) from e
         except ParseError as e:
-            raise ParseError(
-                f"Failed to parse root device tree: {e}"
-            ) from e
-
+            raise ParseError(f"Failed to parse root device tree: {e}") from e

@@ -18,15 +18,22 @@ Simple test script for kerf functionality.
 """
 
 import sys
-import os
 from pathlib import Path
 
 # Add the src directory to the path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
+# pylint: disable=wrong-import-position
 from kerf.models import (
-    GlobalDeviceTree, HardwareInventory, CPUAllocation, MemoryAllocation,
-    DeviceInfo, Instance, InstanceResources, InstanceConfig, WorkloadType
+    GlobalDeviceTree,
+    HardwareInventory,
+    CPUAllocation,
+    MemoryAllocation,
+    DeviceInfo,
+    Instance,
+    InstanceResources,
+    InstanceConfig,
+    WorkloadType,
 )
 from kerf.dtc.validator import MultikernelValidator
 from kerf.dtc.extractor import InstanceExtractor
@@ -37,95 +44,78 @@ def create_test_tree():
     """Create a test GlobalDeviceTree for demonstration."""
 
     # Create hardware inventory
-    cpus = CPUAllocation(
-        total=32,
-        host_reserved=[0, 1, 2, 3],
-        available=list(range(4, 32))
-    )
+    cpus = CPUAllocation(total=32, host_reserved=[0, 1, 2, 3], available=list(range(4, 32)))
 
     memory = MemoryAllocation(
         total_bytes=16 * 1024**3,  # 16GB
         host_reserved_bytes=2 * 1024**3,  # 2GB
         memory_pool_base=0x80000000,
-        memory_pool_bytes=14 * 1024**3  # 14GB
+        memory_pool_bytes=14 * 1024**3,  # 14GB
     )
 
     devices = {
-        'eth0': DeviceInfo(
-            name='eth0',
-            compatible='intel,i40e',
-            pci_id='0000:01:00.0',
+        "eth0": DeviceInfo(
+            name="eth0",
+            compatible="intel,i40e",
+            pci_id="0000:01:00.0",
             sriov_vfs=8,
             host_reserved_vf=0,
-            available_vfs=[1, 2, 3, 4, 5, 6, 7]
+            available_vfs=[1, 2, 3, 4, 5, 6, 7],
         ),
-        'nvme0': DeviceInfo(
-            name='nvme0',
-            compatible='nvme',
-            pci_id='0000:02:00.0',
+        "nvme0": DeviceInfo(
+            name="nvme0",
+            compatible="nvme",
+            pci_id="0000:02:00.0",
             namespaces=4,
             host_reserved_ns=1,
-            available_ns=[2, 3, 4]
-        )
+            available_ns=[2, 3, 4],
+        ),
     }
 
-    hardware = HardwareInventory(
-        cpus=cpus,
-        memory=memory,
-        devices=devices
-    )
+    hardware = HardwareInventory(cpus=cpus, memory=memory, devices=devices)
 
     # Create instances
     instances = {
-        'web-server': Instance(
-            name='web-server',
+        "web-server": Instance(
+            name="web-server",
             id=1,
             resources=InstanceResources(
                 cpus=[4, 5, 6, 7],
                 memory_base=0x80000000,
                 memory_bytes=2 * 1024**3,  # 2GB
-                devices=['eth0_vf1']
+                devices=["eth0_vf1"],
             ),
             config=InstanceConfig(
                 workload_type=WorkloadType.WEB_SERVER,
                 enable_pgo=True,
-                pgo_profile='/var/lib/mk/web_server.profdata'
-            )
+                pgo_profile="/var/lib/mk/web_server.profdata",
+            ),
         ),
-        'database': Instance(
-            name='database',
+        "database": Instance(
+            name="database",
             id=2,
             resources=InstanceResources(
                 cpus=[8, 9, 10, 11, 12, 13, 14, 15],
                 memory_base=0x100000000,
                 memory_bytes=8 * 1024**3,  # 8GB
-                devices=['eth0_vf2', 'nvme0_ns2']
+                devices=["eth0_vf2", "nvme0_ns2"],
             ),
-            config=InstanceConfig(
-                workload_type=WorkloadType.DATABASE_OLTP,
-                enable_numa=True
-            )
+            config=InstanceConfig(workload_type=WorkloadType.DATABASE_OLTP, enable_numa=True),
         ),
-        'compute': Instance(
-            name='compute',
+        "compute": Instance(
+            name="compute",
             id=3,
             resources=InstanceResources(
                 cpus=[16, 17, 18, 19, 20, 21, 22, 23],
                 memory_base=0x300000000,
                 memory_bytes=4 * 1024**3,  # 4GB
-                devices=[]
+                devices=[],
             ),
-            config=InstanceConfig(
-                workload_type=WorkloadType.COMPUTE
-            )
-        )
+            config=InstanceConfig(workload_type=WorkloadType.COMPUTE),
+        ),
     }
 
-    return GlobalDeviceTree(
-        hardware=hardware,
-        instances=instances,
-        device_references={}
-    )
+    return GlobalDeviceTree(hardware=hardware, instances=instances, device_references={})
 
 
 def test_validation():
@@ -153,14 +143,14 @@ def test_extraction():
     # Extract individual instances
     for instance_name in tree.instances.keys():
         try:
-            instance_dtb = extractor.extract_instance(tree, instance_name)
-            print(f"✓ Extracted {instance_name}: {len(instance_dtb)} bytes")
+            instance_dtb = extractor.extract_instance(tree, instance_name)  # pylint: disable=no-member
+            print(f"✓ Extracted {instance_name}: {len(instance_dtb)} bytes)")
         except Exception as e:
             print(f"✗ Failed to extract {instance_name}: {e}")
 
     # Extract all instances
     try:
-        all_instances = extractor.extract_all_instances(tree)
+        all_instances = extractor.extract_all_instances(tree)  # pylint: disable=no-member
         print(f"✓ Extracted all instances: {list(all_instances.keys())}")
     except Exception as e:
         print(f"✗ Failed to extract all instances: {e}")
@@ -175,18 +165,18 @@ def test_conflict_detection():
 
     # Add conflicting instance
     conflicting_instance = Instance(
-        name='conflicting',
+        name="conflicting",
         id=4,
         resources=InstanceResources(
             cpus=[4, 5],  # Conflicts with web-server
             memory_base=0x80000000,  # Conflicts with web-server
             memory_bytes=1024**3,  # 1GB
-            devices=[]
+            devices=[],
         ),
-        config=InstanceConfig(workload_type=WorkloadType.COMPUTE)
+        config=InstanceConfig(workload_type=WorkloadType.COMPUTE),
     )
 
-    tree.instances['conflicting'] = conflicting_instance
+    tree.instances["conflicting"] = conflicting_instance
 
     validator = MultikernelValidator()
     result = validator.validate(tree)
@@ -199,38 +189,3 @@ def test_conflict_detection():
 
     assert not result.is_valid, "Validation should fail for conflicting resources"
     assert len(result.errors) > 0, "Should have error messages for conflicts"
-
-
-def main():
-    """Run all tests."""
-    print("kerf Test Suite")
-    print("=" * 50)
-
-    # Test 1: Basic validation
-    valid = test_validation()
-    print(f"✓ Basic validation: {'PASSED' if valid else 'FAILED'}")
-
-    # Test 2: Instance extraction
-    test_extraction()
-    print("✓ Instance extraction: PASSED")
-
-    # Test 3: Conflict detection
-    conflicts_detected = test_conflict_detection()
-    print(f"✓ Conflict detection: {'PASSED' if conflicts_detected else 'FAILED'}")
-
-    print("\n" + "=" * 50)
-    print("Test Summary:")
-    print(f"  Basic validation: {'PASS' if valid else 'FAIL'}")
-    print(f"  Instance extraction: PASS")
-    print(f"  Conflict detection: {'PASS' if conflicts_detected else 'FAIL'}")
-
-    if valid and conflicts_detected:
-        print("\n🎉 All tests passed!")
-        return 0
-    else:
-        print("\n❌ Some tests failed!")
-        return 1
-
-
-if __name__ == '__main__':
-    sys.exit(main())

@@ -23,6 +23,7 @@ from enum import Enum
 
 class WorkloadType(Enum):
     """Types of workloads for kernel instances."""
+
     WEB_SERVER = "web-server"
     DATABASE_OLTP = "database-oltp"
     COMPUTE = "compute"
@@ -41,6 +42,7 @@ class InstanceState(Enum):
     - ACTIVE: Kernel running
     - FAILED: Error occurred
     """
+
     EMPTY = "empty"
     READY = "ready"
     LOADED = "loaded"
@@ -51,6 +53,7 @@ class InstanceState(Enum):
 @dataclass
 class InstanceConfig:
     """Configuration for a kernel instance."""
+
     workload_type: WorkloadType
     priority: Optional[int] = None
     timeout: Optional[int] = None
@@ -58,9 +61,11 @@ class InstanceConfig:
     pgo_profile: Optional[str] = None
     enable_numa: Optional[bool] = None
 
+
 @dataclass
 class CPUTopology:
     """CPU topology information."""
+
     cpu_id: int
     numa_node: int
     core_id: int
@@ -69,9 +74,11 @@ class CPUTopology:
     cache_levels: List[int]  # Cache sizes at each level
     flags: List[str]  # CPU flags like "smt", "ht", etc.
 
+
 @dataclass
 class NUMANode:
     """NUMA node information."""
+
     node_id: int
     memory_base: int
     memory_size: int
@@ -79,9 +86,11 @@ class NUMANode:
     distance_matrix: Dict[int, int]  # Distance to other NUMA nodes
     memory_type: str  # "dram", "hbm", "cxl", etc.
 
+
 @dataclass
 class CPUAllocation:
     """CPU allocation information."""
+
     total: int
     host_reserved: List[int]
     available: List[int]
@@ -95,6 +104,7 @@ class CPUAllocation:
 @dataclass
 class MemoryAllocation:
     """Memory allocation information."""
+
     total_bytes: int
     host_reserved_bytes: int
     memory_pool_base: int
@@ -109,6 +119,7 @@ class MemoryAllocation:
 @dataclass
 class DeviceInfo:
     """Device information from hardware inventory."""
+
     name: str
     compatible: str
     device_type: Optional[str] = None  # "pci", "platform", etc.
@@ -127,6 +138,7 @@ class DeviceInfo:
 @dataclass
 class InstanceResources:
     """Resource allocation for a kernel instance."""
+
     cpus: List[int]
     memory_base: int
     memory_bytes: int
@@ -139,15 +151,18 @@ class InstanceResources:
 @dataclass
 class Instance:
     """A kernel instance definition."""
+
     name: str
     id: Optional[int]  # None means kernel should auto-assign
     resources: InstanceResources
     config: Optional[InstanceConfig] = None
     options: Optional[Dict[str, bool]] = None
 
+
 @dataclass
 class TopologySection:
     """Generic topology section containing all topology types."""
+
     numa_nodes: Optional[Dict[int, NUMANode]] = None  # NUMA node ID -> node info
 
     def get_cpus_in_numa_node(self, numa_node: int) -> List[int]:
@@ -176,6 +191,7 @@ class TopologySection:
 @dataclass
 class HardwareInventory:
     """Complete hardware inventory."""
+
     cpus: CPUAllocation
     memory: MemoryAllocation
     topology: Optional[TopologySection] = None
@@ -185,6 +201,7 @@ class HardwareInventory:
 @dataclass
 class OverlayInstanceData:
     """Instance data parsed from an overlay (both creates and removals)."""
+
     instances: Dict[str, Instance]
     removals: Set[str]
 
@@ -192,6 +209,7 @@ class OverlayInstanceData:
 @dataclass
 class GlobalDeviceTree:
     """Global device tree representation."""
+
     hardware: HardwareInventory
     instances: Dict[str, Instance]
     device_references: Dict[str, Dict]  # phandle references
@@ -200,6 +218,7 @@ class GlobalDeviceTree:
 @dataclass
 class ValidationResult:
     """Result of validation process."""
+
     is_valid: bool
     errors: List[str]
     warnings: List[str]
@@ -209,6 +228,7 @@ class ValidationResult:
 @dataclass
 class ResourceUsage:
     """Resource usage summary."""
+
     cpus_allocated: int
     cpus_total: int
     memory_allocated: int

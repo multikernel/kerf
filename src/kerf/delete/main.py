@@ -30,13 +30,15 @@ from ..exceptions import ResourceError, ValidationError, KernelInterfaceError, P
 from ..utils import get_instance_id_from_name, get_instance_name_from_id, get_instance_status
 
 
-@click.command(name='delete')
-@click.argument('name', required=False)
-@click.option('--id', type=int, help='Multikernel instance ID to delete (alternative to name)')
-@click.option('--verbose', '-v', is_flag=True, help='Verbose output')
-@click.option('--dry-run', is_flag=True, help='Validate without applying to kernel')
+@click.command(name="delete")
+@click.argument("name", required=False)
+@click.option("--id", type=int, help="Multikernel instance ID to delete (alternative to name)")
+@click.option("--verbose", "-v", is_flag=True, help="Verbose output")
+@click.option("--dry-run", is_flag=True, help="Validate without applying to kernel")
 @click.pass_context
-def delete(ctx: click.Context, name: Optional[str], id: Optional[int], verbose: bool, dry_run: bool):
+def delete(
+    ctx: click.Context, name: Optional[str], id: Optional[int], verbose: bool, dry_run: bool
+):
     """
     Delete a kernel instance from the device tree.
 
@@ -54,17 +56,11 @@ def delete(ctx: click.Context, name: Optional[str], id: Optional[int], verbose: 
     """
     try:
         if not name and id is None:
-            click.echo(
-                "Error: Either instance name or --id must be provided",
-                err=True
-            )
-            click.echo(
-                "Usage: kerf delete <name>  or  kerf delete --id=<id>",
-                err=True
-            )
+            click.echo("Error: Either instance name or --id must be provided", err=True)
+            click.echo("Usage: kerf delete <name>  or  kerf delete --id=<id>", err=True)
             sys.exit(2)
 
-        debug = ctx.obj.get('debug', False) if ctx and ctx.obj else False
+        debug = ctx.obj.get("debug", False) if ctx and ctx.obj else False
 
         manager = DeviceTreeManager()
         instance_name = None
@@ -73,22 +69,13 @@ def delete(ctx: click.Context, name: Optional[str], id: Optional[int], verbose: 
         if name:
             instance_name = name
             if not manager.has_instance(name):
-                click.echo(
-                    f"Error: Instance '{name}' does not exist",
-                    err=True
-                )
-                click.echo(
-                    f"Check available instances in /sys/fs/multikernel/instances/",
-                    err=True
-                )
+                click.echo(f"Error: Instance '{name}' does not exist", err=True)
+                click.echo("Check available instances in /sys/fs/multikernel/instances/", err=True)
                 sys.exit(1)
 
             instance_id = get_instance_id_from_name(name)
             if instance_id is None:
-                click.echo(
-                    f"Error: Could not read instance ID for '{name}'",
-                    err=True
-                )
+                click.echo(f"Error: Could not read instance ID for '{name}'", err=True)
                 sys.exit(1)
 
             if verbose:
@@ -96,22 +83,13 @@ def delete(ctx: click.Context, name: Optional[str], id: Optional[int], verbose: 
         else:
             instance_id = id
             if instance_id < 1 or instance_id > 511:
-                click.echo(
-                    f"Error: --id must be between 1 and 511 (got {instance_id})",
-                    err=True
-                )
+                click.echo(f"Error: --id must be between 1 and 511 (got {instance_id})", err=True)
                 sys.exit(2)
 
             instance_name = get_instance_name_from_id(instance_id)
             if not instance_name:
-                click.echo(
-                    f"Error: Instance with ID {instance_id} not found",
-                    err=True
-                )
-                click.echo(
-                    f"Check available instances in /sys/fs/multikernel/instances/",
-                    err=True
-                )
+                click.echo(f"Error: Instance with ID {instance_id} not found", err=True)
+                click.echo("Check available instances in /sys/fs/multikernel/instances/", err=True)
                 sys.exit(1)
 
             if verbose:
@@ -127,32 +105,20 @@ def delete(ctx: click.Context, name: Optional[str], id: Optional[int], verbose: 
 
             if status_lower == InstanceState.LOADED.value:
                 click.echo(
-                    f"Error: Cannot delete instance '{instance_name}' (ID: {instance_id})",
-                    err=True
+                    f"Error: Cannot delete instance '{instance_name}' (ID: {instance_id})", err=True
                 )
+                click.echo(f"Instance has a kernel loaded (status: {status}).", err=True)
                 click.echo(
-                    f"Instance has a kernel loaded (status: {status}).",
-                    err=True
-                )
-                click.echo(
-                    f"Please unload the kernel first using: kerf unload {instance_name}",
-                    err=True
+                    f"Please unload the kernel first using: kerf unload {instance_name}", err=True
                 )
                 sys.exit(1)
 
             if status_lower == InstanceState.ACTIVE.value:
                 click.echo(
-                    f"Error: Cannot delete instance '{instance_name}' (ID: {instance_id})",
-                    err=True
+                    f"Error: Cannot delete instance '{instance_name}' (ID: {instance_id})", err=True
                 )
-                click.echo(
-                    f"Instance is currently ACTIVE (running, status: {status}).",
-                    err=True
-                )
-                click.echo(
-                    f"Please stop and unload the kernel first.",
-                    err=True
-                )
+                click.echo(f"Instance is currently ACTIVE (running, status: {status}).", err=True)
+                click.echo("Please stop and unload the kernel first.", err=True)
                 sys.exit(1)
 
             if verbose:
@@ -172,10 +138,12 @@ def delete(ctx: click.Context, name: Optional[str], id: Optional[int], verbose: 
                         fdt = libfdt.Fdt(dtbo_data)
                         parser = DeviceTreeParser()
                         parser.fdt = fdt
-                        dts_lines = parser._fdt_to_dts_recursive(0, 0)
-                        dts_content = '\n'.join(dts_lines)
+                        dts_lines = parser._fdt_to_dts_recursive(0, 0)  # pylint: disable=protected-access
+                        dts_content = "\n".join(dts_lines)
 
-                        click.echo(f"\nDebug: Overlay DTS source for deletion of '{instance_name}' (dry-run):")
+                        click.echo(
+                            f"\nDebug: Overlay DTS source for deletion of '{instance_name}' (dry-run):"
+                        )
                         click.echo("─" * 70)
                         click.echo(dts_content)
                         click.echo("─" * 70)
@@ -183,6 +151,7 @@ def delete(ctx: click.Context, name: Optional[str], id: Optional[int], verbose: 
                         click.echo(f"Debug: Failed to generate DTS output: {e}", err=True)
                         if verbose:
                             import traceback
+
                             traceback.print_exc()
 
                 click.echo("\n✓ Instance would be deleted (dry-run mode)")
@@ -205,8 +174,8 @@ def delete(ctx: click.Context, name: Optional[str], id: Optional[int], verbose: 
                     fdt = libfdt.Fdt(dtbo_data)
                     parser = DeviceTreeParser()
                     parser.fdt = fdt
-                    dts_lines = parser._fdt_to_dts_recursive(0, 0)
-                    dts_content = '\n'.join(dts_lines)
+                    dts_lines = parser._fdt_to_dts_recursive(0, 0)  # pylint: disable=protected-access
+                    dts_content = "\n".join(dts_lines)
 
                     click.echo(f"\nDebug: Overlay DTS source for deletion of '{instance_name}':")
                     click.echo("─" * 70)
@@ -216,6 +185,7 @@ def delete(ctx: click.Context, name: Optional[str], id: Optional[int], verbose: 
                     click.echo(f"Debug: Failed to generate DTS output: {e}", err=True)
                     if verbose:
                         import traceback
+
                         traceback.print_exc()
 
             tx_id = manager.apply_removal_overlay(instance_name)
@@ -227,18 +197,21 @@ def delete(ctx: click.Context, name: Optional[str], id: Optional[int], verbose: 
             click.echo(f"Error: {e}", err=True)
             if verbose:
                 import traceback
+
                 traceback.print_exc()
             sys.exit(1)
         except ValidationError as e:
             click.echo(f"Error: Validation failed: {e}", err=True)
             if verbose:
                 import traceback
+
                 traceback.print_exc()
             sys.exit(1)
         except KernelInterfaceError as e:
             click.echo(f"Error: Kernel interface error: {e}", err=True)
             if verbose:
                 import traceback
+
                 traceback.print_exc()
             sys.exit(1)
 
@@ -249,10 +222,10 @@ def delete(ctx: click.Context, name: Optional[str], id: Optional[int], verbose: 
         click.echo(f"Unexpected error: {e}", err=True)
         if verbose:
             import traceback
+
             traceback.print_exc()
         sys.exit(1)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     delete()
-

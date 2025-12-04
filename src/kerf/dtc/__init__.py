@@ -24,9 +24,4 @@ from .validator import MultikernelValidator
 from .extractor import InstanceExtractor
 from .reporter import ValidationReporter
 
-__all__ = [
-    'DeviceTreeParser',
-    'MultikernelValidator', 
-    'InstanceExtractor',
-    'ValidationReporter'
-]
+__all__ = ["DeviceTreeParser", "MultikernelValidator", "InstanceExtractor", "ValidationReporter"]

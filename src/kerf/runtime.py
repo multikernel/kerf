@@ -132,11 +132,7 @@ class DeviceTreeManager:
     DEFAULT_BASELINE_PATH = "/sys/fs/multikernel/device_tree"
     DEFAULT_OVERLAYS_DIR = "/sys/fs/multikernel/overlays"
 
-    def __init__(
-        self,
-        baseline_path: Optional[str] = None,
-        overlays_dir: Optional[str] = None
-    ):
+    def __init__(self, baseline_path: Optional[str] = None, overlays_dir: Optional[str] = None):
         """
         Initialize DeviceTreeManager.
 
@@ -217,17 +213,13 @@ class DeviceTreeManager:
         try:
             dtbo_data = self.overlay_gen.generate_overlay(current, modified)
         except Exception as e:
-            raise KernelInterfaceError(
-                f"Failed to generate overlay: {e}"
-            ) from e
+            raise KernelInterfaceError(f"Failed to generate overlay: {e}") from e
 
         try:
             if not self.overlays_new.exists():
-                raise KernelInterfaceError(
-                    f"Overlay interface not found: {self.overlays_new}"
-                )
+                raise KernelInterfaceError(f"Overlay interface not found: {self.overlays_new}")
 
-            with open(self.overlays_new, 'wb') as f:
+            with open(self.overlays_new, "wb") as f:
                 f.write(dtbo_data)
 
             tx_id = self._find_latest_transaction()
@@ -242,14 +234,14 @@ class DeviceTreeManager:
 
             if status_file.exists():
                 try:
-                    with open(status_file, 'r') as f:
+                    with open(status_file, "r", encoding="utf-8") as f:
                         status = f.read().strip()
                     if status not in ("applied", "success", "ok"):
                         error_msg = f"Overlay transaction {tx_id} failed with status: '{status}'"
                         instance_file = tx_dir / "instance"
                         if instance_file.exists():
                             try:
-                                with open(instance_file, 'r') as f:
+                                with open(instance_file, "r", encoding="utf-8") as f:
                                     instance_name = f.read().strip()
                                 error_msg += f" (instance: {instance_name})"
                             except OSError:
@@ -290,17 +282,13 @@ class DeviceTreeManager:
             try:
                 dtbo_data = self.overlay_gen.generate_removal_overlay(instance_name)
             except Exception as e:
-                raise KernelInterfaceError(
-                    f"Failed to generate removal overlay: {e}"
-                ) from e
+                raise KernelInterfaceError(f"Failed to generate removal overlay: {e}") from e
 
             try:
                 if not self.overlays_new.exists():
-                    raise KernelInterfaceError(
-                        f"Overlay interface not found: {self.overlays_new}"
-                    )
+                    raise KernelInterfaceError(f"Overlay interface not found: {self.overlays_new}")
 
-                with open(self.overlays_new, 'wb') as f:
+                with open(self.overlays_new, "wb") as f:
                     f.write(dtbo_data)
 
                 tx_id = self._find_latest_transaction()
@@ -314,14 +302,16 @@ class DeviceTreeManager:
 
                 if status_file.exists():
                     try:
-                        with open(status_file, 'r') as f:
+                        with open(status_file, "r", encoding="utf-8") as f:
                             status = f.read().strip()
                         if status not in ("applied", "success", "ok"):
-                            error_msg = f"Overlay transaction {tx_id} failed with status: '{status}'"
+                            error_msg = (
+                                f"Overlay transaction {tx_id} failed with status: '{status}'"
+                            )
                             instance_file = tx_dir / "instance"
                             if instance_file.exists():
                                 try:
-                                    with open(instance_file, 'r') as f:
+                                    with open(instance_file, "r", encoding="utf-8") as f:
                                         tx_instance_name = f.read().strip()
                                     error_msg += f" (instance: {tx_instance_name})"
                                 except OSError:
@@ -349,7 +339,7 @@ class DeviceTreeManager:
             if not tx_dir.is_dir():
                 continue
 
-            match = re.match(r'^tx_(\d+)$', tx_dir.name)
+            match = re.match(r"^tx_(\d+)$", tx_dir.name)
             if match:
                 tx_id = int(match.group(1))
                 if tx_id > max_id:
@@ -371,17 +361,13 @@ class DeviceTreeManager:
         tx_dir = self.overlays_dir / f"tx_{tx_id}"
 
         if not tx_dir.exists():
-            raise KernelInterfaceError(
-                f"Transaction {tx_id} not found: {tx_dir}"
-            )
+            raise KernelInterfaceError(f"Transaction {tx_id} not found: {tx_dir}")
 
         try:
             # Remove transaction directory (kernel handles rollback)
             tx_dir.rmdir()
         except OSError as e:
-            raise KernelInterfaceError(
-                f"Failed to rollback transaction {tx_id}: {e}"
-            ) from e
+            raise KernelInterfaceError(f"Failed to rollback transaction {tx_id}: {e}") from e
 
     def list_transactions(self) -> List[Dict[str, str]]:
         """
@@ -399,7 +385,7 @@ class DeviceTreeManager:
             if not tx_dir.is_dir():
                 continue
 
-            match = re.match(r'^tx_(\d+)$', tx_dir.name)
+            match = re.match(r"^tx_(\d+)$", tx_dir.name)
             if not match:
                 continue
 
@@ -412,14 +398,14 @@ class DeviceTreeManager:
 
             if status_file.exists():
                 try:
-                    with open(status_file, 'r') as f:
+                    with open(status_file, "r", encoding="utf-8") as f:
                         tx_info["status"] = f.read().strip()
                 except OSError:
                     tx_info["status"] = "unknown"
 
             if instance_file.exists():
                 try:
-                    with open(instance_file, 'r') as f:
+                    with open(instance_file, "r", encoding="utf-8") as f:
                         tx_info["instance"] = f.read().strip()
                 except OSError:
                     pass
@@ -447,16 +433,18 @@ class DeviceTreeManager:
             max_retries = 10
             retry_delay = 0.1
 
-            for attempt in range(max_retries):
+            for _ in range(max_retries):
                 try:
                     if not self.lock_file.exists():
                         self.lock_file.touch(exist_ok=False)
                         lock_acquired = True
                         break
                     import time
+
                     time.sleep(retry_delay)
                 except FileExistsError:
                     import time
+
                     time.sleep(retry_delay)
                     continue
 
@@ -472,10 +460,7 @@ class DeviceTreeManager:
             if lock_acquired and self.lock_file.exists():
                 self.lock_file.unlink()
 
-    def apply_operation(
-        self,
-        operation: Callable[[GlobalDeviceTree], GlobalDeviceTree]
-    ) -> str:
+    def apply_operation(self, operation: Callable[[GlobalDeviceTree], GlobalDeviceTree]) -> str:
         """
         Apply an operation transactionally via overlay.
 
@@ -538,5 +523,5 @@ class DeviceTreeManager:
         Returns:
             True if instance exists in kernel, False otherwise
         """
-        instance_dir = Path(f'/sys/fs/multikernel/instances/{name}')
+        instance_dir = Path(f"/sys/fs/multikernel/instances/{name}")
         return instance_dir.exists() and instance_dir.is_dir()

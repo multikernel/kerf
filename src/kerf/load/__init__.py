@@ -18,5 +18,4 @@ Kernel loading subcommand implementation.
 
 from .main import load
 
-__all__ = ['load']
-
+__all__ = ["load"]

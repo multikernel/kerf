@@ -32,7 +32,6 @@ kerf = "kerf.cli:main"
 py-version = "3.8"
 jobs = 0
 ignore-patterns = ["^\\.#"]
-suggestion-mode = true
 
 [tool.pylint.messages_control]
 disable = [
@@ -44,7 +43,18 @@ disable = [
     "too-many-locals",
     "too-many-branches",
     "too-many-statements",
-    "invalid-name",
+    "line-too-long",
+    "duplicate-code",
+    "too-many-nested-blocks",
+    "too-many-positional-arguments",
+    "too-many-return-statements",
+    "too-many-instance-attributes",
+    "too-many-lines",
+    "fixme",
+    "import-outside-toplevel",
+    "broad-exception-caught",
+    "no-value-for-parameter",
+    "redefined-builtin",
 ]
 
 [tool.pylint.format]
