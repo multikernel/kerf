@@ -15,4 +15,3 @@
 """
 Create kernel instance command.
 """
-

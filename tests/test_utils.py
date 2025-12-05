@@ -16,52 +16,47 @@
 Tests for kerf utility functions.
 """
 
-import pytest
-from unittest.mock import patch, mock_open
-from pathlib import Path
-from kerf.utils import (
-    get_instance_id_from_name,
-    get_instance_name_from_id,
-    get_instance_status
-)
+from unittest.mock import mock_open, patch
+
+from kerf.utils import get_instance_id_from_name, get_instance_name_from_id, get_instance_status
 
 
 class TestInstanceUtils:
     """Test instance utility functions."""
 
-    @patch('pathlib.Path.exists')
-    @patch('builtins.open', new_callable=mock_open, read_data='42\n')
+    @patch("pathlib.Path.exists")
+    @patch("builtins.open", new_callable=mock_open, read_data="42\n")
     def test_get_instance_id_from_name(self, mock_file, mock_exists):
         """Test getting instance ID from name."""
         mock_exists.return_value = True
 
-        instance_id = get_instance_id_from_name('test-instance')
+        instance_id = get_instance_id_from_name("test-instance")
 
         assert instance_id == 42
         mock_file.assert_called_once()
 
-    @patch('pathlib.Path.exists')
+    @patch("pathlib.Path.exists")
     def test_get_instance_id_from_name_not_found(self, mock_exists):
         """Test getting instance ID when file doesn't exist."""
         mock_exists.return_value = False
 
-        instance_id = get_instance_id_from_name('nonexistent')
+        instance_id = get_instance_id_from_name("nonexistent")
 
         assert instance_id is None
 
-    @patch('pathlib.Path.exists')
-    @patch('builtins.open', new_callable=mock_open, read_data='invalid')
-    def test_get_instance_id_from_name_invalid(self, mock_file, mock_exists):
+    @patch("pathlib.Path.exists")
+    @patch("builtins.open", new_callable=mock_open, read_data="invalid")
+    def test_get_instance_id_from_name_invalid(self, mock_file, mock_exists):  # pylint: disable=unused-argument
         """Test getting instance ID with invalid data."""
         mock_exists.return_value = True
 
-        instance_id = get_instance_id_from_name('test-instance')
+        instance_id = get_instance_id_from_name("test-instance")
 
         assert instance_id is None
 
-    @patch('pathlib.Path.exists')
-    @patch('pathlib.Path.iterdir')
-    @patch('kerf.utils.get_instance_id_from_name')
+    @patch("pathlib.Path.exists")
+    @patch("pathlib.Path.iterdir")
+    @patch("kerf.utils.get_instance_id_from_name")
     def test_get_instance_name_from_id(self, mock_get_id, mock_iterdir, mock_exists):
         """Test getting instance name from ID."""
         # Setup mocks
@@ -72,25 +67,25 @@ class TestInstanceUtils:
 
         mock_dir1 = MagicMock()
         mock_dir1.is_dir.return_value = True
-        mock_dir1.name = 'instance1'
+        mock_dir1.name = "instance1"
 
         mock_dir2 = MagicMock()
         mock_dir2.is_dir.return_value = True
-        mock_dir2.name = 'instance2'
+        mock_dir2.name = "instance2"
 
         mock_iterdir.return_value = [mock_dir1, mock_dir2]
 
         # Mock get_instance_id_from_name to return IDs
         def get_id_side_effect(name):
-            return {'instance1': 1, 'instance2': 2}.get(name)
+            return {"instance1": 1, "instance2": 2}.get(name)
 
         mock_get_id.side_effect = get_id_side_effect
 
         # Test
         name = get_instance_name_from_id(2)
-        assert name == 'instance2'
+        assert name == "instance2"
 
-    @patch('pathlib.Path.exists')
+    @patch("pathlib.Path.exists")
     def test_get_instance_name_from_id_not_found(self, mock_exists):
         """Test getting instance name when ID doesn't exist."""
         mock_exists.return_value = False
@@ -99,23 +94,22 @@ class TestInstanceUtils:
 
         assert name is None
 
-    @patch('pathlib.Path.exists')
-    @patch('builtins.open', new_callable=mock_open, read_data='active\n')
+    @patch("pathlib.Path.exists")
+    @patch("builtins.open", new_callable=mock_open, read_data="active\n")
     def test_get_instance_status(self, mock_file, mock_exists):
         """Test getting instance status."""
         mock_exists.return_value = True
 
-        status = get_instance_status('test-instance')
+        status = get_instance_status("test-instance")
 
-        assert status == 'active'
+        assert status == "active"
         mock_file.assert_called_once()
 
-    @patch('pathlib.Path.exists')
+    @patch("pathlib.Path.exists")
     def test_get_instance_status_not_found(self, mock_exists):
         """Test getting instance status when file doesn't exist."""
         mock_exists.return_value = False
 
-        status = get_instance_status('nonexistent')
+        status = get_instance_status("nonexistent")
 
         assert status is None
-

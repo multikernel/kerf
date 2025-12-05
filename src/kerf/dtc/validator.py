@@ -18,9 +18,8 @@ Validation layer for multikernel device tree configurations.
 
 import re
 from pathlib import Path
-from typing import List, Dict, Set, Tuple, Optional
+from typing import List, Dict, Tuple, Optional
 from ..models import GlobalDeviceTree, ValidationResult, ResourceUsage
-from ..exceptions import ValidationError, ResourceConflictError, ResourceExhaustionError, InvalidReferenceError
 
 
 class MultikernelValidator:
@@ -43,16 +42,22 @@ class MultikernelValidator:
         if not self.dts_content:
             return 0
 
-        lines = self.dts_content.split('\n')
+        lines = self.dts_content.split("\n")
         for i, line in enumerate(lines, 1):
             if pattern in line:
                 return i
         return 0
 
-    def _format_error_with_context(self, error_type: str, instance_name: str, 
-                                 problem: str, current_state: str, 
-                                 suggestion: str, alternative: str = None,
-                                 pattern: str = None) -> str:
+    def _format_error_with_context(
+        self,
+        error_type: str,
+        instance_name: str,
+        problem: str,
+        current_state: str,
+        suggestion: str,
+        alternative: str = None,
+        pattern: str = None,
+    ) -> str:
         """Format enhanced error message with context and suggestions."""
         lines = []
 
@@ -71,7 +76,7 @@ class MultikernelValidator:
                 lines.append(f"  In file {filename}:")
                 lines.append(f"    Line {line_num}: {pattern}")
 
-        return '\n'.join(lines)
+        return "\n".join(lines)
 
     def validate(self, tree: GlobalDeviceTree) -> ValidationResult:
         """Perform comprehensive validation of the device tree."""
@@ -91,7 +96,7 @@ class MultikernelValidator:
             is_valid=len(self.errors) == 0,
             errors=self.errors.copy(),
             warnings=self.warnings.copy(),
-            suggestions=self.suggestions.copy()
+            suggestions=self.suggestions.copy(),
         )
 
     def _get_system_cpu_ids(self) -> Optional[set[int]]:
@@ -100,24 +105,20 @@ class MultikernelValidator:
         Maps logical processor IDs to physical IDs and returns the set of physical IDs.
         """
         try:
-            cpuinfo_path = Path('/proc/cpuinfo')
+            cpuinfo_path = Path("/proc/cpuinfo")
             if cpuinfo_path.exists():
-                with open(cpuinfo_path, 'r') as f:
+                with open(cpuinfo_path, "r", encoding="utf-8") as f:
                     content = f.read()
                     physical_ids = set()
-                    current_processor = None
                     current_physical_id = None
 
-                    for line in content.split('\n'):
-                        if line.startswith('processor'):
+                    for line in content.split("\n"):
+                        if line.startswith("processor"):
                             # Extract logical processor ID
-                            match = re.search(r'processor\s*:\s*(\d+)', line)
-                            if match:
-                                current_processor = int(match.group(1))
-                                current_physical_id = None
-                        elif line.startswith('physical id'):
+                            current_physical_id = None
+                        elif line.startswith("physical id"):
                             # Extract physical ID for current processor
-                            match = re.search(r'physical id\s*:\s*(\d+)', line)
+                            match = re.search(r"physical id\s*:\s*(\d+)", line)
                             if match:
                                 current_physical_id = int(match.group(1))
                                 physical_ids.add(current_physical_id)
@@ -135,22 +136,22 @@ class MultikernelValidator:
         Returns dict mapping processor ID -> physical ID.
         """
         try:
-            cpuinfo_path = Path('/proc/cpuinfo')
+            cpuinfo_path = Path("/proc/cpuinfo")
             if cpuinfo_path.exists():
-                with open(cpuinfo_path, 'r') as f:
+                with open(cpuinfo_path, "r", encoding="utf-8") as f:
                     content = f.read()
                     processor_to_physical = {}
                     current_processor = None
 
-                    for line in content.split('\n'):
-                        if line.startswith('processor'):
+                    for line in content.split("\n"):
+                        if line.startswith("processor"):
                             # Extract logical processor ID
-                            match = re.search(r'processor\s*:\s*(\d+)', line)
+                            match = re.search(r"processor\s*:\s*(\d+)", line)
                             if match:
                                 current_processor = int(match.group(1))
-                        elif line.startswith('physical id') and current_processor is not None:
+                        elif line.startswith("physical id") and current_processor is not None:
                             # Extract physical ID for current processor
-                            match = re.search(r'physical id\s*:\s*(\d+)', line)
+                            match = re.search(r"physical id\s*:\s*(\d+)", line)
                             if match:
                                 physical_id = int(match.group(1))
                                 processor_to_physical[current_processor] = physical_id
@@ -172,13 +173,13 @@ class MultikernelValidator:
     def _get_system_physical_memory(self) -> Optional[int]:
         """Get total physical memory in bytes from /proc/meminfo."""
         try:
-            meminfo_path = Path('/proc/meminfo')
+            meminfo_path = Path("/proc/meminfo")
             if meminfo_path.exists():
-                with open(meminfo_path, 'r') as f:
+                with open(meminfo_path, "r", encoding="utf-8") as f:
                     for line in f:
-                        if line.startswith('MemTotal:'):
+                        if line.startswith("MemTotal:"):
                             # Format: "MemTotal:       16384000 kB"
-                            match = re.search(r'MemTotal:\s*(\d+)\s*kB', line)
+                            match = re.search(r"MemTotal:\s*(\d+)\s*kB", line)
                             if match:
                                 # Convert from kB to bytes
                                 return int(match.group(1)) * 1024
@@ -195,13 +196,13 @@ class MultikernelValidator:
         Expected format: "40000000-7fefffff : Multikernel Memory Pool"
         """
         try:
-            iomem_path = Path('/proc/iomem')
+            iomem_path = Path("/proc/iomem")
             if not iomem_path.exists():
                 return None
-            with open(iomem_path, 'r') as f:
+            with open(iomem_path, "r", encoding="utf-8") as f:
                 for line in f:
-                    if 'multikernel' in line.lower():
-                        match = re.search(r'([0-9a-fA-F]+)-([0-9a-fA-F]+)', line)
+                    if "multikernel" in line.lower():
+                        match = re.search(r"([0-9a-fA-F]+)-([0-9a-fA-F]+)", line)
                         if match:
                             base = int(match.group(1), 16)
                             end = int(match.group(2), 16)
@@ -226,7 +227,9 @@ class MultikernelValidator:
         available_set = set(cpus.available)
         overlap = host_set.intersection(available_set)
         if overlap:
-            self.errors.append(f"Hardware inventory: CPU overlap between host and available: {sorted(overlap)}")
+            self.errors.append(
+                f"Hardware inventory: CPU overlap between host and available: {sorted(overlap)}"
+            )
 
         processor_to_physical = self._get_processor_to_physical_id_map()
         if processor_to_physical is not None:
@@ -271,7 +274,9 @@ class MultikernelValidator:
                         f"This may indicate CPUs were hot-unplugged after baseline was created."
                     )
         else:
-            self.warnings.append("Could not determine CPU to physical ID mapping from /proc/cpuinfo - skipping CPU validation")
+            self.warnings.append(
+                "Could not determine CPU to physical ID mapping from /proc/cpuinfo - skipping CPU validation"
+            )
 
         memory = tree.hardware.memory
         if memory.total_bytes <= 0:
@@ -281,7 +286,9 @@ class MultikernelValidator:
             self.errors.append("Hardware inventory: Spawn pool size must be positive")
 
         iomem_pool = self._get_multikernel_memory_pool_from_iomem()
-        if iomem_pool is None or (memory.memory_pool_base != iomem_pool[0] or memory.memory_pool_bytes != iomem_pool[1]):
+        if iomem_pool is None or (
+            memory.memory_pool_base != iomem_pool[0] or memory.memory_pool_bytes != iomem_pool[1]
+        ):
             # Pool doesn't match kernel-provided pool, validate against total_bytes
             if memory.memory_pool_base + memory.memory_pool_bytes > memory.total_bytes:
                 self.errors.append("Hardware inventory: Spawn pool extends beyond total memory")
@@ -312,23 +319,25 @@ class MultikernelValidator:
                     f"({iomem_size} bytes = {iomem_size / (1024**3):.2f} GB) in /proc/iomem"
                 )
         else:
-            self.warnings.append(
-                "Could not find multikernel memory pool in /proc/iomem"
-            )
+            self.warnings.append("Could not find multikernel memory pool in /proc/iomem")
 
     def _validate_instances(self, tree: GlobalDeviceTree):
         """Validate instance definitions."""
         instance_names = set()
         instance_ids = set()
 
-        for name, instance in tree.instances.items():
+        for _, instance in tree.instances.items():
             if instance.name in instance_names:
-                self.errors.append(f"Duplicate instance name: '{instance.name}' appears multiple times")
+                self.errors.append(
+                    f"Duplicate instance name: '{instance.name}' appears multiple times"
+                )
             instance_names.add(instance.name)
 
             if instance.id is not None:
                 if instance.id in instance_ids:
-                    self.errors.append(f"Duplicate instance ID: {instance.id} assigned to multiple instances")
+                    self.errors.append(
+                        f"Duplicate instance ID: {instance.id} assigned to multiple instances"
+                    )
                 instance_ids.add(instance.id)
 
             self._validate_instance_resources(instance, tree)
@@ -354,7 +363,7 @@ class MultikernelValidator:
                     current_state=f"Hardware has CPUs 0-{cpus.total-1}",
                     suggestion=f"Use CPUs in range 0-{cpus.total-1}",
                     alternative="Check hardware inventory configuration",
-                    pattern=f"cpus = <{','.join(map(str, sorted(instance_cpus)))}>"
+                    pattern=f"cpus = <{','.join(map(str, sorted(instance_cpus)))}>",
                 )
                 self.errors.append(error_msg)
 
@@ -369,7 +378,7 @@ class MultikernelValidator:
                 current_state=f"Host reserved CPUs: {sorted(host_reserved)}",
                 suggestion=f"Use available CPUs: {available_cpus}",
                 alternative="Modify host-reserved CPU configuration",
-                pattern=f"cpus = <{','.join(map(str, sorted(instance_cpus)))}>"
+                pattern=f"cpus = <{','.join(map(str, sorted(instance_cpus)))}>",
             )
             self.errors.append(error_msg)
 
@@ -387,7 +396,7 @@ class MultikernelValidator:
                     current_state=f"Both instances use CPUs: {sorted(overlap)}",
                     suggestion=f"Assign different CPUs to {instance.name} or {other_name}",
                     alternative="Use CPU ranges instead of individual CPUs",
-                    pattern=f"cpus = <{','.join(map(str, sorted(instance_cpus)))}>"
+                    pattern=f"cpus = <{','.join(map(str, sorted(instance_cpus)))}>",
                 )
                 self.errors.append(error_msg)
                 # Add suggestions
@@ -413,7 +422,7 @@ class MultikernelValidator:
                 current_state=f"Spawn pool starts at {hex(memory.memory_pool_base)}",
                 suggestion=f"Use memory base >= {hex(memory.memory_pool_base)}",
                 alternative="Adjust memory pool configuration",
-                pattern=f"memory-base = <{hex(memory_start)}>"
+                pattern=f"memory-base = <{hex(memory_start)}>",
             )
             self.errors.append(error_msg)
 
@@ -423,11 +432,11 @@ class MultikernelValidator:
             error_msg = self._format_error_with_context(
                 error_type="Memory allocation error",
                 instance_name=instance.name,
-                problem=f"Memory region extends beyond memory pool",
+                problem="Memory region extends beyond memory pool",
                 current_state=f"Instance memory: {hex(memory_start)}-{hex(memory_end)}, Pool: {hex(memory.memory_pool_base)}-{hex(pool_end)}",
                 suggestion=f"Reduce memory size by {hex(exceeds_by)} or use different base address",
                 alternative="Increase memory pool size or adjust memory allocation",
-                pattern=f"memory-size = <{hex(instance_memory.memory_bytes)}>"
+                pattern=f"memory-size = <{hex(instance_memory.memory_bytes)}>",
             )
             self.errors.append(error_msg)
 
@@ -461,9 +470,9 @@ class MultikernelValidator:
         """Validate device allocation for an instance."""
 
         for device_ref in instance.resources.devices:
-            if '_vf' in device_ref:
-                device_name = device_ref.split('_vf')[0]
-                vf_id = int(device_ref.split('_vf')[1])
+            if "_vf" in device_ref:
+                device_name = device_ref.split("_vf")[0]
+                vf_id = int(device_ref.split("_vf")[1])
 
                 if device_name not in tree.hardware.devices:
                     available_devices = list(tree.hardware.devices.keys())
@@ -474,7 +483,7 @@ class MultikernelValidator:
                         current_state=f"Device '{device_name}' not found in hardware inventory",
                         suggestion=f"Use available devices: {available_devices}",
                         alternative="Add device '{device_name}' to hardware inventory",
-                        pattern=f"devices = <&{device_ref}>"
+                        pattern=f"devices = <&{device_ref}>",
                     )
                     self.errors.append(error_msg)
                     continue
@@ -489,26 +498,32 @@ class MultikernelValidator:
                         current_state=f"Device {device_name} has VFs: {available_vfs}",
                         suggestion=f"Use available VF: {available_vfs[0] if available_vfs else 'none'}",
                         alternative="Configure VF {vf_id} for device {device_name}",
-                        pattern=f"devices = <&{device_ref}>"
+                        pattern=f"devices = <&{device_ref}>",
                     )
                     self.errors.append(error_msg)
 
-            elif '_ns' in device_ref:
-                device_name = device_ref.split('_ns')[0]
-                ns_id = int(device_ref.split('_ns')[1])
+            elif "_ns" in device_ref:
+                device_name = device_ref.split("_ns")[0]
+                ns_id = int(device_ref.split("_ns")[1])
 
                 if device_name not in tree.hardware.devices:
-                    self.errors.append(f"Instance {instance.name}: Reference to non-existent device '{device_name}'")
+                    self.errors.append(
+                        f"Instance {instance.name}: Reference to non-existent device '{device_name}'"
+                    )
                     continue
 
                 device_info = tree.hardware.devices[device_name]
                 if device_info.available_ns and ns_id not in device_info.available_ns:
-                    self.errors.append(f"Instance {instance.name}: Namespace {ns_id} not available for device {device_name}")
+                    self.errors.append(
+                        f"Instance {instance.name}: Namespace {ns_id} not available for device {device_name}"
+                    )
 
             else:
                 # Direct device reference
                 if device_ref not in tree.hardware.devices:
-                    self.errors.append(f"Instance {instance.name}: Reference to non-existent device '{device_ref}'")
+                    self.errors.append(
+                        f"Instance {instance.name}: Reference to non-existent device '{device_ref}'"
+                    )
 
     def _validate_resource_allocations(self, tree: GlobalDeviceTree):
         """Validate overall resource allocation limits."""
@@ -535,31 +550,47 @@ class MultikernelValidator:
         """Validate device references and phandles."""
 
         for name, device_ref in tree.device_references.items():
-            if hasattr(device_ref, 'parent') and device_ref.parent:
-                parent_name = device_ref.parent.replace('&', '').replace(':', '')
+            if hasattr(device_ref, "parent") and device_ref.parent:
+                parent_name = device_ref.parent.replace("&", "").replace(":", "")
                 if parent_name not in tree.hardware.devices:
-                    self.errors.append(f"Device reference '{name}': Parent device '{parent_name}' not found in hardware inventory")
+                    self.errors.append(
+                        f"Device reference '{name}': Parent device '{parent_name}' not found in hardware inventory"
+                    )
 
-            if hasattr(device_ref, 'vf_id') and device_ref.vf_id is not None:
-                if hasattr(device_ref, 'parent') and device_ref.parent:
-                    parent_name = device_ref.parent.replace('&', '').replace(':', '')
+            if hasattr(device_ref, "vf_id") and device_ref.vf_id is not None:
+                if hasattr(device_ref, "parent") and device_ref.parent:
+                    parent_name = device_ref.parent.replace("&", "").replace(":", "")
                     if parent_name in tree.hardware.devices:
                         device_info = tree.hardware.devices[parent_name]
-                        if device_info.available_vfs and device_ref.vf_id not in device_info.available_vfs:
-                            self.errors.append(f"Device reference '{name}': VF {device_ref.vf_id} not available for device {parent_name}")
+                        if (
+                            device_info.available_vfs
+                            and device_ref.vf_id not in device_info.available_vfs
+                        ):
+                            self.errors.append(
+                                f"Device reference '{name}': VF {device_ref.vf_id} not available for device {parent_name}"
+                            )
 
-            if hasattr(device_ref, 'namespace_id') and device_ref.namespace_id is not None:
-                if hasattr(device_ref, 'parent') and device_ref.parent:
-                    parent_name = device_ref.parent.replace('&', '').replace(':', '')
+            if hasattr(device_ref, "namespace_id") and device_ref.namespace_id is not None:
+                if hasattr(device_ref, "parent") and device_ref.parent:
+                    parent_name = device_ref.parent.replace("&", "").replace(":", "")
                     if parent_name in tree.hardware.devices:
                         device_info = tree.hardware.devices[parent_name]
-                        if device_info.available_ns and device_ref.namespace_id not in device_info.available_ns:
-                            self.errors.append(f"Device reference '{name}': Namespace {device_ref.namespace_id} not available for device {parent_name}")
+                        if (
+                            device_info.available_ns
+                            and device_ref.namespace_id not in device_info.available_ns
+                        ):
+                            self.errors.append(
+                                f"Device reference '{name}': Namespace {device_ref.namespace_id} not available for device {parent_name}"
+                            )
 
     def _calculate_resource_usage(self, tree: GlobalDeviceTree) -> ResourceUsage:
         """Calculate resource usage summary."""
-        total_cpus_allocated = sum(len(instance.resources.cpus) for instance in tree.instances.values())
-        total_memory_allocated = sum(instance.resources.memory_bytes for instance in tree.instances.values())
+        total_cpus_allocated = sum(
+            len(instance.resources.cpus) for instance in tree.instances.values()
+        )
+        total_memory_allocated = sum(
+            instance.resources.memory_bytes for instance in tree.instances.values()
+        )
 
         return ResourceUsage(
             cpus_allocated=total_cpus_allocated,
@@ -567,10 +598,10 @@ class MultikernelValidator:
             memory_allocated=total_memory_allocated,
             memory_total=tree.hardware.memory.memory_pool_bytes,
             devices_allocated=0,  # Would calculate from device allocations
-            devices_total=len(tree.hardware.devices)
+            devices_total=len(tree.hardware.devices),
         )
 
-    def _validate_resource_limits(self, usage: ResourceUsage, tree: GlobalDeviceTree):
+    def _validate_resource_limits(self, usage: ResourceUsage, tree: GlobalDeviceTree):  # pylint: disable=unused-argument
         """Validate resource limits and generate warnings."""
         unallocated_cpus = usage.cpus_total - usage.cpus_allocated
         if unallocated_cpus > 0:
@@ -625,7 +656,6 @@ class MultikernelValidator:
     def _validate_cpu_affinity_constraints(self, instance, tree: GlobalDeviceTree):
         """Validate CPU affinity constraints for an instance."""
         resources = instance.resources
-        cpus = resources.cpus
 
         if resources.cpu_affinity == "compact":
             self._validate_compact_affinity(instance, tree)
@@ -767,7 +797,7 @@ class MultikernelValidator:
         # For interleave policy, we would typically check if memory is distributed
         # across multiple NUMA nodes, but this is complex to validate without
         # knowing the actual memory allocation implementation
-        pass
+        _ = instance, tree  # Placeholder for future validation
 
     def _validate_bind_memory_policy(self, instance, tree: GlobalDeviceTree):
         """Validate bind memory policy."""

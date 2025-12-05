@@ -33,13 +33,13 @@ def get_instance_id_from_name(name: str) -> Optional[int]:
     Returns:
         Instance ID if found, None otherwise
     """
-    id_path = Path(f'/sys/fs/multikernel/instances/{name}/id')
+    id_path = Path(f"/sys/fs/multikernel/instances/{name}/id")
 
     if not id_path.exists():
         return None
 
     try:
-        with open(id_path, 'r') as f:
+        with open(id_path, "r", encoding="utf-8") as f:
             instance_id = int(f.read().strip())
             return instance_id
     except (OSError, IOError, ValueError):
@@ -56,7 +56,7 @@ def get_instance_name_from_id(instance_id: int) -> Optional[str]:
     Returns:
         Instance name if found, None otherwise
     """
-    instances_dir = Path('/sys/fs/multikernel/instances')
+    instances_dir = Path("/sys/fs/multikernel/instances")
 
     if not instances_dir.exists():
         return None
@@ -83,14 +83,13 @@ def get_instance_status(name: str) -> Optional[str]:
     Returns:
         Status string if found, None otherwise
     """
-    status_path = Path(f'/sys/fs/multikernel/instances/{name}/status')
+    status_path = Path(f"/sys/fs/multikernel/instances/{name}/status")
 
     if not status_path.exists():
         return None
 
     try:
-        with open(status_path, 'r') as f:
+        with open(status_path, "r", encoding="utf-8") as f:
             return f.read().strip()
     except (OSError, IOError):
         return None
-

@@ -20,18 +20,19 @@ instance information from /sys/fs/multikernel/instances/*, and kernel image info
 from /proc/kimage in an organized format.
 """
 
-import sys
 import re
+import sys
 from pathlib import Path
-from typing import Optional, Dict, List
-import click
+from typing import Dict, List, Optional
 
-from ..utils import get_instance_id_from_name, get_instance_status
-from ..dtc.parser import DeviceTreeParser
-from ..baseline import BaselineManager
-from ..models import GlobalDeviceTree
-from ..exceptions import KernelInterfaceError, ParseError
+import click
 import libfdt
+
+from ..baseline import BaselineManager
+from ..dtc.parser import DeviceTreeParser
+from ..exceptions import KernelInterfaceError, ParseError
+from ..models import GlobalDeviceTree
+from ..utils import get_instance_id_from_name, get_instance_status
 
 
 def read_proc_kimage() -> str:
@@ -41,13 +42,13 @@ def read_proc_kimage() -> str:
     Returns:
         Contents of /proc/kimage as a string, or empty string if file doesn't exist
     """
-    kimage_path = Path('/proc/kimage')
+    kimage_path = Path("/proc/kimage")
 
     if not kimage_path.exists():
         return ""
 
     try:
-        with open(kimage_path, 'r') as f:
+        with open(kimage_path, "r", encoding="utf-8") as f:
             return f.read()
     except (OSError, IOError):
         return ""
@@ -60,7 +61,7 @@ def get_all_instance_names() -> List[str]:
     Returns:
         List of instance names (directory names)
     """
-    instances_dir = Path('/sys/fs/multikernel/instances')
+    instances_dir = Path("/sys/fs/multikernel/instances")
 
     if not instances_dir.exists():
         return []
@@ -68,7 +69,7 @@ def get_all_instance_names() -> List[str]:
     instance_names = []
     try:
         for inst_dir in instances_dir.iterdir():
-            if inst_dir.is_dir() and not inst_dir.name.startswith('.'):
+            if inst_dir.is_dir() and not inst_dir.name.startswith("."):
                 instance_names.append(inst_dir.name)
     except (OSError, IOError):
         pass
@@ -87,32 +88,32 @@ def read_instance_info(name: str) -> Dict[str, Optional[str]]:
         Dictionary with instance information (id, status, etc.)
     """
     info = {
-        'name': name,
-        'id': None,
-        'status': None,
+        "name": name,
+        "id": None,
+        "status": None,
     }
 
-    instance_dir = Path(f'/sys/fs/multikernel/instances/{name}')
+    instance_dir = Path(f"/sys/fs/multikernel/instances/{name}")
 
     if not instance_dir.exists():
         return info
 
     instance_id = get_instance_id_from_name(name)
     if instance_id is not None:
-        info['id'] = str(instance_id)
+        info["id"] = str(instance_id)
 
     status = get_instance_status(name)
     if status is not None:
-        info['status'] = status
+        info["status"] = status
 
     # Try to read any other files in the instance directory
     try:
         for file_path in instance_dir.iterdir():
-            if file_path.is_file() and file_path.name not in ['id', 'status']:
+            if file_path.is_file() and file_path.name not in ["id", "status"]:
                 try:
-                    if file_path.name == 'device_tree':
+                    if file_path.name == "device_tree":
                         try:
-                            with open(file_path, 'rb') as f:
+                            with open(file_path, "rb") as f:
                                 file_data = f.read()
 
                             if file_data and len(file_data) > 0:
@@ -121,12 +122,12 @@ def read_instance_info(name: str) -> Dict[str, Optional[str]]:
                                     fdt = libfdt.Fdt(file_data)
                                     parser.fdt = fdt
 
-                                    dts_lines = parser._fdt_to_dts_recursive(0, 0)
-                                    dts_content = '\n'.join(dts_lines)
+                                    dts_lines = parser._fdt_to_dts_recursive(0, 0)  # pylint: disable=protected-access
+                                    dts_content = "\n".join(dts_lines)
 
-                                    if not dts_content.startswith('/dts-v1/'):
-                                        dts_content = '/dts-v1/;\n\n' + dts_content
-                                    info['device_tree_source'] = dts_content
+                                    if not dts_content.startswith("/dts-v1/"):
+                                        dts_content = "/dts-v1/;\n\n" + dts_content
+                                    info["device_tree_source"] = dts_content
                                 except Exception:
                                     pass
                         except (OSError, IOError):
@@ -159,16 +160,16 @@ def parse_kimage_table(kimage_content: str) -> Dict[int, Dict[str, str]]:
     if not kimage_content:
         return kimage_data
 
-    lines = kimage_content.strip().split('\n')
+    lines = kimage_content.strip().split("\n")
 
     header_line = None
     separator_line = None
     data_start_idx = 0
 
     for i, line in enumerate(lines):
-        if 'MK_ID' in line and 'Type' in line:
+        if "MK_ID" in line and "Type" in line:
             header_line = line
-            if i + 1 < len(lines) and '-----' in lines[i + 1]:
+            if i + 1 < len(lines) and "-----" in lines[i + 1]:
                 separator_line = lines[i + 1]
                 data_start_idx = i + 2
             else:
@@ -182,7 +183,7 @@ def parse_kimage_table(kimage_content: str) -> Dict[int, Dict[str, str]]:
     if separator_line:
         # Each dash block represents a column
         # Find all sequences of dashes - their start positions are column boundaries
-        dash_blocks = list(re.finditer(r'-+', separator_line))
+        dash_blocks = list(re.finditer(r"-+", separator_line))
         if dash_blocks:
             for match in dash_blocks:
                 start_pos = match.start()
@@ -201,10 +202,10 @@ def parse_kimage_table(kimage_content: str) -> Dict[int, Dict[str, str]]:
         boundaries = [0]
         i = 0
         while i < len(header_line):
-            if header_line[i] == ' ':
+            if header_line[i] == " ":
                 space_count = 0
                 j = i
-                while j < len(header_line) and header_line[j] == ' ':
+                while j < len(header_line) and header_line[j] == " ":
                     space_count += 1
                     j += 1
                 if space_count >= 2:  # Multiple spaces indicate column separator
@@ -221,7 +222,7 @@ def parse_kimage_table(kimage_content: str) -> Dict[int, Dict[str, str]]:
     for i in range(len(boundaries) - 1):
         start = boundaries[i]
         end = boundaries[i + 1] if i + 1 < len(boundaries) else len(header_line)
-        col_name = header_line[start:end].strip().lower().replace(' ', '_')
+        col_name = header_line[start:end].strip().lower().replace(" ", "_")
         if col_name:
             columns.append((col_name, start, end))
 
@@ -250,7 +251,7 @@ def parse_kimage_table(kimage_content: str) -> Dict[int, Dict[str, str]]:
             if i == len(columns) - 1:
                 col_value = line[start:].strip()
             else:
-                col_value = line[start:min(end, len(line))].strip()
+                col_value = line[start : min(end, len(line))].strip()
             row_data[col_name] = col_value
 
         kimage_data[mk_id] = row_data
@@ -267,50 +268,58 @@ def display_baseline_info(tree: GlobalDeviceTree, verbose: bool = False):
         verbose: Whether to show verbose information
     """
     click.echo(f"\n{'=' * 80}")
-    click.echo(f"Baseline Hardware Resources")
+    click.echo("Baseline Hardware Resources")
     click.echo(f"{'=' * 80}")
 
     hardware = tree.hardware
 
     # CPU Information
-    click.echo(f"\n  CPUs:")
+    click.echo("\n  CPUs:")
     click.echo(f"    Total:           {hardware.cpus.total}")
-    click.echo(f"    Host Reserved:   {len(hardware.cpus.host_reserved)} cpus: {hardware.cpus.host_reserved}")
-    click.echo(f"    Available:       {len(hardware.cpus.available)} cpus: {hardware.cpus.available}")
+    click.echo(
+        f"    Host Reserved:   {len(hardware.cpus.host_reserved)} cpus: {hardware.cpus.host_reserved}"
+    )
+    click.echo(
+        f"    Available:       {len(hardware.cpus.available)} cpus: {hardware.cpus.available}"
+    )
 
     if verbose and hardware.cpus.topology:
-        click.echo(f"\n    Topology:")
+        click.echo("\n    Topology:")
         for cpu_id, topo in sorted(hardware.cpus.topology.items()):
-            click.echo(f"      CPU {cpu_id}: NUMA {topo.numa_node}, Socket {topo.socket_id}, Core {topo.core_id}, Thread {topo.thread_id}")
+            click.echo(
+                f"      CPU {cpu_id}: NUMA {topo.numa_node}, Socket {topo.socket_id}, Core {topo.core_id}, Thread {topo.thread_id}"
+            )
 
     # Memory Information
-    click.echo(f"\n  Memory:")
-    total_gb = hardware.memory.total_bytes / (1024 ** 3)
-    reserved_gb = hardware.memory.host_reserved_bytes / (1024 ** 3)
-    pool_gb = hardware.memory.memory_pool_bytes / (1024 ** 3)
+    click.echo("\n  Memory:")
+    total_gb = hardware.memory.total_bytes / (1024**3)
+    reserved_gb = hardware.memory.host_reserved_bytes / (1024**3)
+    pool_gb = hardware.memory.memory_pool_bytes / (1024**3)
     click.echo(f"    Total:           {total_gb:.2f} GB ({hardware.memory.total_bytes} bytes)")
-    click.echo(f"    Host Reserved:   {reserved_gb:.2f} GB ({hardware.memory.host_reserved_bytes} bytes)")
+    click.echo(
+        f"    Host Reserved:   {reserved_gb:.2f} GB ({hardware.memory.host_reserved_bytes} bytes)"
+    )
     click.echo(f"    Pool Base:       0x{hardware.memory.memory_pool_base:x}")
     click.echo(f"    Pool Size:       {pool_gb:.2f} GB ({hardware.memory.memory_pool_bytes} bytes)")
     click.echo(f"    Pool End:        0x{hardware.memory.memory_pool_end:x}")
 
     # NUMA Topology
     if hardware.topology and hardware.topology.numa_nodes:
-        click.echo(f"\n  NUMA Topology:")
+        click.echo("\n  NUMA Topology:")
         for node_id, numa_node in sorted(hardware.topology.numa_nodes.items()):
-            mem_gb = numa_node.memory_size / (1024 ** 3)
+            mem_gb = numa_node.memory_size / (1024**3)
             click.echo(f"    Node {node_id}:")
             click.echo(f"      Memory:        {mem_gb:.2f} GB (base: 0x{numa_node.memory_base:x})")
             click.echo(f"      CPUs:          {numa_node.cpus}")
             click.echo(f"      Type:          {numa_node.memory_type}")
             if verbose and numa_node.distance_matrix:
-                click.echo(f"      Distance:")
+                click.echo("      Distance:")
                 for target_node, distance in sorted(numa_node.distance_matrix.items()):
                     click.echo(f"        -> Node {target_node}: {distance}")
 
     # Devices
     if hardware.devices:
-        click.echo(f"\n  Devices:")
+        click.echo("\n  Devices:")
         for device_name, device_info in sorted(hardware.devices.items()):
             click.echo(f"    {device_name}:")
             click.echo(f"      Compatible:    {device_info.compatible}")
@@ -328,9 +337,11 @@ def display_baseline_info(tree: GlobalDeviceTree, verbose: bool = False):
                     click.echo(f"      Available NS:  {device_info.available_ns}")
 
 
-def display_instance_info(instance_info: Dict[str, Optional[str]], 
-                         kimage_data: Optional[Dict[str, str]] = None,
-                         verbose: bool = False):
+def display_instance_info(
+    instance_info: Dict[str, Optional[str]],
+    kimage_data: Optional[Dict[str, str]] = None,
+    verbose: bool = False,
+):
     """
     Display formatted instance information.
 
@@ -339,9 +350,9 @@ def display_instance_info(instance_info: Dict[str, Optional[str]],
         kimage_data: Optional kimage data for this instance
         verbose: Whether to show verbose information
     """
-    name = instance_info.get('name', 'unknown')
-    instance_id = instance_info.get('id')
-    status = instance_info.get('status')
+    name = instance_info.get("name", "unknown")
+    instance_id = instance_info.get("id")
+    status = instance_info.get("status")
 
     # Header
     click.echo(f"\n{'=' * 80}")
@@ -356,26 +367,26 @@ def display_instance_info(instance_info: Dict[str, Optional[str]],
 
     # Kernel image information from /proc/kimage
     if kimage_data:
-        click.echo(f"\n  Kernel Image:")
+        click.echo("\n  Kernel Image:")
         for key, value in kimage_data.items():
             # Format key nicely
-            key_display = key.replace('_', ' ').title()
+            key_display = key.replace("_", " ").title()
             click.echo(f"    {key_display:15} {value}")
     elif instance_id and verbose:
-        click.echo(f"\n  Kernel Image:     (not loaded)")
+        click.echo("\n  Kernel Image:     (not loaded)")
 
     # Device tree source
-    if 'device_tree_source' in instance_info and instance_info['device_tree_source']:
-        dts = instance_info['device_tree_source']
+    if "device_tree_source" in instance_info and instance_info["device_tree_source"]:
+        dts = instance_info["device_tree_source"]
         try:
             if isinstance(dts, bytes):
-                dts = dts.decode('utf-8', errors='replace')
+                dts = dts.decode("utf-8", errors="replace")
             elif not isinstance(dts, str):
                 dts = str(dts)
 
-            if dts.strip().startswith('/dts-v1/') or dts.strip().startswith('/'):
-                click.echo(f"\n  Device Tree:")
-                dts_lines = dts.split('\n')
+            if dts.strip().startswith("/dts-v1/") or dts.strip().startswith("/"):
+                click.echo("\n  Device Tree:")
+                dts_lines = dts.split("\n")
                 for line in dts_lines:
                     if line.strip():
                         click.echo(f"    {line}")
@@ -384,14 +395,19 @@ def display_instance_info(instance_info: Dict[str, Optional[str]],
         except (UnicodeDecodeError, AttributeError):
             pass
 
-    other_fields = {k: v for k, v in instance_info.items() 
-                   if k not in ['name', 'id', 'status', 'device_tree_source'] and v
-                   and isinstance(v, str) and len(v) < 1000  # Skip very long or binary data
-                   and not any(ord(c) < 32 and c not in '\t\n\r' for c in v[:100])}  # Skip binary
+    other_fields = {
+        k: v
+        for k, v in instance_info.items()
+        if k not in ["name", "id", "status", "device_tree_source"]
+        and v
+        and isinstance(v, str)
+        and len(v) < 1000  # Skip very long or binary data
+        and not any(ord(c) < 32 and c not in "\t\n\r" for c in v[:100])
+    }  # Skip binary
     if other_fields:
-        click.echo(f"\n  Additional Info:")
+        click.echo("\n  Additional Info:")
         for key, value in other_fields.items():
-            key_display = key.replace('_', ' ').title()
+            key_display = key.replace("_", " ").title()
             # Truncate long values
             if len(str(value)) > 60:
                 value_str = str(value)[:57] + "..."
@@ -400,9 +416,9 @@ def display_instance_info(instance_info: Dict[str, Optional[str]],
             click.echo(f"    {key_display:15} {value_str}")
 
 
-@click.command(name='show')
-@click.argument('name', required=False)
-@click.option('--verbose', '-v', is_flag=True, help='Verbose output')
+@click.command(name="show")
+@click.argument("name", required=False)
+@click.option("--verbose", "-v", is_flag=True, help="Verbose output")
 def show(name: Optional[str], verbose: bool):
     """
     Show kernel instance information and baseline hardware resources.
@@ -430,14 +446,8 @@ def show(name: Optional[str], verbose: bool):
             instance_id = get_instance_id_from_name(name)
 
             if instance_id is None:
-                click.echo(
-                    f"Error: Instance '{name}' not found",
-                    err=True
-                )
-                click.echo(
-                    f"Check available instances in /sys/fs/multikernel/instances/",
-                    err=True
-                )
+                click.echo(f"Error: Instance '{name}' not found", err=True)
+                click.echo("Check available instances in /sys/fs/multikernel/instances/", err=True)
                 sys.exit(1)
 
             # Get instance information
@@ -482,7 +492,7 @@ def show(name: Optional[str], verbose: bool):
             # Display each instance
             for inst_name in instance_names:
                 instance_info = read_instance_info(inst_name)
-                instance_id_str = instance_info.get('id')
+                instance_id_str = instance_info.get("id")
 
                 # Get kimage data for this instance
                 kimage_data = None
@@ -504,10 +514,10 @@ def show(name: Optional[str], verbose: bool):
         click.echo(f"Unexpected error: {e}", err=True)
         if verbose:
             import traceback
+
             traceback.print_exc()
         sys.exit(1)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     show()
-

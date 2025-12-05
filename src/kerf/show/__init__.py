@@ -18,5 +18,4 @@ Show kernel instance information subcommand implementation.
 
 from .main import show
 
-__all__ = ['show']
-
+__all__ = ["show"]

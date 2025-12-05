@@ -16,25 +16,27 @@
 Kernel loading subcommand implementation using kexec_file_load syscall.
 """
 
-import click
-import sys
-import os
 import ctypes
+import os
 import platform
+import sys
 from pathlib import Path
 from typing import Optional
+
+import click
+
 from ..utils import get_instance_id_from_name, get_instance_name_from_id
 
 
 # KEXEC flags definitions
 KEXEC_MULTIKERNEL = 0x00000010
-KEXEC_MK_ID_MASK = 0x0000ffe0
+KEXEC_MK_ID_MASK = 0x0000FFE0
 KEXEC_MK_ID_SHIFT = 5
 
 
-def KEXEC_MK_ID(id: int) -> int:
+def KEXEC_MK_ID(id: int) -> int:  # pylint: disable=invalid-name
     """Generate KEXEC_MK_ID flag value from kernel ID."""
-    return ((id << KEXEC_MK_ID_SHIFT) & KEXEC_MK_ID_MASK)
+    return (id << KEXEC_MK_ID_SHIFT) & KEXEC_MK_ID_MASK
 
 
 # Syscall numbers (architecture-dependent)
@@ -48,29 +50,23 @@ SYS_KEXEC_FILE_LOAD_X86 = 320
 def get_kexec_file_load_syscall():
     """Get the kexec_file_load syscall number for current architecture."""
     arch = platform.machine().lower()
-    if arch in ('x86_64', 'amd64'):
+    if arch in ("x86_64", "amd64"):
         return SYS_KEXEC_FILE_LOAD_X86_64
-    elif arch in ('aarch64', 'arm64'):
+    if arch in ("aarch64", "arm64"):
         return SYS_KEXEC_FILE_LOAD_ARM64
-    elif arch.startswith('arm'):
+    if arch.startswith("arm"):
         return SYS_KEXEC_FILE_LOAD_ARM
-    elif arch in ('i386', 'i686', 'x86'):
+    if arch in ("i386", "i686", "x86"):
         return SYS_KEXEC_FILE_LOAD_X86
-    else:
-        # Default to x86_64, but warn
-        click.echo(
-            f"Warning: Unknown architecture '{arch}', assuming x86_64 syscall number",
-            err=True
-        )
-        return SYS_KEXEC_FILE_LOAD_X86_64
+    # Default to x86_64, but warn
+    click.echo(
+        f"Warning: Unknown architecture '{arch}', assuming x86_64 syscall number", err=True
+    )
+    return SYS_KEXEC_FILE_LOAD_X86_64
 
 
 def kexec_file_load(
-    kernel_fd: int,
-    initrd_fd: int,
-    cmdline: str,
-    flags: int,
-    debug: bool = False
+    kernel_fd: int, initrd_fd: int, cmdline: str, flags: int, debug: bool = False
 ) -> int:
     """
     Call kexec_file_load syscall.
@@ -98,7 +94,7 @@ def kexec_file_load(
     # Note: kexec-tools uses strlen(cmdline) + 1 for cmdline_len
     cmdline_buf = None
     if cmdline:
-        cmdline_bytes = cmdline.encode('utf-8')
+        cmdline_bytes = cmdline.encode("utf-8")
         cmdline_buf = ctypes.create_string_buffer(cmdline_bytes)
         cmdline_len = len(cmdline_bytes) + 1
         cmdline_ptr = cmdline_buf
@@ -112,33 +108,35 @@ def kexec_file_load(
     #                                       const char *cmdline,
     #                                       unsigned long flags)
     syscall_fn.argtypes = [
-        ctypes.c_long,      # syscall number
-        ctypes.c_int,       # kernel_fd
-        ctypes.c_int,       # initrd_fd
-        ctypes.c_ulong,     # cmdline_len
-        ctypes.c_char_p,    # cmdline (c_char_p handles None as NULL)
-        ctypes.c_ulong      # flags
+        ctypes.c_long,  # syscall number
+        ctypes.c_int,  # kernel_fd
+        ctypes.c_int,  # initrd_fd
+        ctypes.c_ulong,  # cmdline_len
+        ctypes.c_char_p,  # cmdline (c_char_p handles None as NULL)
+        ctypes.c_ulong,  # flags
     ]
     syscall_fn.restype = ctypes.c_long
 
     if debug:
-        click.echo(f"DEBUG: syscall_num={syscall_num}, kernel_fd={kernel_fd}, initrd_fd={initrd_fd}, cmdline_len={cmdline_len}, flags=0x{flags:x}", err=True)
-        click.echo(f"DEBUG: KEXEC_MULTIKERNEL=0x{KEXEC_MULTIKERNEL:x}, KEXEC_MK_ID_MASK=0x{KEXEC_MK_ID_MASK:x}, KEXEC_MK_ID_SHIFT={KEXEC_MK_ID_SHIFT}", err=True)
+        click.echo(
+            f"DEBUG: syscall_num={syscall_num}, kernel_fd={kernel_fd}, initrd_fd={initrd_fd}, cmdline_len={cmdline_len}, flags=0x{flags:x}",
+            err=True,
+        )
+        click.echo(
+            f"DEBUG: KEXEC_MULTIKERNEL=0x{KEXEC_MULTIKERNEL:x}, KEXEC_MK_ID_MASK=0x{KEXEC_MK_ID_MASK:x}, KEXEC_MK_ID_SHIFT={KEXEC_MK_ID_SHIFT}",
+            err=True,
+        )
         if cmdline:
             click.echo(f"DEBUG: cmdline='{cmdline}', cmdline_ptr={cmdline_ptr}", err=True)
             # Verify the buffer content
-            click.echo(f"DEBUG: cmdline_buf.value={cmdline_buf.value!r}, len={len(cmdline_buf.value)}", err=True)
+            click.echo(
+                f"DEBUG: cmdline_buf.value={cmdline_buf.value!r}, len={len(cmdline_buf.value)}",
+                err=True,
+            )
         else:
             click.echo("DEBUG: cmdline_ptr=NULL", err=True)
 
-    result = syscall_fn(
-        syscall_num,
-        kernel_fd,
-        initrd_fd,
-        cmdline_len,
-        cmdline_ptr,
-        flags
-    )
+    result = syscall_fn(syscall_num, kernel_fd, initrd_fd, cmdline_len, cmdline_ptr, flags)
 
     if debug:
         click.echo(f"DEBUG: syscall returned: {result}", err=True)
@@ -157,14 +155,21 @@ def kexec_file_load(
 
 @click.command()
 @click.pass_context
-@click.argument('name', required=False)
-@click.option('--kernel', '-k', required=True, help='Path to kernel image file')
-@click.option('--initrd', '-i', help='Path to initrd image file (optional)')
-@click.option('--cmdline', '-c', help='Boot command line parameters')
-@click.option('--id', type=int, help='Multikernel instance ID (1-511)')
-@click.option('--verbose', '-v', is_flag=True, help='Verbose output')
-def load(ctx: click.Context, name: Optional[str], kernel: str, initrd: Optional[str], 
-         cmdline: Optional[str], id: Optional[int], verbose: bool):
+@click.argument("name", required=False)
+@click.option("--kernel", "-k", required=True, help="Path to kernel image file")
+@click.option("--initrd", "-i", help="Path to initrd image file (optional)")
+@click.option("--cmdline", "-c", help="Boot command line parameters")
+@click.option("--id", type=int, help="Multikernel instance ID (1-511)")
+@click.option("--verbose", "-v", is_flag=True, help="Verbose output")
+def load(
+    ctx: click.Context,
+    name: Optional[str],
+    kernel: str,
+    initrd: Optional[str],
+    cmdline: Optional[str],
+    id: Optional[int],
+    verbose: bool,
+):
     """
     Load kernel image and initrd using kexec_file_load syscall.
 
@@ -180,13 +185,10 @@ def load(ctx: click.Context, name: Optional[str], kernel: str, initrd: Optional[
     """
     try:
         if not name and id is None:
-            click.echo(
-                "Error: Either instance name or --id must be provided",
-                err=True
-            )
+            click.echo("Error: Either instance name or --id must be provided", err=True)
             click.echo(
                 "Usage: kerf load <name> --kernel=<path>  or  kerf load --id=<id> --kernel=<path>",
-                err=True
+                err=True,
             )
             sys.exit(2)
 
@@ -198,14 +200,8 @@ def load(ctx: click.Context, name: Optional[str], kernel: str, initrd: Optional[
             instance_id = get_instance_id_from_name(name)
 
             if instance_id is None:
-                click.echo(
-                    f"Error: Instance '{name}' not found",
-                    err=True
-                )
-                click.echo(
-                    f"Check available instances in /sys/fs/multikernel/instances/",
-                    err=True
-                )
+                click.echo(f"Error: Instance '{name}' not found", err=True)
+                click.echo("Check available instances in /sys/fs/multikernel/instances/", err=True)
                 sys.exit(1)
 
             if verbose:
@@ -214,22 +210,13 @@ def load(ctx: click.Context, name: Optional[str], kernel: str, initrd: Optional[
             instance_id = id
 
             if instance_id < 1 or instance_id > 511:
-                click.echo(
-                    f"Error: --id must be between 1 and 511 (got {instance_id})",
-                    err=True
-                )
+                click.echo(f"Error: --id must be between 1 and 511 (got {instance_id})", err=True)
                 sys.exit(2)
 
             instance_name = get_instance_name_from_id(instance_id)
             if not instance_name:
-                click.echo(
-                    f"Error: Instance with ID {instance_id} not found",
-                    err=True
-                )
-                click.echo(
-                    f"Check available instances in /sys/fs/multikernel/instances/",
-                    err=True
-                )
+                click.echo(f"Error: Instance with ID {instance_id} not found", err=True)
+                click.echo("Check available instances in /sys/fs/multikernel/instances/", err=True)
                 sys.exit(1)
 
             if verbose:
@@ -269,10 +256,12 @@ def load(ctx: click.Context, name: Optional[str], kernel: str, initrd: Optional[
 
         if verbose:
             click.echo(f"Multikernel mode enabled with ID: {instance_id}")
-            click.echo(f"Flags: KEXEC_MULTIKERNEL=0x{KEXEC_MULTIKERNEL:x}, KEXEC_MK_ID({instance_id})=0x{mk_id_flags:x}, combined=0x{flags:x}")
+            click.echo(
+                f"Flags: KEXEC_MULTIKERNEL=0x{KEXEC_MULTIKERNEL:x}, KEXEC_MK_ID({instance_id})=0x{mk_id_flags:x}, combined=0x{flags:x}"
+            )
 
         # Prepare command line (default to empty string if not provided)
-        cmdline_str = cmdline if cmdline else ''
+        cmdline_str = cmdline if cmdline else ""
 
         if verbose:
             click.echo(f"Command line: {cmdline_str if cmdline_str else '(empty)'}")
@@ -300,7 +289,7 @@ def load(ctx: click.Context, name: Optional[str], kernel: str, initrd: Optional[
             if verbose:
                 click.echo("Calling kexec_file_load syscall...")
 
-            debug = ctx.obj.get('debug', False) if ctx and ctx.obj else False
+            debug = ctx.obj.get("debug", False) if ctx and ctx.obj else False
             result = kexec_file_load(kernel_fd, initrd_fd, cmdline_str, flags, debug=debug)
 
             if verbose:
@@ -311,20 +300,13 @@ def load(ctx: click.Context, name: Optional[str], kernel: str, initrd: Optional[
         except OSError as e:
             click.echo(f"Error: kexec_file_load failed: {e}", err=True)
             if e.errno == 1:  # EPERM
-                click.echo(
-                    "Note: This operation requires root privileges",
-                    err=True
-                )
+                click.echo("Note: This operation requires root privileges", err=True)
             elif e.errno == 22:  # EINVAL
                 click.echo(
-                    "Note: Invalid arguments. Check kernel image format and flags.",
-                    err=True
+                    "Note: Invalid arguments. Check kernel image format and flags.", err=True
                 )
             elif e.errno == 95:  # EOPNOTSUPP
-                click.echo(
-                    "Note: kexec_file_load not supported on this system.",
-                    err=True
-                )
+                click.echo("Note: kexec_file_load not supported on this system.", err=True)
             sys.exit(1)
 
         finally:
@@ -337,6 +319,6 @@ def load(ctx: click.Context, name: Optional[str], kernel: str, initrd: Optional[
         click.echo(f"Unexpected error: {e}", err=True)
         if verbose:
             import traceback
+
             traceback.print_exc()
         sys.exit(1)
-

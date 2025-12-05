@@ -16,14 +16,24 @@
 Device tree parsing and model building.
 """
 
+import re
+from typing import Dict, List, Optional
+
 import libfdt
-from typing import Dict, List, Optional, Tuple, Any
-from ..models import (
-    GlobalDeviceTree, HardwareInventory, CPUAllocation, MemoryAllocation,
-    DeviceInfo, Instance, InstanceResources, TopologySection, NUMANode,
-    OverlayInstanceData
-)
+
 from ..exceptions import ParseError
+from ..models import (
+    CPUAllocation,
+    DeviceInfo,
+    GlobalDeviceTree,
+    HardwareInventory,
+    Instance,
+    InstanceResources,
+    MemoryAllocation,
+    NUMANode,
+    OverlayInstanceData,
+    TopologySection,
+)
 
 
 class DeviceTreeParser:
@@ -39,7 +49,6 @@ class DeviceTreeParser:
         # This is a production-ready implementation for the specific DTS format we use
 
         # Parse the DTS content using regex and string parsing
-        import re
 
         # Extract hardware inventory
         hardware = self._parse_hardware_from_dts(dts_content)
@@ -64,7 +73,7 @@ class DeviceTreeParser:
 
             return self.parse_dtb_from_bytes(dtb_data)
         except Exception as e:
-            raise ParseError(f"Failed to parse DTB file {dtb_path}: {e}")
+            raise ParseError(f"Failed to parse DTB file {dtb_path}: {e}") from e
 
     def parse_dtb_from_bytes(self, dtb_data: bytes) -> GlobalDeviceTree:
         """Parse DTB from bytes into GlobalDeviceTree model."""
@@ -75,16 +84,16 @@ class DeviceTreeParser:
             error_msg = f"FDT error: {e}"
             if hasattr(e, 'err'):
                 error_msg += f" (error code: {e.err})"
-            raise ParseError(f"Failed to parse DTB from bytes: {error_msg}")
+            raise ParseError(f"Failed to parse DTB from bytes: {error_msg}") from e
         except Exception as e:
-            raise ParseError(f"Failed to parse DTB from bytes: {e}")
+            raise ParseError(f"Failed to parse DTB from bytes: {e}") from e
 
     def _build_global_tree(self) -> GlobalDeviceTree:
         """Build GlobalDeviceTree from parsed FDT."""
         try:
             root = self.fdt.path_offset('/')
         except libfdt.FdtException as e:
-            raise ParseError(f"Failed to access root node: {e}")
+            raise ParseError(f"Failed to access root node: {e}") from e
 
         is_overlay = False
         try:
@@ -117,12 +126,12 @@ class DeviceTreeParser:
             except ParseError:
                 raise
             except libfdt.FdtException as e:
-                raise ParseError(f"Failed to parse hardware inventory: FDT error - {e}")
+                raise ParseError(f"Failed to parse hardware inventory: FDT error - {e}") from e
             except Exception as e:
-                raise ParseError(f"Failed to parse hardware inventory: {e}")
+                raise ParseError(f"Failed to parse hardware inventory: {e}") from e
         else:
             # Overlays have empty hardware (resources are in baseline only)
-            from ..models import HardwareInventory, CPUAllocation, MemoryAllocation
+            from ..models import HardwareInventory, CPUAllocation, MemoryAllocation  # pylint: disable=reimported,redefined-outer-name
             hardware = HardwareInventory(
                 cpus=CPUAllocation(total=0, host_reserved=[], available=[]),
                 memory=MemoryAllocation(
@@ -144,14 +153,14 @@ class DeviceTreeParser:
                 instances = self._parse_instances()
                 self._last_overlay_data = None
         except Exception as e:
-            raise ParseError(f"Failed to parse instances: {e}")
+            raise ParseError(f"Failed to parse instances: {e}") from e
 
         device_refs = {}
         if not is_overlay:
             try:
                 device_refs = self._parse_device_references()
             except Exception as e:
-                raise ParseError(f"Failed to parse device references: {e}")
+                raise ParseError(f"Failed to parse device references: {e}") from e
 
         return GlobalDeviceTree(
             hardware=hardware,
@@ -164,23 +173,19 @@ class DeviceTreeParser:
         try:
             resources_node = self.fdt.path_offset('/resources')
         except libfdt.FdtException as e:
-            raise ParseError(f"Missing /resources node: {e}")
+            raise ParseError(f"Missing /resources node: {e}") from e
 
         # Parse CPU information
         try:
             cpus = self._parse_cpu_allocation(resources_node)
-        except ParseError:
-            raise
         except libfdt.FdtException as e:
-            raise ParseError(f"Error parsing CPU allocation: {e}")
+            raise ParseError(f"Error parsing CPU allocation: {e}") from e
 
         # Parse memory information
         try:
             memory = self._parse_memory_allocation(resources_node)
-        except ParseError:
-            raise
         except libfdt.FdtException as e:
-            raise ParseError(f"Error parsing memory allocation: {e}")
+            raise ParseError(f"Error parsing memory allocation: {e}") from e
 
         # Parse topology section
         topology = self._parse_topology(resources_node)
@@ -223,16 +228,16 @@ class DeviceTreeParser:
             if len(memory_pool_base_prop) != 8:
                 raise ParseError(f"Invalid 'memory-base' property size: {len(memory_pool_base_prop)} bytes (expected 8 bytes)")
             memory_pool_base = memory_pool_base_prop.as_uint64()
-        except libfdt.FdtException:
-            raise ParseError("Missing 'memory-base' property in /resources")
+        except libfdt.FdtException as e:
+            raise ParseError(f"Missing 'memory-base' property in /resources: {e}") from e
 
         try:
             memory_pool_bytes_prop = self.fdt.getprop(resources_node, 'memory-bytes')
             if len(memory_pool_bytes_prop) != 8:
                 raise ParseError(f"Invalid 'memory-bytes' property size: {len(memory_pool_bytes_prop)} bytes (expected 8 bytes)")
             memory_pool_bytes = memory_pool_bytes_prop.as_uint64()
-        except libfdt.FdtException:
-            raise ParseError("Missing 'memory-bytes' property in /resources")
+        except libfdt.FdtException as e:
+            raise ParseError(f"Missing 'memory-bytes' property in /resources: {e}") from e
 
         total_bytes = memory_pool_base + memory_pool_bytes
         host_reserved_bytes = 0
@@ -448,8 +453,8 @@ class DeviceTreeParser:
         try:
             instance_name_prop = self.fdt.getprop(node_offset, 'instance-name')
             instance_name = instance_name_prop.as_str()
-        except libfdt.FdtException:
-            raise ParseError("Missing 'instance-name' property in instance-create")
+        except libfdt.FdtException as e:
+            raise ParseError(f"Missing 'instance-name' property in instance-create: {e}") from e
 
         instance_id = None
         try:
@@ -471,25 +476,25 @@ class DeviceTreeParser:
         """Parse instance resources from overlay instance-create node."""
         try:
             resources_node = self.fdt.subnode_offset(node_offset, 'resources')
-        except libfdt.FdtException:
-            raise ParseError("Missing resources node in instance-create")
+        except libfdt.FdtException as e:
+            raise ParseError(f"Missing resources node in instance-create: {e}") from e
 
         try:
             cpus_prop = self.fdt.getprop(resources_node, 'cpus')
             cpus = cpus_prop.as_uint32_list()
-        except libfdt.FdtException:
-            raise ParseError("Missing 'cpus' property in resources")
+        except libfdt.FdtException as e:
+            raise ParseError(f"Missing 'cpus' property in resources: {e}") from e
 
         try:
             memory_bytes = self.fdt.getprop(resources_node, 'memory-bytes').as_uint64()
-        except libfdt.FdtException:
-            raise ParseError("Missing 'memory-bytes' property in resources")
+        except libfdt.FdtException as e:
+            raise ParseError(f"Missing 'memory-bytes' property in resources: {e}") from e
 
         memory_base = 0
         try:
             memory_base = self.fdt.getprop(resources_node, 'memory-base').as_uint64()
-        except libfdt.FdtException:
-            pass
+        except libfdt.FdtException as e:
+            raise ParseError(f"Missing 'memory-base' property in resources: {e}") from e
 
         devices = []
         try:
@@ -644,7 +649,6 @@ class DeviceTreeParser:
 
     def _parse_hardware_from_dts(self, dts_content: str) -> HardwareInventory:
         """Parse hardware inventory from DTS content."""
-        import re
 
         # Parse CPU information
         cpus = self._parse_cpus_from_dts(dts_content)
@@ -667,7 +671,6 @@ class DeviceTreeParser:
 
     def _extract_resources_section(self, dts_content: str) -> Optional[str]:
         """Extract the resources section content with proper brace matching."""
-        import re
 
         resources_start = re.search(r'resources\s*\{', dts_content)
         if not resources_start:
@@ -688,12 +691,10 @@ class DeviceTreeParser:
 
         if brace_count == 0:
             return dts_content[start_pos+1:end_pos]
-        else:
-            return None
+        return None
 
     def _parse_cpus_from_dts(self, dts_content: str) -> CPUAllocation:
         """Parse CPU allocation from DTS content."""
-        import re
 
         resources_text = self._extract_resources_section(dts_content)
         if not resources_text:
@@ -722,7 +723,6 @@ class DeviceTreeParser:
 
     def _parse_memory_from_dts(self, dts_content: str) -> MemoryAllocation:
         """Parse memory allocation from DTS content."""
-        import re
 
         resources_text = self._extract_resources_section(dts_content)
         if not resources_text:
@@ -751,7 +751,6 @@ class DeviceTreeParser:
 
     def _parse_devices_from_dts(self, dts_content: str) -> Dict[str, DeviceInfo]:
         """Parse device information from DTS content."""
-        import re
 
         devices = {}
 
@@ -812,7 +811,6 @@ class DeviceTreeParser:
 
     def _parse_device_info_from_dts(self, name: str, content: str) -> DeviceInfo:
         """Parse individual device information from DTS content."""
-        import re
 
         # Parse compatible string
         compatible_match = re.search(r'compatible\s*=\s*"([^"]+)"', content)
@@ -893,7 +891,6 @@ class DeviceTreeParser:
 
     def _parse_instances_from_dts(self, dts_content: str) -> Dict[str, Instance]:
         """Parse instance definitions from DTS content."""
-        import re
 
         instances = {}
 
@@ -921,8 +918,6 @@ class DeviceTreeParser:
             instances_text = dts_content[start_pos+1:end_pos]
         else:
             return instances
-
-        import re
 
         # Find all potential instance definitions
         # Look for lines that start with instance names (not indented)
@@ -965,7 +960,7 @@ class DeviceTreeParser:
                                 try:
                                     instance = self._parse_instance_from_dts(instance_name, instance_content)
                                     instances[instance_name] = instance
-                                except Exception as e:
+                                except Exception:
                                     # Skip invalid instances
                                     pass
                                 break
@@ -978,7 +973,6 @@ class DeviceTreeParser:
 
     def _parse_instance_from_dts(self, name: str, content: str) -> Instance:
         """Parse individual instance definition from DTS content."""
-        import re
 
         # Parse instance ID
         id_match = re.search(r'id\s*=\s*<(\d+)>', content)
@@ -999,7 +993,6 @@ class DeviceTreeParser:
 
     def _parse_instance_resources_from_dts(self, content: str) -> InstanceResources:
         """Parse instance resources from DTS content."""
-        import re
 
         # Find resources section
         resources_section = re.search(r'resources\s*\{([^}]+)\}', content, re.DOTALL)
@@ -1063,7 +1056,6 @@ class DeviceTreeParser:
 
     def _parse_instance_options_from_dts(self, content: str) -> Optional[Dict[str, bool]]:
         """Parse instance options from DTS content."""
-        import re
 
         options_start = re.search(r'options\s*\{', content)
         if not options_start:
@@ -1099,7 +1091,6 @@ class DeviceTreeParser:
 
         # Find all device references in the DTS content
         # These are typically defined as separate nodes that reference hardware devices
-        import re
 
         # Look for device reference patterns in the DTS content
         # Pattern: device_name_vf_id: type@id { ... } or device_name_ns_id: type@id { ... }
@@ -1138,8 +1129,6 @@ class DeviceTreeParser:
 
     def _parse_topology_from_dts(self, dts_content: str) -> Optional[TopologySection]:
         """Parse topology section from DTS content."""
-        import re
-        from ..models import NUMANode, TopologySection
 
         # Look for topology section
         topology_section = re.search(r'topology\s*\{([^}]+)\}', dts_content, re.DOTALL)
@@ -1155,8 +1144,6 @@ class DeviceTreeParser:
 
     def _parse_numa_nodes_from_dts(self, topology_text: str) -> Optional[Dict[int, NUMANode]]:
         """Parse NUMA nodes from topology text."""
-        import re
-        from ..models import NUMANode
 
         numa_nodes = {}
 
@@ -1202,7 +1189,7 @@ class DeviceTreeParser:
             if distance_match:
                 distances = [int(x.strip()) for x in distance_match.group(1).split()]
                 # Simple distance matrix parsing - would need more sophisticated logic for full matrix
-                pass
+                _ = distances  # Mark as intentionally unused for now
 
             # Parse memory type
             memory_type_match = re.search(r'memory-type\s*=\s*"([^"]+)"', node_content)
@@ -1222,7 +1209,6 @@ class DeviceTreeParser:
 
     def _parse_cpu_topology_from_dts(self, dts_content: str) -> Optional[Dict[int, 'CPUTopology']]:
         """Parse CPU topology from DTS content."""
-        import re
         from ..models import CPUTopology
 
         topology = {}
@@ -1319,7 +1305,7 @@ class DeviceTreeParser:
         # Parse distance matrix (optional)
         distance_matrix = {}
         try:
-            distances = self.fdt.getprop(node_offset, 'distance-matrix').as_uint32_list()
+            _ = self.fdt.getprop(node_offset, 'distance-matrix').as_uint32_list()
             # Simple distance matrix parsing - would need more sophisticated logic for full matrix
         except libfdt.FdtException:
             pass
@@ -1342,7 +1328,7 @@ class DeviceTreeParser:
 
     def _parse_hex_value(self, hex_str: str) -> int:
         """Parse hex value from DTS format."""
-        import re
+        _ = re  # Silence unused import warning
 
         # Handle hex values like "0x0 0x400000000" (64-bit values)
         parts = hex_str.strip().split()
@@ -1351,17 +1337,16 @@ class DeviceTreeParser:
             high = int(parts[0], 16)
             low = int(parts[1], 16)
             return (high << 32) | low
-        elif len(parts) == 1:
+        if len(parts) == 1:
             # Single hex value
             return int(parts[0], 16)
-        else:
-            raise ParseError(f"Invalid hex value format: {hex_str}")
+        raise ParseError(f"Invalid hex value format: {hex_str}")
 
     def dtb_to_dts(self, dtb_path: str) -> str:
         """Convert DTB file back to DTS format using pure Python implementation."""
         try:
             with open(dtb_path, 'rb') as f:
-                dtb_data = f.read()
+                _ = f.read()  # Read to validate file exists and is readable
 
             # Create a comprehensive DTS representation
             dts_lines = [
@@ -1382,7 +1367,7 @@ class DeviceTreeParser:
             return '\n'.join(dts_lines)
 
         except Exception as e:
-            raise ParseError(f"Failed to convert DTB to DTS: {e}")
+            raise ParseError(f"Failed to convert DTB to DTS: {e}") from e
 
     def _fdt_to_dts_recursive(self, node_offset: int, indent_level: int) -> List[str]:
         """Recursively convert FDT nodes to DTS format."""
@@ -1423,9 +1408,9 @@ class DeviceTreeParser:
 
                     try:
                         prop_offset = self.fdt.next_property_offset(prop_offset, libfdt.QUIET_NOTFOUND)
-                    except:
+                    except Exception:
                         break
-            except Exception as e:
+            except Exception:
                 # No properties or error accessing properties
                 pass
 
@@ -1436,15 +1421,15 @@ class DeviceTreeParser:
                     try:
                         child_lines = self._fdt_to_dts_recursive(child_offset, indent_level + 1)
                         lines.extend(child_lines)
-                    except Exception as e:
+                    except Exception:
                         # Skip problematic child nodes
                         pass
 
                     try:
                         child_offset = self.fdt.next_subnode(child_offset)
-                    except:
+                    except Exception:
                         break
-            except Exception as e:
+            except Exception:
                 # No child nodes or error accessing child nodes
                 pass
 
@@ -1489,38 +1474,40 @@ class DeviceTreeParser:
             # 32-bit integer
             value = int.from_bytes(data, byteorder='big')
             return f'{indent}{name} = <{hex(value)}>;'
-        elif len(data) == 8:
+        if len(data) == 8:
             # 64-bit integer
             high = int.from_bytes(data[:4], byteorder='big')
             low = int.from_bytes(data[4:], byteorder='big')
             return f'{indent}{name} = <{hex(high)} {hex(low)}>;'
-        elif len(data) % 4 == 0:
+        if len(data) % 4 == 0:
             # Array of 32-bit integers
             values = []
             for i in range(0, len(data), 4):
                 value = int.from_bytes(data[i:i+4], byteorder='big')
                 values.append(hex(value))
             return f'{indent}{name} = <{" ".join(values)}>;'
-        else:
-            # Non-aligned data - try as string first
-            # Remove trailing nulls and padding
-            cleaned_data = data.rstrip(b'\x00')
-            if cleaned_data:
-                # Check if it looks like a string
-                is_string = True
-                for b in cleaned_data:
-                    if b < 32 and b not in (9, 10, 13):  # Not printable and not whitespace
-                        is_string = False
-                        break
+        # Non-aligned data - try as string first
+        # Remove trailing nulls and padding
+        cleaned_data = data.rstrip(b'\x00')
+        if cleaned_data:
+            # Check if it looks like a string
+            is_string = True
+            for b in cleaned_data:
+                if b < 32 and b not in (9, 10, 13):  # Not printable and not whitespace
+                    is_string = False
+                    break
 
-                if is_string:
-                    try:
-                        string_data = cleaned_data.decode('utf-8')
-                        if len(string_data) > 0:
-                            return f'{indent}{name} = "{string_data}";'
-                    except UnicodeDecodeError:
-                        pass
+            if is_string:
+                try:
+                    string_data = cleaned_data.decode('utf-8')
+                    if len(string_data) > 0:
+                        return f'{indent}{name} = "{string_data}";'
+                except UnicodeDecodeError:
+                    pass
 
             # Fall back to hex representation
             hex_data = ' '.join(f'{b:02x}' for b in data)
             return f'{indent}{name} = [{hex_data}];'
+
+        # Empty or null data after stripping
+        return f'{indent}{name};'

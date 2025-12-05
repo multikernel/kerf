@@ -18,5 +18,4 @@ Delete kernel instance subcommand implementation.
 
 from .main import delete
 
-__all__ = ['delete']
-
+__all__ = ["delete"]

@@ -16,13 +16,14 @@
 Tests for kerf runtime manager.
 """
 
-import pytest
 import tempfile
-import os
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
+
+import pytest
+
+from kerf.exceptions import KernelInterfaceError, ValidationError
 from kerf.runtime import DeviceTreeManager
-from kerf.exceptions import ValidationError, KernelInterfaceError
 
 
 class TestDeviceTreeManager:
@@ -36,8 +37,7 @@ class TestDeviceTreeManager:
             overlays_dir.mkdir()
 
             manager = DeviceTreeManager(
-                baseline_path=str(baseline_path),
-                overlays_dir=str(overlays_dir)
+                baseline_path=str(baseline_path), overlays_dir=str(overlays_dir)
             )
 
             assert manager.baseline_path == baseline_path
@@ -53,11 +53,7 @@ class TestDeviceTreeManager:
             baseline_path = Path(tmpdir) / "device_tree"
 
             # Create baseline first
-            tree = GlobalDeviceTree(
-                hardware=sample_hardware,
-                instances={},
-                device_references={}
-            )
+            tree = GlobalDeviceTree(hardware=sample_hardware, instances={}, device_references={})
 
             baseline_mgr = BaselineManager(baseline_path=str(baseline_path))
             baseline_mgr.write_baseline(tree)
@@ -77,11 +73,7 @@ class TestDeviceTreeManager:
             baseline_path = Path(tmpdir) / "device_tree"
 
             # Create empty baseline
-            tree = GlobalDeviceTree(
-                hardware=sample_hardware,
-                instances={},
-                device_references={}
-            )
+            tree = GlobalDeviceTree(hardware=sample_hardware, instances={}, device_references={})
 
             baseline_mgr = BaselineManager(baseline_path=str(baseline_path))
             baseline_mgr.write_baseline(tree)
@@ -89,10 +81,10 @@ class TestDeviceTreeManager:
             manager = DeviceTreeManager(baseline_path=str(baseline_path))
             names = manager.get_instance_names()
 
-            assert names == []
+            assert not names
 
-    @patch('pathlib.Path.is_dir')
-    @patch('pathlib.Path.exists')
+    @patch("pathlib.Path.is_dir")
+    @patch("pathlib.Path.exists")
     def test_has_instance(self, mock_exists, mock_is_dir):
         """Test checking if instance exists."""
         manager = DeviceTreeManager()
@@ -100,12 +92,12 @@ class TestDeviceTreeManager:
         # Mock instance directory exists and is a directory
         mock_exists.return_value = True
         mock_is_dir.return_value = True
-        result = manager.has_instance('test-instance')
+        result = manager.has_instance("test-instance")
         assert result is True
 
         # Mock instance directory doesn't exist
         mock_exists.return_value = False
-        result = manager.has_instance('nonexistent')
+        result = manager.has_instance("nonexistent")
         assert result is False
 
     def test_list_transactions_empty(self):
@@ -117,7 +109,7 @@ class TestDeviceTreeManager:
             manager = DeviceTreeManager(overlays_dir=str(overlays_dir))
             transactions = manager.list_transactions()
 
-            assert transactions == []
+            assert not transactions
 
     def test_list_transactions_with_txs(self):
         """Test listing transactions with transaction directories."""
@@ -159,17 +151,17 @@ class TestDeviceTreeManager:
             modified_cpus = CPUAllocation(
                 total=64,  # Different from original
                 host_reserved=[0, 1],
-                available=list(range(2, 64))
+                available=list(range(2, 64)),
             )
 
             modified_tree = GlobalDeviceTree(
                 hardware=HardwareInventory(
                     cpus=modified_cpus,
                     memory=sample_hardware.memory,
-                    devices=sample_hardware.devices
+                    devices=sample_hardware.devices,
                 ),
                 instances=sample_tree.instances,
-                device_references={}
+                device_references={},
             )
 
             manager = DeviceTreeManager(baseline_path=str(baseline_path))
@@ -192,7 +184,7 @@ class TestLocking:
             assert not manager.lock_file.exists()
 
             # Acquire lock
-            with manager._acquire_lock():
+            with manager._acquire_lock():  # pylint: disable=protected-access
                 # Lock should exist
                 assert manager.lock_file.exists()
 
@@ -211,10 +203,9 @@ class TestLocking:
             try:
                 # Try to acquire lock (should timeout)
                 with pytest.raises(KernelInterfaceError, match="Could not acquire lock"):
-                    with manager._acquire_lock():
+                    with manager._acquire_lock():  # pylint: disable=protected-access
                         pass
             finally:
                 # Cleanup
                 if manager.lock_file.exists():
                     manager.lock_file.unlink()
-

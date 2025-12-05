@@ -20,32 +20,34 @@ resources available for allocation to kernel instances. The baseline must
 contain only resources (no instances).
 """
 
-import sys
-import os
 import ctypes
+import os
 import re
+import sys
 from pathlib import Path
-from typing import Optional, Tuple, List
+from typing import Optional, Tuple
+
 import click
+import libfdt
+
 try:
     import pyudev
 except ImportError:
     pyudev = None
 
 from ..baseline import BaselineManager
+from ..create.main import parse_cpu_spec, parse_device_list
 from ..dtc.parser import DeviceTreeParser
-from ..dtc.validator import MultikernelValidator
 from ..dtc.reporter import ValidationReporter
-from ..exceptions import ValidationError, KernelInterfaceError, ParseError
-import libfdt
+from ..dtc.validator import MultikernelValidator
+from ..exceptions import KernelInterfaceError, ParseError, ValidationError
 from ..models import (
+    CPUAllocation,
+    DeviceInfo,
     GlobalDeviceTree,
     HardwareInventory,
-    CPUAllocation,
     MemoryAllocation,
-    DeviceInfo
 )
-from ..create.main import parse_cpu_spec, parse_device_list
 
 
 MULTIKERNEL_MOUNT_POINT = "/sys/fs/multikernel"
@@ -56,7 +58,7 @@ def is_multikernel_mounted() -> bool:
         return False
 
     try:
-        with open('/proc/mounts', 'r') as f:
+        with open('/proc/mounts', 'r', encoding='utf-8') as f:
             for line in f:
                 parts = line.split()
                 if len(parts) >= 2 and parts[1] == MULTIKERNEL_MOUNT_POINT:
@@ -79,7 +81,7 @@ def mount_multikernel_fs(verbose: bool = False) -> None:
     except OSError as e:
         raise KernelInterfaceError(
             f"Failed to create mount point {MULTIKERNEL_MOUNT_POINT}: {e}"
-        )
+        ) from e
 
     libc = ctypes.CDLL(None, use_errno=True)
 
@@ -115,7 +117,7 @@ def mount_multikernel_fs(verbose: bool = False) -> None:
         )
 
     if verbose:
-        click.echo(f"✓ Successfully mounted multikernel filesystem")
+        click.echo("✓ Successfully mounted multikernel filesystem")
 
 
 def get_multikernel_memory_pool_from_iomem() -> Optional[Tuple[int, int]]:
@@ -127,7 +129,7 @@ def get_multikernel_memory_pool_from_iomem() -> Optional[Tuple[int, int]]:
         iomem_path = Path('/proc/iomem')
         if not iomem_path.exists():
             return None
-        with open(iomem_path, 'r') as f:
+        with open(iomem_path, 'r', encoding='utf-8') as f:
             for line in f:
                 if 'Multikernel Memory Pool' in line:
                     match = re.search(r'([0-9a-fA-F]+)-([0-9a-fA-F]+)', line)
@@ -151,7 +153,7 @@ def get_total_memory_from_system() -> Optional[int]:
         meminfo_path = Path('/proc/meminfo')
         if not meminfo_path.exists():
             return None
-        with open(meminfo_path, 'r') as f:
+        with open(meminfo_path, 'r', encoding='utf-8') as f:
             for line in f:
                 if line.startswith('MemTotal:'):
                     match = re.search(r'(\d+)', line)
@@ -222,7 +224,7 @@ def detect_pci_device(device_name: str) -> Optional[DeviceInfo]:
         vendor_file = pci_device_path / 'vendor'
         if vendor_file.exists():
             try:
-                with open(vendor_file, 'r') as f:
+                with open(vendor_file, 'r', encoding='utf-8') as f:
                     vendor_id = int(f.read().strip(), 16)
             except (ValueError, IOError):
                 pass
@@ -230,7 +232,7 @@ def detect_pci_device(device_name: str) -> Optional[DeviceInfo]:
         device_file = pci_device_path / 'device'
         if device_file.exists():
             try:
-                with open(device_file, 'r') as f:
+                with open(device_file, 'r', encoding='utf-8') as f:
                     device_id = int(f.read().strip(), 16)
             except (ValueError, IOError):
                 pass
@@ -239,7 +241,7 @@ def detect_pci_device(device_name: str) -> Optional[DeviceInfo]:
         class_file = pci_device_path / 'class'
         if class_file.exists():
             try:
-                with open(class_file, 'r') as f:
+                with open(class_file, 'r', encoding='utf-8') as f:
                     pci_class = int(f.read().strip(), 16)
                     class_code = (pci_class >> 16) & 0xFF
                     if class_code == 0x02:  # Network controller
@@ -261,7 +263,7 @@ def detect_pci_device(device_name: str) -> Optional[DeviceInfo]:
             vendor_id=vendor_id,
             device_id=device_id
         )
-    except (OSError, IOError, ValueError, AttributeError, pyudev.DeviceNotFoundError) as e:
+    except (OSError, IOError, ValueError, AttributeError, pyudev.DeviceNotFoundError):
         return None
 
 
@@ -367,7 +369,7 @@ def build_baseline_from_cmdline(
     try:
         cpu_list = parse_cpu_spec(cpus)
     except ValueError as e:
-        raise ValueError(f"Invalid CPU specification '{cpus}': {e}")
+        raise ValueError(f"Invalid CPU specification '{cpus}': {e}") from e
 
     system_total_cpus = get_total_cpus_from_system()
     if system_total_cpus is None:
@@ -409,7 +411,7 @@ def build_baseline_from_cmdline(
         click.echo(f"  Total CPUs: {total_cpus}")
         click.echo(f"  Host-reserved CPUs: {host_reserved_cpus}")
         click.echo(f"  Available CPUs: {cpu_list}")
-        click.echo(f"Memory pool from /proc/iomem:")
+        click.echo("Memory pool from /proc/iomem:")
         click.echo(f"  Base: {hex(memory_pool_base)}")
         click.echo(f"  Size: {memory_pool_bytes} bytes ({memory_pool_bytes / (1024**3):.2f} GB)")
         click.echo(f"  Total bytes: {total_bytes} bytes ({total_bytes / (1024**3):.2f} GB)")
@@ -475,7 +477,7 @@ def build_baseline_from_cmdline(
 @click.option('--devices', '-d', help='Device names (comma-separated, e.g., "enp9s0_dev,nvme0"). Mutually exclusive with --input. Creates minimal device entries in baseline.')
 @click.option('--dry-run', is_flag=True, help='Validate without applying')
 @click.option('--report', is_flag=True, help='Generate detailed validation report')
-@click.option('--format', type=click.Choice(['text', 'json', 'yaml']), 
+@click.option('--format', type=click.Choice(['text', 'json', 'yaml']),
               default='text', help='Report format (default: text)')
 @click.option('--verbose', '-v', is_flag=True, help='Verbose output')
 def init(ctx: click.Context, input: Optional[str], cpus: Optional[str], devices: Optional[str], dry_run: bool, report: bool, format: str, verbose: bool):
@@ -542,7 +544,7 @@ def init(ctx: click.Context, input: Optional[str], cpus: Optional[str], devices:
                 sys.exit(3)
 
             if input_path.suffix == '.dts':
-                with open(input_path, 'r') as f:
+                with open(input_path, 'r', encoding='utf-8') as f:
                     dts_content = f.read()
                 tree = parser.parse_dts(dts_content)
             elif input_path.suffix == '.dtb':
@@ -621,7 +623,7 @@ def init(ctx: click.Context, input: Optional[str], cpus: Optional[str], devices:
                         fdt = libfdt.Fdt(dtb_data)
                         dts_parser = DeviceTreeParser()
                         dts_parser.fdt = fdt
-                        dts_lines = dts_parser._fdt_to_dts_recursive(0, 0)
+                        dts_lines = dts_parser._fdt_to_dts_recursive(0, 0)  # pylint: disable=protected-access
                         dts_content = '\n'.join(dts_lines)
 
                         click.echo("Debug: Baseline DTS source being written to kernel:")
@@ -635,7 +637,7 @@ def init(ctx: click.Context, input: Optional[str], cpus: Optional[str], devices:
                     click.echo("Writing baseline to kernel...")
                 baseline_mgr.write_baseline(tree)
                 click.echo("✓ Baseline applied to kernel successfully")
-                click.echo(f"  Baseline: /sys/fs/multikernel/device_tree")
+                click.echo("  Baseline: /sys/fs/multikernel/device_tree")
             except KernelInterfaceError as e:
                 click.echo(f"Error: Failed to apply baseline: {e}", err=True)
                 if verbose:
@@ -652,4 +654,3 @@ def init(ctx: click.Context, input: Optional[str], cpus: Optional[str], devices:
             import traceback
             traceback.print_exc()
         sys.exit(1)
-

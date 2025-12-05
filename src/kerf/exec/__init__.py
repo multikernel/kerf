@@ -18,5 +18,4 @@ Kernel execution subcommand implementation.
 
 from .main import exec_cmd
 
-__all__ = ['exec_cmd']
-
+__all__ = ["exec_cmd"]

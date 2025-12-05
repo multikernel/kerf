@@ -13,4 +13,3 @@
 # limitations under the License.
 
 """Update kernel instance resources."""
-

@@ -29,15 +29,14 @@ import copy
 from typing import Optional, List
 import click
 
-from ..runtime import DeviceTreeManager
-from ..models import InstanceResources
+from ..create.main import parse_cpu_spec, parse_memory_base, parse_memory_spec
+from ..exceptions import KernelInterfaceError, ParseError, ResourceError, ValidationError
 from ..resources import (
+    find_available_memory_base,
     validate_cpu_allocation,
     validate_memory_allocation,
-    find_available_memory_base,
 )
-from ..exceptions import ValidationError, KernelInterfaceError, ResourceError, ParseError
-from ..create.main import parse_cpu_spec, parse_memory_spec, parse_memory_base
+from ..runtime import DeviceTreeManager
 
 
 def parse_device_spec(device_spec: str) -> List[str]:
@@ -74,7 +73,7 @@ def dump_overlay_for_debug(
         fdt = libfdt.Fdt(dtbo_data)
         parser = DeviceTreeParser()
         parser.fdt = fdt
-        dts_lines = parser._fdt_to_dts_recursive(0, 0)
+        dts_lines = parser._fdt_to_dts_recursive(0, 0)  # pylint: disable=protected-access
         dts_content = '\n'.join(dts_lines)
 
         click.echo(f"Debug: Overlay DTS source for '{instance_name}'{suffix}:")
@@ -264,9 +263,9 @@ def update(
                 )
 
             except libfdt.FdtException as e:
-                raise ResourceError(f"Failed to parse instance '{name}' device_tree: {e}")
+                raise ResourceError(f"Failed to parse instance '{name}' device_tree: {e}") from e
             except Exception as e:
-                raise ResourceError(f"Failed to read instance '{name}' device_tree: {e}")
+                raise ResourceError(f"Failed to read instance '{name}' device_tree: {e}") from e
 
             modified = copy.deepcopy(current)
             modified.instances[instance_node_name] = copy.deepcopy(existing_instance)
@@ -342,7 +341,7 @@ def update(
                 dtbo_data = manager.overlay_gen.generate_update_overlay(name, old_instance, new_instance)
                 return dtbo_data
 
-            with manager._acquire_lock():
+            with manager._acquire_lock():  # pylint: disable=protected-access
                 current = manager.read_baseline()
                 dtbo_data = apply_update_operation(current)
 
@@ -355,7 +354,7 @@ def update(
                     with open(manager.overlays_new, 'wb') as f:
                         f.write(dtbo_data)
 
-                    tx_id = manager._find_latest_transaction()
+                    tx_id = manager._find_latest_transaction()  # pylint: disable=protected-access
                     if not tx_id:
                         raise KernelInterfaceError(
                             "Overlay written but kernel did not create transaction directory"
@@ -366,14 +365,14 @@ def update(
 
                     if status_file.exists():
                         try:
-                            with open(status_file, 'r') as f:
+                            with open(status_file, 'r', encoding='utf-8') as f:
                                 status = f.read().strip()
                             if status not in ("applied", "success", "ok"):
                                 error_msg = f"Overlay transaction {tx_id} failed with status: '{status}'"
                                 instance_file = tx_dir / "instance"
                                 if instance_file.exists():
                                     try:
-                                        with open(instance_file, 'r') as f:
+                                        with open(instance_file, 'r', encoding='utf-8') as f:
                                             instance_name_from_tx = f.read().strip()
                                         error_msg += f" (instance: {instance_name_from_tx})"
                                     except OSError:
@@ -426,4 +425,3 @@ def update(
 
 if __name__ == '__main__':
     update()
-

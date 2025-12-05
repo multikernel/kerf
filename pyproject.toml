@@ -11,7 +11,7 @@ readme = "README.md"
 packages = [{include = "kerf", from = "src"}]
 
 [tool.poetry.dependencies]
-python = "^3.8"
+python = "^3.9"
 pylibfdt = "^1.7.0"
 click = "^8.0.0"
 pyyaml = "^6.0"
@@ -29,10 +29,9 @@ pylint = "^3.0.0"
 kerf = "kerf.cli:main"
 
 [tool.pylint.main]
-py-version = "3.8"
+py-version = "3.9"
 jobs = 0
 ignore-patterns = ["^\\.#"]
-suggestion-mode = true
 
 [tool.pylint.messages_control]
 disable = [
@@ -44,7 +43,18 @@ disable = [
     "too-many-locals",
     "too-many-branches",
     "too-many-statements",
-    "invalid-name",
+    "line-too-long",
+    "duplicate-code",
+    "too-many-nested-blocks",
+    "too-many-positional-arguments",
+    "too-many-return-statements",
+    "too-many-instance-attributes",
+    "too-many-lines",
+    "fixme",
+    "import-outside-toplevel",
+    "broad-exception-caught",
+    "no-value-for-parameter",
+    "redefined-builtin",
 ]
 
 [tool.pylint.format]

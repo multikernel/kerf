@@ -18,5 +18,4 @@ Kernel unloading subcommand implementation.
 
 from .main import unload
 
-__all__ = ['unload']
-
+__all__ = ["unload"]

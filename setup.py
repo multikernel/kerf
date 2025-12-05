@@ -26,7 +26,7 @@ def run_command(cmd, description):
     """Run a command and handle errors."""
     print(f"Running: {description}")
     try:
-        result = subprocess.run(cmd, shell=True, check=True, capture_output=True, text=True)
+        subprocess.run(cmd, shell=True, check=True, capture_output=True, text=True)
         print(f"✓ {description} completed successfully")
         return True
     except subprocess.CalledProcessError as e:
@@ -43,46 +43,47 @@ def main():
     """Set up the development environment."""
     print("Setting up kerf development environment...")
     print("=" * 50)
-    
+
     # Check if we're in the right directory
     if not Path("pyproject.toml").exists():
         print("Error: pyproject.toml not found. Please run this script from the project root.")
         return 1
-    
+
     # Install dependencies
     print("\n1. Installing dependencies...")
     if not run_command("pip install -e .", "Installing kerf in development mode"):
         return 1
-    
+
     # Install development dependencies
     print("\n2. Installing development dependencies...")
-    if not run_command("pip install pytest pytest-cov black flake8 mypy", "Installing dev dependencies"):
+    cmd = "pip install pytest pytest-cov black flake8 mypy"
+    if not run_command(cmd, "Installing dev dependencies"):
         return 1
-    
+
     # Run tests
     print("\n3. Running tests...")
     if not run_command("python -m pytest tests/", "Running test suite"):
         return 1
-    
+
     # Check code formatting
     print("\n4. Checking code formatting...")
     if not run_command("black --check src/kerf/", "Checking code formatting"):
         print("  Note: Run 'black src/kerf/' to fix formatting issues")
-    
+
     # Run linting
     print("\n5. Running linting...")
     if not run_command("flake8 src/kerf/", "Running flake8 linting"):
         print("  Note: Fix linting issues before committing")
-    
+
     print("\n" + "=" * 50)
     print("✓ Development environment setup complete!")
     print("\nNext steps:")
     print("1. Run 'python -m pytest tests/' to test the implementation")
     print("2. Run 'kerf --help' to see available commands")
     print("3. Try: kerf dtc --input=examples/system.dts --output-dir=build/")
-    
+
     return 0
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     sys.exit(main())
