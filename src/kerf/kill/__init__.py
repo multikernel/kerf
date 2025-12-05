@@ -19,4 +19,3 @@ Kernel shutdown subcommand implementation.
 from .main import kill_cmd
 
 __all__ = ['kill_cmd']
-

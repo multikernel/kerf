@@ -16,13 +16,15 @@
 Kernel shutdown subcommand implementation using reboot syscall with MULTIKERNEL_HALT command.
 """
 
-import click
-import sys
-import os
 import ctypes
+import os
 import platform
+import sys
 from pathlib import Path
 from typing import Optional
+
+import click
+
 from ..models import InstanceState
 from ..utils import get_instance_id_from_name
 
@@ -42,18 +44,17 @@ def get_reboot_syscall():
     arch = platform.machine().lower()
     if arch in ('x86_64', 'amd64'):
         return SYS_REBOOT_X86_64
-    elif arch in ('aarch64', 'arm64'):
+    if arch in ('aarch64', 'arm64'):
         return SYS_REBOOT_ARM64
-    elif arch.startswith('arm'):
+    if arch.startswith('arm'):
         return SYS_REBOOT_ARM
-    elif arch in ('i386', 'i686', 'x86'):
+    if arch in ('i386', 'i686', 'x86'):
         return SYS_REBOOT_X86
-    else:
-        click.echo(
-            f"Warning: Unknown architecture '{arch}', assuming x86_64 syscall number",
-            err=True
-        )
-        return SYS_REBOOT_X86_64
+    click.echo(
+        f"Warning: Unknown architecture '{arch}', assuming x86_64 syscall number",
+        err=True
+    )
+    return SYS_REBOOT_X86_64
 
 
 class MultikernelBootArgs(ctypes.Structure):
@@ -61,6 +62,10 @@ class MultikernelBootArgs(ctypes.Structure):
     _fields_ = [
         ("mk_id", ctypes.c_int),
     ]
+
+    def __init__(self):
+        super().__init__()
+        self.mk_id = 0
 
 
 def halt_multikernel(mk_id: int) -> int:
@@ -137,7 +142,7 @@ def kill_cmd(name: Optional[str], id: Optional[int], verbose: bool):
                     err=True
                 )
                 click.echo(
-                    f"Check available instances in /sys/fs/multikernel/instances/",
+                    "Check available instances in /sys/fs/multikernel/instances/",
                     err=True
                 )
                 sys.exit(1)
@@ -169,7 +174,7 @@ def kill_cmd(name: Optional[str], id: Optional[int], verbose: bool):
                     err=True
                 )
                 click.echo(
-                    f"Check available instances in /sys/fs/multikernel/instances/",
+                    "Check available instances in /sys/fs/multikernel/instances/",
                     err=True
                 )
                 sys.exit(1)
@@ -187,7 +192,7 @@ def kill_cmd(name: Optional[str], id: Optional[int], verbose: bool):
             sys.exit(1)
 
         try:
-            with open(status_path, 'r') as f:
+            with open(status_path, 'r', encoding='utf-8') as f:
                 status = f.read().strip()
 
             status_lower = status.lower()
@@ -249,10 +254,9 @@ def kill_cmd(name: Optional[str], id: Optional[int], verbose: bool):
             )
         sys.exit(1)
 
-    except Exception as e:
-        click.echo(f"Unexpected error: {e}", err=True)
+    except Exception as exc:
+        click.echo(f"Unexpected error: {exc}", err=True)
         if verbose:
             import traceback
             traceback.print_exc()
         sys.exit(1)
-

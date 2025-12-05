@@ -62,7 +62,7 @@ max-line-length = 100
 indent-string = "    "
 
 [tool.pylint.basic]
-good-names = ["i", "j", "k", "ex", "Run", "_", "fd", "dt", "id"]
+good-names = ["i", "j", "k", "ex", "Run", "_", "fd", "dt", "id", "e", "f"]
 
 [tool.pylint.design]
 max-attributes = 10
