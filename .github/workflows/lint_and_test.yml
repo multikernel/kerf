@@ -1,11 +1,10 @@
-name: Pylint
-
+name: Python linting and testing
 on:
   push:
   pull_request:
 
 jobs:
-  build:
+  lint_and_test:
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -34,3 +33,8 @@ jobs:
       run: |
         source .venv/bin/activate
         pylint $(git ls-files '*.py')
+
+    - name: Running the tests with pytest
+      run: |
+        source .venv/bin/activate
+        python -m pytest
