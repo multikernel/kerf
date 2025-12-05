@@ -1063,6 +1063,7 @@ class DeviceTreeParser:
 
         start_pos = options_start.end() - 1
         end_pos = start_pos
+        brace_count = 0
 
         for i, char in enumerate(content[start_pos:], start_pos):
             if char == '{':
