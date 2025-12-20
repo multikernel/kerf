@@ -211,7 +211,8 @@ class InstanceExtractor:
             fdt_sw.property_u64("memory-bytes", instance.resources.memory_bytes)
 
             if instance.resources.devices:
-                fdt_sw.property_string("device-names", " ".join(instance.resources.devices))
+                stringlist_data = b'\0'.join(d.encode('utf-8') for d in instance.resources.devices) + b'\0'
+                fdt_sw.property("device-names", stringlist_data)
 
             fdt_sw.end_node()  # End resources
             fdt_sw.end_node()  # End instance
@@ -346,10 +347,8 @@ class InstanceExtractor:
         self.fdt.setprop_u64(resources_offset, "memory-bytes", instance.resources.memory_bytes)
 
         if instance.resources.devices:
-            # This would need proper phandle handling
-            self.fdt.setprop_str(
-                resources_offset, "device-names", " ".join(instance.resources.devices)
-            )
+            stringlist_data = b'\0'.join(d.encode('utf-8') for d in instance.resources.devices) + b'\0'
+            self.fdt.setprop(resources_offset, "device-names", stringlist_data)
 
     def _add_device_references(self, parent_offset: int, tree: GlobalDeviceTree):
         """Add device reference nodes."""

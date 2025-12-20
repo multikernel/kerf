@@ -300,7 +300,8 @@ class OverlayGenerator:
             fdt_sw.property_u64("memory-bytes", instance.resources.memory_bytes)
 
             if instance.resources.devices:
-                fdt_sw.property_string("device-names", " ".join(instance.resources.devices))
+                stringlist_data = b'\0'.join(d.encode('utf-8') for d in instance.resources.devices) + b'\0'
+                fdt_sw.property("device-names", stringlist_data)
 
             if instance.resources.numa_nodes:
                 import struct

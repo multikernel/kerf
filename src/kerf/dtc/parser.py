@@ -1444,71 +1444,52 @@ class DeviceTreeParser:
 
         return lines
 
+    def _is_printable_string(self, data: bytes) -> bool:
+        """Check if bytes represent a printable ASCII string."""
+        return len(data) >= 2 and all(32 <= b < 127 or b in (9, 10, 13) for b in data)
+
+    def _try_parse_stringlist(self, data: bytes) -> list[str] | None:
+        """Try to parse data as a stringlist. Returns list of strings or None."""
+        stripped = data.rstrip(b'\x00')
+        if not stripped:
+            return None
+
+        parts = stripped.split(b'\x00')
+        strings = []
+        for part in parts:
+            if not part or not self._is_printable_string(part):
+                return None
+            try:
+                strings.append(part.decode('utf-8'))
+            except UnicodeDecodeError:
+                return None
+        return strings if strings else None
+
     def _property_to_dts(self, name: str, data: bytes, indent: str) -> str:
         """Convert FDT property to DTS format."""
         if not data:
             return f'{indent}{name};'
 
-        # FDT strings are null-terminated and padded to 4-byte alignment
-        try:
-            null_pos = data.find(b'\x00')
-            if null_pos > 0:
-                string_part = data[:null_pos]
-                if string_part:
-                    is_printable = True
-                    for b in string_part:
-                        if not (32 <= b < 127 or b in (9, 10, 13)):
-                            is_printable = False
-                            break
-
-                    if is_printable:
-                        try:
-                            string_data = string_part.decode('utf-8', errors='strict')
-                            if len(string_data) > 0 and len(string_data) < 256:
-                                return f'{indent}{name} = "{string_data}";'
-                        except (UnicodeDecodeError, ValueError):
-                            pass
-        except Exception:
-            pass
-
+        # Handle standard integer sizes first
         if len(data) == 4:
-            # 32-bit integer
             value = int.from_bytes(data, byteorder='big')
             return f'{indent}{name} = <{hex(value)}>;'
         if len(data) == 8:
-            # 64-bit integer
             high = int.from_bytes(data[:4], byteorder='big')
             low = int.from_bytes(data[4:], byteorder='big')
             return f'{indent}{name} = <{hex(high)} {hex(low)}>;'
+
+        # Try parsing as stringlist
+        strings = self._try_parse_stringlist(data)
+        if strings:
+            quoted = ', '.join(f'"{s}"' for s in strings)
+            return f'{indent}{name} = {quoted};'
+
+        # Handle arrays of 32-bit integers
         if len(data) % 4 == 0:
-            # Array of 32-bit integers
-            values = []
-            for i in range(0, len(data), 4):
-                value = int.from_bytes(data[i:i+4], byteorder='big')
-                values.append(hex(value))
+            values = [hex(int.from_bytes(data[i:i+4], byteorder='big')) for i in range(0, len(data), 4)]
             return f'{indent}{name} = <{" ".join(values)}>;'
-        # Non-aligned data - try as string first
-        # Remove trailing nulls and padding
-        cleaned_data = data.rstrip(b'\x00')
-        if cleaned_data:
-            # Check if it looks like a string
-            is_string = True
-            for b in cleaned_data:
-                if b < 32 and b not in (9, 10, 13):  # Not printable and not whitespace
-                    is_string = False
-                    break
 
-            if is_string:
-                try:
-                    string_data = cleaned_data.decode('utf-8')
-                    if len(string_data) > 0:
-                        return f'{indent}{name} = "{string_data}";'
-                except UnicodeDecodeError:
-                    pass
-
-            # Fall back to hex representation
-            hex_data = ' '.join(f'{b:02x}' for b in data)
-            return f'{indent}{name} = [{hex_data}];'
-
-        # Empty or null data after stripping
-        return f'{indent}{name};'
+        # Fall back to hex representation
+        hex_data = ' '.join(f'{b:02x}' for b in data)
+        return f'{indent}{name} = [{hex_data}];'
