@@ -29,7 +29,7 @@ from ..models import InstanceState
 from ..utils import get_instance_id_from_name
 
 
-def _cleanup_load_resources(instance_name: str, instance_id: int, verbose: bool) -> None:
+def _cleanup_load_resources(instance_name: str, _instance_id: int, verbose: bool) -> None:
     """Clean up resources created by kerf load --image."""
     import shutil
 
