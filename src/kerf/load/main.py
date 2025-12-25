@@ -160,14 +160,20 @@ def kexec_file_load(
 @click.option("--initrd", "-i", help="Path to initrd image file (optional)")
 @click.option("--cmdline", "-c", help="Boot command line parameters")
 @click.option("--id", type=int, help="Multikernel instance ID (1-511)")
+@click.option("--image", help="Docker image to use as rootfs (e.g., nginx:latest)")
+@click.option("--entrypoint", help="Override image entrypoint for init")
+@click.option("--rootfs-dir", help="Use existing directory as rootfs instead of Docker image")
 @click.option("--verbose", "-v", is_flag=True, help="Verbose output")
-def load(
+def load(  # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     ctx: click.Context,
     name: Optional[str],
     kernel: str,
     initrd: Optional[str],
     cmdline: Optional[str],
     id: Optional[int],
+    image: Optional[str],
+    entrypoint: Optional[str],
+    rootfs_dir: Optional[str],
     verbose: bool,
 ):
     """
@@ -176,12 +182,27 @@ def load(
     This command loads a kernel image into memory using the kexec_file_load
     syscall. The kernel is loaded in multikernel mode with the specified ID.
 
+    When --image is provided, the Docker image is extracted to a local directory,
+    a FUSE server is started to share the rootfs over vsock, and a minimal initrd
+    is generated to mount the rootfs via mkfuse.
+
     Examples:
 
         kerf load web-server --kernel=/boot/vmlinuz --initrd=/boot/initrd.img \\
                  --cmdline="root=/dev/sda1"
         kerf load --kernel=/boot/vmlinuz --initrd=/boot/initrd.img \\
                  --cmdline="root=/dev/sda1" --id=1
+
+        # Load with Docker image as rootfs
+        kerf load web-server --kernel=/boot/vmlinuz --image=nginx:latest
+
+        # Load with custom entrypoint
+        kerf load worker --kernel=/boot/vmlinuz --image=python:3.11 \\
+                 --entrypoint=/app/worker.py
+
+        # Load with pre-extracted rootfs directory
+        kerf load custom --kernel=/boot/vmlinuz --rootfs-dir=/mnt/rootfs \\
+                 --entrypoint=/sbin/init
     """
     try:
         if not name and id is None:
@@ -190,6 +211,14 @@ def load(
                 "Usage: kerf load <name> --kernel=<path>  or  kerf load --id=<id> --kernel=<path>",
                 err=True,
             )
+            sys.exit(2)
+
+        if image and rootfs_dir:
+            click.echo("Error: --image and --rootfs-dir are mutually exclusive", err=True)
+            sys.exit(2)
+
+        if rootfs_dir and not entrypoint:
+            click.echo("Error: --entrypoint is required when using --rootfs-dir", err=True)
             sys.exit(2)
 
         instance_name = None
@@ -250,6 +279,99 @@ def load(
             if verbose:
                 click.echo(f"Initrd image: {initrd_path}")
 
+        # Handle Docker image or rootfs directory
+        fuse_port = 6789
+
+        if image:
+            from ..docker.image import extract_image, DockerError
+            from ..fuse import start_fuse_server, FuseServerError
+            from ..initrd import create_fuse_initrd, InitrdError
+
+            try:
+                if verbose:
+                    click.echo(f"Extracting Docker image: {image}")
+
+                rootfs_path, default_cmd = extract_image(image, instance_name)
+
+                if verbose:
+                    click.echo(f"Rootfs extracted to: {rootfs_path}")
+                    click.echo(f"Image command: {default_cmd}")
+
+                if entrypoint:
+                    init_path = entrypoint
+                elif default_cmd:
+                    init_path = default_cmd[0]
+                else:
+                    click.echo(
+                        "Error: Image has no ENTRYPOINT/CMD, use --entrypoint to specify init",
+                        err=True
+                    )
+                    sys.exit(2)
+
+                if verbose:
+                    click.echo(f"Starting FUSE server for instance {instance_id} on port {fuse_port}")
+
+                start_fuse_server(instance_id, rootfs_path, port=fuse_port)
+
+                if not initrd_path:
+                    if verbose:
+                        click.echo("Generating minimal initrd for mkfuse root...")
+                    try:
+                        generated_initrd = create_fuse_initrd(instance_name, init_path, port=fuse_port)
+                        initrd_path = Path(generated_initrd)
+                        if verbose:
+                            click.echo(f"Generated initrd: {initrd_path}")
+                            click.echo(f"Entrypoint: {init_path}")
+                    except InitrdError as e:
+                        click.echo(f"Error: Failed to generate initrd: {e}", err=True)
+                        sys.exit(1)
+
+            except DockerError as e:
+                click.echo(f"Error: Docker operation failed: {e}", err=True)
+                sys.exit(1)
+            except FuseServerError as e:
+                click.echo(f"Error: FUSE server failed: {e}", err=True)
+                sys.exit(1)
+            except FileNotFoundError as e:
+                click.echo(f"Error: {e}", err=True)
+                sys.exit(1)
+
+        elif rootfs_dir:
+            from ..fuse import start_fuse_server, FuseServerError
+            from ..initrd import create_fuse_initrd, InitrdError
+
+            try:
+                rootfs_path = Path(rootfs_dir)
+                if not rootfs_path.is_dir():
+                    click.echo(f"Error: Rootfs directory '{rootfs_dir}' does not exist", err=True)
+                    sys.exit(3)
+
+                if verbose:
+                    click.echo(f"Using rootfs directory: {rootfs_path}")
+                    click.echo(f"Starting FUSE server for instance {instance_id} on port {fuse_port}")
+
+                start_fuse_server(instance_id, str(rootfs_path), port=fuse_port)
+
+                if not initrd_path:
+                    if verbose:
+                        click.echo("Generating minimal initrd for mkfuse root...")
+                    try:
+                        generated_initrd = create_fuse_initrd(instance_name, entrypoint, port=fuse_port)
+                        initrd_path = Path(generated_initrd)
+                        if verbose:
+                            click.echo(f"Generated initrd: {initrd_path}")
+                            click.echo(f"Entrypoint: {entrypoint}")
+                    except InitrdError as e:
+                        click.echo(f"Error: Failed to generate initrd: {e}", err=True)
+                        sys.exit(1)
+
+            except FuseServerError as e:
+                click.echo(f"Error: FUSE server failed: {e}", err=True)
+                sys.exit(1)
+            except FileNotFoundError as e:
+                click.echo(f"Error: {e}", err=True)
+                sys.exit(1)
+
         # Always enable multikernel mode
         mk_id_flags = KEXEC_MK_ID(instance_id)
         flags = KEXEC_MULTIKERNEL | mk_id_flags
@@ -260,7 +382,7 @@ def load(
                 f"Flags: KEXEC_MULTIKERNEL=0x{KEXEC_MULTIKERNEL:x}, KEXEC_MK_ID({instance_id})=0x{mk_id_flags:x}, combined=0x{flags:x}"
             )
 
-        # Prepare command line (default to empty string if not provided)
+        # Prepare command line
         cmdline_str = cmdline if cmdline else ""
 
         if verbose:

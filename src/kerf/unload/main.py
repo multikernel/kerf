@@ -29,6 +29,33 @@ from ..models import InstanceState
 from ..utils import get_instance_id_from_name
 
 
+def _cleanup_load_resources(instance_name: str, instance_id: int, verbose: bool) -> None:
+    """Clean up resources created by kerf load --image."""
+    import shutil
+
+    # Clean up extracted rootfs
+    rootfs_path = Path("/var/lib/kerf/rootfs") / instance_name
+    if rootfs_path.exists():
+        try:
+            shutil.rmtree(rootfs_path)
+            if verbose:
+                click.echo(f"✓ Cleaned up rootfs: {rootfs_path}")
+        except Exception as e:
+            if verbose:
+                click.echo(f"Warning: Failed to clean up rootfs: {e}", err=True)
+
+    # Clean up generated initrd
+    initrd_path = Path("/var/lib/kerf/initrd") / f"{instance_name}.cpio.gz"
+    if initrd_path.exists():
+        try:
+            initrd_path.unlink()
+            if verbose:
+                click.echo(f"✓ Cleaned up initrd: {initrd_path}")
+        except Exception as e:
+            if verbose:
+                click.echo(f"Warning: Failed to clean up initrd: {e}", err=True)
+
+
 # KEXEC flags definitions
 KEXEC_FILE_UNLOAD = 0x00000001
 KEXEC_MULTIKERNEL = 0x00000010
@@ -248,6 +275,9 @@ def unload(ctx: click.Context, name: Optional[str], id: Optional[int], verbose: 
                 click.echo(f"✓ Kernel unloaded successfully (result: {result})")
             else:
                 click.echo("✓ Kernel unloaded successfully")
+
+            # Clean up resources created by kerf load --image
+            _cleanup_load_resources(instance_name, instance_id, verbose)
 
         except OSError as e:
             click.echo(f"Error: kexec_file_unload failed: {e}", err=True)
