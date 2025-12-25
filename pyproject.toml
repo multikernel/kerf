@@ -55,6 +55,10 @@ disable = [
     "broad-exception-caught",
     "no-value-for-parameter",
     "redefined-builtin",
+    "too-many-public-methods",
+    "broad-except",
+    "no-self-use",
+    "inconsistent-return-statements",
 ]
 
 [tool.pylint.format]
