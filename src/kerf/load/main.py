@@ -47,6 +47,50 @@ SYS_KEXEC_FILE_LOAD_ARM = 382
 SYS_KEXEC_FILE_LOAD_X86 = 320
 
 
+def build_ip_param(
+    ip_addr: Optional[str],
+    gateway: Optional[str],
+    netmask: str,
+    hostname: Optional[str],
+    nic: Optional[str],
+) -> Optional[str]:
+    """
+    Build Linux kernel ip= boot parameter.
+
+    Format: ip=<client-ip>:<server-ip>:<gw-ip>:<netmask>:<hostname>:<device>:<autoconf>
+
+    Args:
+        ip_addr: Client IP address or "dhcp"
+        gateway: Gateway IP address
+        netmask: Network mask
+        hostname: Hostname
+        nic: Network interface name
+
+    Returns:
+        ip= parameter string, or None if no IP configuration
+    """
+    if not ip_addr:
+        return None
+
+    if ip_addr.lower() == "dhcp":
+        if nic:
+            return f"ip=:::::::{nic}:dhcp"
+        return "ip=dhcp"
+
+    # Static IP configuration
+    # Format: ip=<client-ip>:<server-ip>:<gw-ip>:<netmask>:<hostname>:<device>:<autoconf>
+    parts = [
+        ip_addr,              # client-ip
+        "",                   # server-ip (empty)
+        gateway or "",        # gw-ip
+        netmask,              # netmask
+        hostname or "",       # hostname
+        nic or "",            # device
+        "off",                # autoconf (off for static)
+    ]
+    return "ip=" + ":".join(parts)
+
+
 def get_kexec_file_load_syscall():
     """Get the kexec_file_load syscall number for current architecture."""
     arch = platform.machine().lower()
@@ -163,6 +207,11 @@ def kexec_file_load(
 @click.option("--image", help="Docker image to use as rootfs (e.g., nginx:latest)")
 @click.option("--entrypoint", help="Override image entrypoint for init")
 @click.option("--rootfs-dir", help="Use existing directory as rootfs instead of Docker image")
+@click.option("--ip", "ip_addr", help="IP address for spawn kernel (or 'dhcp')")
+@click.option("--gateway", help="Default gateway IP address")
+@click.option("--netmask", default="255.255.255.0", help="Network mask (default: 255.255.255.0)")
+@click.option("--nic", help="Network interface name (e.g., eth0)")
+@click.option("--hostname", help="Hostname for spawn kernel")
 @click.option("--verbose", "-v", is_flag=True, help="Verbose output")
 def load(  # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     ctx: click.Context,
@@ -174,6 +223,11 @@ def load(  # pylint: disable=too-many-arguments,too-many-positional-arguments,to
     image: Optional[str],
     entrypoint: Optional[str],
     rootfs_dir: Optional[str],
+    ip_addr: Optional[str],
+    gateway: Optional[str],
+    netmask: str,
+    nic: Optional[str],
+    hostname: Optional[str],
     verbose: bool,
 ):
     """
@@ -203,6 +257,14 @@ def load(  # pylint: disable=too-many-arguments,too-many-positional-arguments,to
         # Load with pre-extracted rootfs directory
         kerf load custom --kernel=/boot/vmlinuz --rootfs-dir=/mnt/rootfs \\
                  --entrypoint=/sbin/init
+
+        # Load with static IP configuration
+        kerf load web-server --kernel=/boot/vmlinuz --image=nginx:latest \\
+                 --ip=192.168.1.100 --gateway=192.168.1.1 --nic=eth0
+
+        # Load with DHCP
+        kerf load web-server --kernel=/boot/vmlinuz --image=nginx:latest \\
+                 --ip=dhcp --nic=eth0
     """
     try:
         if not name and id is None:
@@ -383,7 +445,18 @@ def load(  # pylint: disable=too-many-arguments,too-many-positional-arguments,to
             )
 
         # Prepare command line
-        cmdline_str = cmdline if cmdline else ""
+        cmdline_parts = []
+        if cmdline:
+            cmdline_parts.append(cmdline)
+
+        # Add IP configuration if specified
+        ip_param = build_ip_param(ip_addr, gateway, netmask, hostname, nic)
+        if ip_param:
+            cmdline_parts.append(ip_param)
+            if verbose:
+                click.echo(f"Network config: {ip_param}")
+
+        cmdline_str = " ".join(cmdline_parts)
 
         if verbose:
             click.echo(f"Command line: {cmdline_str if cmdline_str else '(empty)'}")
