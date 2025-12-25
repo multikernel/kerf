@@ -1448,7 +1448,7 @@ class DeviceTreeParser:
         """Check if bytes represent a printable ASCII string."""
         return len(data) >= 2 and all(32 <= b < 127 or b in (9, 10, 13) for b in data)
 
-    def _try_parse_stringlist(self, data: bytes) -> list[str] | None:
+    def _try_parse_stringlist(self, data: bytes) -> Optional[List[str]]:
         """Try to parse data as a stringlist. Returns list of strings or None."""
         stripped = data.rstrip(b'\x00')
         if not stripped:
