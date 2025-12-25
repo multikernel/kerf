@@ -1481,7 +1481,7 @@ class DeviceTreeParser:
 
         # Try parsing as stringlist
         strings = self._try_parse_stringlist(data)
-        if strings:
+        if strings is not None:
             quoted = ', '.join(f'"{s}"' for s in strings)
             return f'{indent}{name} = {quoted};'
 
