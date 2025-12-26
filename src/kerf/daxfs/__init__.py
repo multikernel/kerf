@@ -12,8 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""FUSE server for multikernel filesystem sharing."""
+"""DAXFS filesystem image creation for multikernel."""
 
-from .server import start_fuse_server, stop_fuse_server, FuseServerError
+from .mkdaxfs import create_daxfs_image, DaxfsError, DaxfsImage
 
-__all__ = ["start_fuse_server", "stop_fuse_server", "FuseServerError"]
+__all__ = ["create_daxfs_image", "DaxfsError", "DaxfsImage"]
+
+
+
+

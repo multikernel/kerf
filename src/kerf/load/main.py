@@ -237,8 +237,8 @@ def load(  # pylint: disable=too-many-arguments,too-many-positional-arguments,to
     syscall. The kernel is loaded in multikernel mode with the specified ID.
 
     When --image is provided, the Docker image is extracted to a local directory,
-    a FUSE server is started to share the rootfs over vsock, and a minimal initrd
-    is generated to mount the rootfs via mkfuse.
+    a daxfs image is created in shared memory, and a minimal initrd is generated
+    to mount the rootfs via daxfs.
 
     Examples:
 
@@ -342,12 +342,12 @@ def load(  # pylint: disable=too-many-arguments,too-many-positional-arguments,to
                 click.echo(f"Initrd image: {initrd_path}")
 
         # Handle Docker image or rootfs directory
-        fuse_port = 6789
+        daxfs_image = None
 
         if image:
             from ..docker.image import extract_image, DockerError
-            from ..fuse import start_fuse_server, FuseServerError
-            from ..initrd import create_fuse_initrd, InitrdError
+            from ..daxfs import create_daxfs_image, DaxfsError
+            from ..initrd import create_daxfs_initrd, InitrdError
 
             try:
                 if verbose:
@@ -371,15 +371,23 @@ def load(  # pylint: disable=too-many-arguments,too-many-positional-arguments,to
                     sys.exit(2)
 
                 if verbose:
-                    click.echo(f"Starting FUSE server for instance {instance_id} on port {fuse_port}")
+                    click.echo(f"Creating daxfs image for instance {instance_name}...")
 
-                start_fuse_server(instance_id, rootfs_path, port=fuse_port)
+                daxfs_image = create_daxfs_image(rootfs_path, instance_name)
+
+                if verbose:
+                    click.echo(f"Daxfs image created at phys=0x{daxfs_image.phys_addr:x}, size={daxfs_image.size}")
 
                 if not initrd_path:
                     if verbose:
-                        click.echo("Generating minimal initrd for mkfuse root...")
+                        click.echo("Generating minimal initrd for daxfs root...")
                     try:
-                        generated_initrd = create_fuse_initrd(instance_name, init_path, port=fuse_port)
+                        generated_initrd = create_daxfs_initrd(
+                            instance_name,
+                            init_path,
+                            phys_addr=daxfs_image.phys_addr,
+                            size=daxfs_image.size,
+                        )
                         initrd_path = Path(generated_initrd)
                         if verbose:
                             click.echo(f"Generated initrd: {initrd_path}")
@@ -391,16 +399,16 @@ def load(  # pylint: disable=too-many-arguments,too-many-positional-arguments,to
             except DockerError as e:
                 click.echo(f"Error: Docker operation failed: {e}", err=True)
                 sys.exit(1)
-            except FuseServerError as e:
-                click.echo(f"Error: FUSE server failed: {e}", err=True)
+            except DaxfsError as e:
+                click.echo(f"Error: Daxfs image creation failed: {e}", err=True)
                 sys.exit(1)
             except FileNotFoundError as e:
                 click.echo(f"Error: {e}", err=True)
                 sys.exit(1)
 
         elif rootfs_dir:
-            from ..fuse import start_fuse_server, FuseServerError
-            from ..initrd import create_fuse_initrd, InitrdError
+            from ..daxfs import create_daxfs_image, DaxfsError
+            from ..initrd import create_daxfs_initrd, InitrdError
 
             try:
                 rootfs_path = Path(rootfs_dir)
@@ -410,15 +418,23 @@ def load(  # pylint: disable=too-many-arguments,too-many-positional-arguments,to
 
                 if verbose:
                     click.echo(f"Using rootfs directory: {rootfs_path}")
-                    click.echo(f"Starting FUSE server for instance {instance_id} on port {fuse_port}")
+                    click.echo(f"Creating daxfs image for instance {instance_name}...")
 
-                start_fuse_server(instance_id, str(rootfs_path), port=fuse_port)
+                daxfs_image = create_daxfs_image(str(rootfs_path), instance_name)
+
+                if verbose:
+                    click.echo(f"Daxfs image created at phys=0x{daxfs_image.phys_addr:x}, size={daxfs_image.size}")
 
                 if not initrd_path:
                     if verbose:
-                        click.echo("Generating minimal initrd for mkfuse root...")
+                        click.echo("Generating minimal initrd for daxfs root...")
                     try:
-                        generated_initrd = create_fuse_initrd(instance_name, entrypoint, port=fuse_port)
+                        generated_initrd = create_daxfs_initrd(
+                            instance_name,
+                            entrypoint,
+                            phys_addr=daxfs_image.phys_addr,
+                            size=daxfs_image.size,
+                        )
                         initrd_path = Path(generated_initrd)
                         if verbose:
                             click.echo(f"Generated initrd: {initrd_path}")
@@ -427,8 +443,8 @@ def load(  # pylint: disable=too-many-arguments,too-many-positional-arguments,to
                         click.echo(f"Error: Failed to generate initrd: {e}", err=True)
                         sys.exit(1)
 
-            except FuseServerError as e:
-                click.echo(f"Error: FUSE server failed: {e}", err=True)
+            except DaxfsError as e:
+                click.echo(f"Error: Daxfs image creation failed: {e}", err=True)
                 sys.exit(1)
             except FileNotFoundError as e:
                 click.echo(f"Error: {e}", err=True)

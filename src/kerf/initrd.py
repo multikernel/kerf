@@ -13,7 +13,7 @@
 # limitations under the License.
 
 """
-Minimal initrd generation for 9p root filesystem booting.
+Minimal initrd generation for daxfs root filesystem booting.
 """
 
 import os
@@ -27,17 +27,15 @@ from typing import Optional
 KERF_INITRD_DIR = "/var/lib/kerf/initrd"
 
 INIT_SCRIPT_TEMPLATE = """#!/bin/sh
-# Minimal init for mkfuse root mounting
-
 mount -t proc proc /proc
 mount -t sysfs sysfs /sys
 mount -t devtmpfs devtmpfs /dev
 
 mkdir -p /newroot
-mount -t mkfuse none /newroot -o tag=rootfs,cid=0,port={port}
+mount -t daxfs -o phys={phys_addr:#x},size={size} none /newroot
 
 if [ ! -d /newroot/bin ] && [ ! -d /newroot/usr ]; then
-    echo "Failed to mount mkfuse root filesystem"
+    echo "Failed to mount daxfs root filesystem"
     echo "Dropping to shell..."
     exec /bin/sh
 fi
@@ -88,14 +86,20 @@ def _check_busybox_static(busybox_path: str) -> bool:
         return False
 
 
-def create_fuse_initrd(instance_name: str, entrypoint: str, port: int = 6789) -> str:
+def create_daxfs_initrd(
+    instance_name: str,
+    entrypoint: str,
+    phys_addr: int,
+    size: int,
+) -> str:
     """
-    Create a minimal initrd for mkfuse root filesystem booting.
+    Create a minimal initrd for daxfs root filesystem booting.
 
     Args:
         instance_name: Instance name for naming the initrd
-        entrypoint: Path to the entrypoint in the rootfs (e.g., /init, /docker-entrypoint.sh)
-        port: vsock port for mkfuse connection (default: 6789)
+        entrypoint: Path to the entrypoint in the rootfs (e.g., /init)
+        phys_addr: Physical address of the daxfs image
+        size: Size of the daxfs image in bytes
 
     Returns:
         Path to the generated initrd file
@@ -141,7 +145,13 @@ def create_fuse_initrd(instance_name: str, entrypoint: str, port: int = 6789) ->
             (rootfs / "bin" / cmd).symlink_to("busybox")
 
         init_file = rootfs / "init"
-        init_file.write_text(INIT_SCRIPT_TEMPLATE.format(entrypoint=entrypoint, port=port))
+        init_file.write_text(
+            INIT_SCRIPT_TEMPLATE.format(
+                entrypoint=entrypoint,
+                phys_addr=phys_addr,
+                size=size,
+            )
+        )
         os.chmod(init_file, 0o755)
 
         os.mknod(rootfs / "dev" / "console", stat.S_IFCHR | 0o600, os.makedev(5, 1))
