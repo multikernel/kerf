@@ -346,6 +346,37 @@ def get_total_cpus_from_system() -> Optional[int]:
     return None
 
 
+def get_valid_apic_ids_from_system() -> Optional[set]:
+    """
+    Get set of valid APIC IDs from the system via sysfs.
+    Reads /sys/devices/system/cpu/cpuN/topology/apic_id for each CPU.
+    Returns set of valid APIC IDs or None if not available.
+    """
+    try:
+        cpu_dir = Path('/sys/devices/system/cpu')
+        if not cpu_dir.exists():
+            return None
+
+        apic_ids = set()
+        cpu_files = [f for f in cpu_dir.iterdir() if f.name.startswith('cpu') and f.name[3:].isdigit()]
+
+        for cpu_path in cpu_files:
+            apic_id_file = cpu_path / 'topology' / 'apic_id'
+            if apic_id_file.exists():
+                try:
+                    with open(apic_id_file, 'r', encoding='utf-8') as f:
+                        apic_id = int(f.read().strip())
+                        apic_ids.add(apic_id)
+                except (ValueError, IOError):
+                    pass
+
+        return apic_ids if apic_ids else None
+    except (OSError, ValueError):
+        pass
+
+    return None
+
+
 def build_baseline_from_cmdline(
     cpus: str,
     devices: Optional[str] = None,
@@ -371,27 +402,30 @@ def build_baseline_from_cmdline(
     except ValueError as e:
         raise ValueError(f"Invalid CPU specification '{cpus}': {e}") from e
 
-    system_total_cpus = get_total_cpus_from_system()
-    if system_total_cpus is None:
-        max_cpu = max(cpu_list) if cpu_list else 0
-        total_cpus = max_cpu + 1
-        if verbose:
-            click.echo(f"Warning: Could not determine total CPUs from system, using max from specification: {total_cpus}", err=True)
-    else:
-        total_cpus = system_total_cpus
-        max_specified = max(cpu_list) if cpu_list else -1
-        if max_specified >= total_cpus:
-            raise ValueError(
-                f"CPU {max_specified} specified but system only has {total_cpus} CPUs (0-{total_cpus-1})"
-            )
+    # Validate against valid APIC IDs on the system
+    valid_apic_ids = get_valid_apic_ids_from_system()
+    if valid_apic_ids is None:
+        raise KernelInterfaceError(
+            "Could not read APIC IDs from /sys/devices/system/cpu/*/topology/apic_id. "
+            "Ensure the system exposes CPU topology information."
+        )
 
+    invalid_cpus = set(cpu_list) - valid_apic_ids
+    if invalid_cpus:
+        raise ValueError(
+            f"Invalid APIC ID(s) specified: {sorted(invalid_cpus)}. "
+            f"Valid APIC IDs on this system: {sorted(valid_apic_ids)}"
+        )
+
+    # Total CPUs is based on the max APIC ID + 1 for sizing purposes
+    total_cpus = max(valid_apic_ids) + 1
+    # Host reserved are all valid APIC IDs not in the available list
     available_cpus = set(cpu_list)
-    all_cpus = set(range(total_cpus))
-    host_reserved_cpus = sorted(list(all_cpus - available_cpus))
+    host_reserved_cpus = sorted(list(valid_apic_ids - available_cpus))
 
     if 0 in available_cpus and len(host_reserved_cpus) == 0:
         if verbose:
-            click.echo("Warning: CPU 0 is in available list but no host-reserved CPUs. Moving CPU 0 to host-reserved.", err=True)
+            click.echo("Warning: APIC ID 0 is in available list but no host-reserved CPUs. Moving APIC ID 0 to host-reserved.", err=True)
         available_cpus.discard(0)
         host_reserved_cpus = [0]
         cpu_list = sorted(list(available_cpus))
@@ -407,10 +441,10 @@ def build_baseline_from_cmdline(
     total_bytes = memory_pool_base + memory_pool_bytes
     host_reserved_bytes = memory_pool_base
     if verbose:
-        click.echo(f"Parsed CPU specification: {cpus}")
-        click.echo(f"  Total CPUs: {total_cpus}")
-        click.echo(f"  Host-reserved CPUs: {host_reserved_cpus}")
-        click.echo(f"  Available CPUs: {cpu_list}")
+        click.echo(f"Parsed APIC ID specification: {cpus}")
+        click.echo(f"  Valid APIC IDs on system: {sorted(valid_apic_ids)}")
+        click.echo(f"  Host-reserved APIC IDs: {host_reserved_cpus}")
+        click.echo(f"  Available APIC IDs: {cpu_list}")
         click.echo("Memory pool from /proc/iomem:")
         click.echo(f"  Base: {hex(memory_pool_base)}")
         click.echo(f"  Size: {memory_pool_bytes} bytes ({memory_pool_bytes / (1024**3):.2f} GB)")
@@ -473,7 +507,7 @@ def build_baseline_from_cmdline(
 @click.command()
 @click.pass_context
 @click.option('--input', '-i', help='Input DTS or DTB file containing all resources. Mutually exclusive with --cpus and --devices. When used, all resources must come from the file.')
-@click.option('--cpus', '-c', help='CPU specification for baseline (e.g., "4-7" or "4,5,6,7"). Mutually exclusive with --input. Memory will be parsed from /proc/iomem.')
+@click.option('--cpus', '-c', help='APIC ID specification for baseline (e.g., "128-134" or "128,130,132"). Use physical APIC IDs, not logical CPU numbers. Mutually exclusive with --input. Memory will be parsed from /proc/iomem.')
 @click.option('--devices', '-d', help='Device names (comma-separated, e.g., "enp9s0_dev,nvme0"). Mutually exclusive with --input. Creates minimal device entries in baseline.')
 @click.option('--dry-run', is_flag=True, help='Validate without applying')
 @click.option('--report', is_flag=True, help='Generate detailed validation report')
@@ -501,11 +535,11 @@ def init(ctx: click.Context, input: Optional[str], cpus: Optional[str], devices:
         # Initialize from DTS file (all resources from file)
         kerf init --input=hardware.dts
 
-        # Initialize from command line (CPUs 4-7, memory from /proc/iomem)
-        kerf init --cpus=4-7
+        # Initialize from command line (APIC IDs 128-134, memory from /proc/iomem)
+        kerf init --cpus=128-134
 
-        # Initialize with CPUs and devices
-        kerf init --cpus=4-7 --devices=enp9s0_dev,nvme0
+        # Initialize with APIC IDs and devices
+        kerf init --cpus=128,130,132 --devices=enp9s0_dev,nvme0
 
         # Validate baseline without applying
         kerf init --input=hardware.dts --dry-run

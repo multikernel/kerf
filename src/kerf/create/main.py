@@ -137,7 +137,7 @@ def _allocate_spread(
                 numa_cpu_lists[numa_node_id] = sorted(numa_cpus)
 
         if not numa_cpu_lists:
-            raise ResourceError(f"No available CPUs in specified NUMA nodes: {numa_nodes}")
+            raise ResourceError(f"No available APIC IDs in specified NUMA nodes: {numa_nodes}")
 
         allocated = []
         numa_indices = {node_id: 0 for node_id in numa_cpu_lists}
@@ -187,7 +187,7 @@ def _allocate_local(
         if len(numa_cpus) >= count:
             return sorted(numa_cpus[:count])
         raise ResourceError(
-            f"Not enough CPUs in NUMA node {numa_node_id}: "
+            f"Not enough APIC IDs in NUMA node {numa_node_id}: "
             f"requested {count}, but only {len(numa_cpus)} available"
         )
 
@@ -200,7 +200,7 @@ def _allocate_local(
         if len(numa_cpus) >= count:
             return sorted(numa_cpus[:count])
 
-    raise ResourceError(f"No single NUMA node has {count} available CPUs for 'local' affinity")
+    raise ResourceError(f"No single NUMA node has {count} available APIC IDs for 'local' affinity")
 
 
 def allocate_cpus_from_pool(
@@ -236,11 +236,11 @@ def allocate_cpus_from_pool(
     if len(available) < count:
         if numa_nodes:
             raise ResourceError(
-                f"Not enough CPUs available in NUMA nodes {numa_nodes}: "
+                f"Not enough APIC IDs available in NUMA nodes {numa_nodes}: "
                 f"requested {count}, but only {len(available)} available"
             )
         raise ResourceError(
-            f"Not enough CPUs available: requested {count}, "
+            f"Not enough APIC IDs available: requested {count}, "
             f"but only {len(available)} available in pool"
         )
 
@@ -399,8 +399,9 @@ def dump_overlay_for_debug(
 @click.option(
     "--cpus",
     "-c",
-    help='Explicit CPU allocation: CPU IDs (e.g., "4" for CPU 4, "4-7" for range, '
-    '"4,5,6,7" for list, "4-7,10-12" for mixed). Mutually exclusive with --cpu-count',
+    help='Explicit APIC ID allocation (e.g., "128" for APIC ID 128, "128-134" for range, '
+    '"128,130,132" for list). Use physical APIC IDs, not logical CPU numbers. '
+    'Mutually exclusive with --cpu-count',
 )
 @click.option(
     "--cpu-count",
@@ -472,20 +473,20 @@ def create(  # pylint: disable=too-many-arguments,too-many-positional-arguments
 
     Examples:
 
-        # Create instance with CPUs 4-7 and 2GB memory (auto-assigned base)
-        kerf create web-server --cpus=4-7 --memory=2GB
+        # Create instance with APIC IDs 128-134 and 2GB memory (auto-assigned base)
+        kerf create web-server --cpus=128-134 --memory=2GB
 
         # Create instance with name after options
-        kerf create --cpus=8-15 --memory=8GB web-server
+        kerf create --cpus=128,130,132 --memory=8GB web-server
 
         # Create instance with specific memory base address
-        kerf create database --cpus=8-15 --memory=8GB --memory-base=0x100000000
+        kerf create database --cpus=128-142 --memory=8GB --memory-base=0x100000000
 
         # Create instance with devices
-        kerf create compute --cpus=16-23 --memory=4GB --devices=enp9s0_dev
+        kerf create compute --cpus=128-142 --memory=4GB --devices=enp9s0_dev
 
-        # Create instance with explicit single CPU
-        kerf create web-server --cpus=4 --memory=2GB
+        # Create instance with explicit single APIC ID
+        kerf create web-server --cpus=128 --memory=2GB
 
         # Create instance with auto-allocated CPU count
         kerf create web-server --cpu-count=4 --memory=2GB
@@ -539,7 +540,7 @@ def create(  # pylint: disable=too-many-arguments,too-many-positional-arguments
             try:
                 cpu_spec_value = parse_cpu_spec(cpus)
             except ValueError as e:
-                click.echo(f"Error: Invalid CPU specification '{cpus}': {e}", err=True)
+                click.echo(f"Error: Invalid APIC ID specification '{cpus}': {e}", err=True)
                 sys.exit(2)
 
         # Parse memory specification

@@ -201,29 +201,29 @@ def validate_cpu_allocation(
 
     requested_set = set(requested_cpus)
 
-    # Check all requested CPUs exist in hardware
+    # Check all requested APIC IDs exist in hardware
     hardware_cpus = set(tree.hardware.cpus.available)
     invalid_cpus = requested_set - hardware_cpus
     if invalid_cpus:
         raise ResourceError(
-            f"Invalid CPUs requested: {sorted(invalid_cpus)}. "
-            f"Available CPUs: {sorted(hardware_cpus)}"
+            f"Invalid APIC IDs requested: {sorted(invalid_cpus)}. "
+            f"Available APIC IDs: {sorted(hardware_cpus)}"
         )
 
-    # Check CPUs are available
+    # Check APIC IDs are available
     unavailable = requested_set - available_cpus
     if unavailable:
-        # Find which instances are using these CPUs
+        # Find which instances are using these APIC IDs
         conflicts = []
         for instance in tree.instances.values():
             if instance.name == exclude_instance:
                 continue
             conflict_cpus = set(instance.resources.cpus) & unavailable
             if conflict_cpus:
-                conflicts.append(f"{instance.name} uses CPUs {sorted(conflict_cpus)}")
+                conflicts.append(f"{instance.name} uses APIC IDs {sorted(conflict_cpus)}")
 
         conflict_msg = ", ".join(conflicts) if conflicts else "allocated to other instances"
-        raise ResourceError(f"CPUs {sorted(unavailable)} are not available ({conflict_msg})")
+        raise ResourceError(f"APIC IDs {sorted(unavailable)} are not available ({conflict_msg})")
 
 
 def validate_memory_allocation(
