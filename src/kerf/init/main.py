@@ -348,30 +348,28 @@ def get_total_cpus_from_system() -> Optional[int]:
 
 def get_valid_apic_ids_from_system() -> Optional[set]:
     """
-    Get set of valid APIC IDs from the system via sysfs.
-    Reads /sys/devices/system/cpu/cpuN/topology/apic_id for each CPU.
+    Get set of valid APIC IDs from the system via /proc/cpuinfo.
     Returns set of valid APIC IDs or None if not available.
     """
     try:
-        cpu_dir = Path('/sys/devices/system/cpu')
-        if not cpu_dir.exists():
+        cpuinfo_path = Path('/proc/cpuinfo')
+        if not cpuinfo_path.exists():
             return None
 
         apic_ids = set()
-        cpu_files = [f for f in cpu_dir.iterdir() if f.name.startswith('cpu') and f.name[3:].isdigit()]
-
-        for cpu_path in cpu_files:
-            apic_id_file = cpu_path / 'topology' / 'apic_id'
-            if apic_id_file.exists():
-                try:
-                    with open(apic_id_file, 'r', encoding='utf-8') as f:
-                        apic_id = int(f.read().strip())
-                        apic_ids.add(apic_id)
-                except (ValueError, IOError):
-                    pass
+        with open(cpuinfo_path, 'r', encoding='utf-8') as f:
+            for line in f:
+                if line.startswith('apicid'):
+                    parts = line.split(':')
+                    if len(parts) == 2:
+                        try:
+                            apic_id = int(parts[1].strip())
+                            apic_ids.add(apic_id)
+                        except ValueError:
+                            pass
 
         return apic_ids if apic_ids else None
-    except (OSError, ValueError):
+    except (OSError, IOError):
         pass
 
     return None
@@ -406,7 +404,7 @@ def build_baseline_from_cmdline(
     valid_apic_ids = get_valid_apic_ids_from_system()
     if valid_apic_ids is None:
         raise KernelInterfaceError(
-            "Could not read APIC IDs from /sys/devices/system/cpu/*/topology/apic_id. "
+            "Could not read APIC IDs from /proc/cpuinfo. "
             "Ensure the system exposes CPU topology information."
         )
 
