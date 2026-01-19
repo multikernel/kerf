@@ -310,6 +310,23 @@ def _allocate_dma_heap(heap_path: str, size: int) -> tuple[int, mmap.mmap]:
 
 KERF_DAXFS_MNT_DIR = "/var/lib/kerf/daxfs"
 
+KERF_INIT_TEMPLATE = """#!/bin/sh
+mount -t proc proc /proc
+mount -t sysfs sysfs /sys
+mkdir -p /dev/pts
+mount -t devpts devpts /dev/pts
+ifconfig eth0 192.168.122.157
+cat /proc/uptime > /dev/kmsg
+exec {entrypoint}
+"""
+
+
+def inject_kerf_init(rootfs_path: str, entrypoint: str) -> None:
+    """Inject /init wrapper script into rootfs."""
+    init_path = Path(rootfs_path) / "init"
+    init_path.write_text(KERF_INIT_TEMPLATE.format(entrypoint=entrypoint))
+    os.chmod(init_path, 0o755)
+
 
 def _mount_daxfs(instance_name: str, phys_addr: int, size: int) -> None:
     """

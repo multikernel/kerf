@@ -14,9 +14,9 @@
 
 """DAXFS filesystem image creation for multikernel."""
 
-from .mkdaxfs import create_daxfs_image, DaxfsError, DaxfsImage
+from .mkdaxfs import create_daxfs_image, DaxfsError, DaxfsImage, inject_kerf_init
 
-__all__ = ["create_daxfs_image", "DaxfsError", "DaxfsImage"]
+__all__ = ["create_daxfs_image", "DaxfsError", "DaxfsImage", "inject_kerf_init"]
 
 
 

@@ -29,6 +29,8 @@ from ..utils import get_instance_id_from_name, get_instance_name_from_id
 
 
 # KEXEC flags definitions
+KEXEC_FILE_NO_INITRAMFS = 0x00000004
+KEXEC_FILE_DEBUG = 0x00000008
 KEXEC_MULTIKERNEL = 0x00000010
 KEXEC_MK_ID_MASK = 0x0000FFE0
 KEXEC_MK_ID_SHIFT = 5
@@ -231,14 +233,14 @@ def load(  # pylint: disable=too-many-arguments,too-many-positional-arguments,to
     verbose: bool,
 ):
     """
-    Load kernel image and initrd using kexec_file_load syscall.
+    Load kernel image using kexec_file_load syscall.
 
     This command loads a kernel image into memory using the kexec_file_load
     syscall. The kernel is loaded in multikernel mode with the specified ID.
 
-    When --image is provided, the Docker image is extracted to a local directory,
-    a daxfs image is created in shared memory, and a minimal initrd is generated
-    to mount the rootfs via daxfs.
+    When --image or --rootfs-dir is provided, a daxfs image is created and the
+    kernel boots directly into daxfs as root filesystem (no initrd needed).
+    Use --initrd to override this and provide your own initrd.
 
     Examples:
 
@@ -346,8 +348,7 @@ def load(  # pylint: disable=too-many-arguments,too-many-positional-arguments,to
 
         if image:
             from ..docker.image import extract_image, DockerError
-            from ..daxfs import create_daxfs_image, DaxfsError
-            from ..initrd import create_daxfs_initrd, InitrdError
+            from ..daxfs import create_daxfs_image, DaxfsError, inject_kerf_init
 
             try:
                 if verbose:
@@ -370,6 +371,11 @@ def load(  # pylint: disable=too-many-arguments,too-many-positional-arguments,to
                     )
                     sys.exit(2)
 
+                if not initrd_path:
+                    inject_kerf_init(rootfs_path, init_path)
+                    if verbose:
+                        click.echo(f"Injected /init wrapper (entrypoint: {init_path})")
+
                 if verbose:
                     click.echo(f"Creating daxfs image for instance {instance_name}...")
 
@@ -377,24 +383,7 @@ def load(  # pylint: disable=too-many-arguments,too-many-positional-arguments,to
 
                 if verbose:
                     click.echo(f"Daxfs image created at phys=0x{daxfs_image.phys_addr:x}, size={daxfs_image.size}")
-
-                if not initrd_path:
-                    if verbose:
-                        click.echo("Generating minimal initrd for daxfs root...")
-                    try:
-                        generated_initrd = create_daxfs_initrd(
-                            instance_name,
-                            init_path,
-                            phys_addr=daxfs_image.phys_addr,
-                            size=daxfs_image.size,
-                        )
-                        initrd_path = Path(generated_initrd)
-                        if verbose:
-                            click.echo(f"Generated initrd: {initrd_path}")
-                            click.echo(f"Entrypoint: {init_path}")
-                    except InitrdError as e:
-                        click.echo(f"Error: Failed to generate initrd: {e}", err=True)
-                        sys.exit(1)
+                    click.echo(f"Entrypoint: {init_path}")
 
             except DockerError as e:
                 click.echo(f"Error: Docker operation failed: {e}", err=True)
@@ -407,14 +396,20 @@ def load(  # pylint: disable=too-many-arguments,too-many-positional-arguments,to
                 sys.exit(1)
 
         elif rootfs_dir:
-            from ..daxfs import create_daxfs_image, DaxfsError
-            from ..initrd import create_daxfs_initrd, InitrdError
+            from ..daxfs import create_daxfs_image, DaxfsError, inject_kerf_init
 
             try:
                 rootfs_path = Path(rootfs_dir)
                 if not rootfs_path.is_dir():
                     click.echo(f"Error: Rootfs directory '{rootfs_dir}' does not exist", err=True)
                     sys.exit(3)
+
+                init_path = entrypoint
+
+                if not initrd_path:
+                    inject_kerf_init(str(rootfs_path), init_path)
+                    if verbose:
+                        click.echo(f"Injected /init wrapper (entrypoint: {init_path})")
 
                 if verbose:
                     click.echo(f"Using rootfs directory: {rootfs_path}")
@@ -424,24 +419,7 @@ def load(  # pylint: disable=too-many-arguments,too-many-positional-arguments,to
 
                 if verbose:
                     click.echo(f"Daxfs image created at phys=0x{daxfs_image.phys_addr:x}, size={daxfs_image.size}")
-
-                if not initrd_path:
-                    if verbose:
-                        click.echo("Generating minimal initrd for daxfs root...")
-                    try:
-                        generated_initrd = create_daxfs_initrd(
-                            instance_name,
-                            entrypoint,
-                            phys_addr=daxfs_image.phys_addr,
-                            size=daxfs_image.size,
-                        )
-                        initrd_path = Path(generated_initrd)
-                        if verbose:
-                            click.echo(f"Generated initrd: {initrd_path}")
-                            click.echo(f"Entrypoint: {entrypoint}")
-                    except InitrdError as e:
-                        click.echo(f"Error: Failed to generate initrd: {e}", err=True)
-                        sys.exit(1)
+                    click.echo(f"Entrypoint: {init_path}")
 
             except DaxfsError as e:
                 click.echo(f"Error: Daxfs image creation failed: {e}", err=True)
@@ -454,16 +432,29 @@ def load(  # pylint: disable=too-many-arguments,too-many-positional-arguments,to
         mk_id_flags = KEXEC_MK_ID(instance_id)
         flags = KEXEC_MULTIKERNEL | mk_id_flags
 
+        # If no initrd, set NO_INITRAMFS flag
+        if not initrd_path:
+            flags |= KEXEC_FILE_NO_INITRAMFS
+
         if verbose:
             click.echo(f"Multikernel mode enabled with ID: {instance_id}")
-            click.echo(
-                f"Flags: KEXEC_MULTIKERNEL=0x{KEXEC_MULTIKERNEL:x}, KEXEC_MK_ID({instance_id})=0x{mk_id_flags:x}, combined=0x{flags:x}"
-            )
+            flag_parts = [f"KEXEC_MULTIKERNEL=0x{KEXEC_MULTIKERNEL:x}", f"KEXEC_MK_ID({instance_id})=0x{mk_id_flags:x}"]
+            if not initrd_path:
+                flag_parts.append(f"KEXEC_FILE_NO_INITRAMFS=0x{KEXEC_FILE_NO_INITRAMFS:x}")
+            click.echo(f"Flags: {', '.join(flag_parts)}, combined=0x{flags:x}")
 
         # Prepare command line
         cmdline_parts = []
         if cmdline:
             cmdline_parts.append(cmdline)
+
+        # Add daxfs root parameters if using daxfs
+        if daxfs_image and not initrd_path:
+            cmdline_parts.append("rootfstype=daxfs")
+            cmdline_parts.append(f"rootflags=phys=0x{daxfs_image.phys_addr:x},size={daxfs_image.size}")
+            cmdline_parts.append("init=/init")
+            if verbose:
+                click.echo(f"Daxfs root: rootfstype=daxfs rootflags=phys=0x{daxfs_image.phys_addr:x},size={daxfs_image.size}")
 
         # Add IP configuration if specified
         ip_param = build_ip_param(ip_addr, gateway, netmask, hostname, nic)
@@ -501,6 +492,8 @@ def load(  # pylint: disable=too-many-arguments,too-many-positional-arguments,to
                 click.echo("Calling kexec_file_load syscall...")
 
             debug = ctx.obj.get("debug", False) if ctx and ctx.obj else False
+            if debug:
+                flags |= KEXEC_FILE_DEBUG
             result = kexec_file_load(kernel_fd, initrd_fd, cmdline_str, flags, debug=debug)
 
             if verbose:
@@ -512,6 +505,11 @@ def load(  # pylint: disable=too-many-arguments,too-many-positional-arguments,to
             click.echo(f"Error: kexec_file_load failed: {e}", err=True)
             if e.errno == 1:  # EPERM
                 click.echo("Note: This operation requires root privileges", err=True)
+            elif e.errno == 16:  # EBUSY
+                click.echo(
+                    f"Note: Instance '{instance_name}' already has a kernel loaded. "
+                    f"Run 'kerf unload {instance_name}' first.", err=True
+                )
             elif e.errno == 22:  # EINVAL
                 click.echo(
                     "Note: Invalid arguments. Check kernel image format and flags.", err=True
