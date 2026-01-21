@@ -34,7 +34,7 @@ MKTTY_DEVICE = "/dev/mktty"
 CTRL_CLOSE_BRACKET = 0x1D  # Ctrl+]
 
 
-def run_console(instance_id: int, instance_name: str, verbose: bool = False) -> int:
+def run_console(instance_id: int, instance_name: str, verbose: bool = False) -> int:  # pylint: disable=unused-argument
     """
     Attach to a running instance's console via mktty device.
 
@@ -106,11 +106,10 @@ def run_console(instance_id: int, instance_name: str, verbose: bool = False) -> 
                             if byte == ord('.'):
                                 # Detach sequence complete
                                 return 0
-                            else:
-                                # Not a detach sequence, send the buffered Ctrl+]
-                                os.write(mktty_fd, bytes([CTRL_CLOSE_BRACKET]))
-                                saw_ctrl_bracket = False
-                                # Fall through to send current byte
+                            # Not a detach sequence, send the buffered Ctrl+]
+                            os.write(mktty_fd, bytes([CTRL_CLOSE_BRACKET]))
+                            saw_ctrl_bracket = False
+                            # Fall through to send current byte
 
                         if byte == CTRL_CLOSE_BRACKET:
                             # Start of potential detach sequence
