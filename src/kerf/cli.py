@@ -26,6 +26,7 @@ from .kill.main import kill_cmd
 from .unload.main import unload
 from .delete.main import delete
 from .show.main import show
+from .console.main import console
 
 
 @click.group()
@@ -48,6 +49,7 @@ main.add_command(kill_cmd)
 main.add_command(unload)
 main.add_command(delete)
 main.add_command(show)
+main.add_command(console)
 
 
 if __name__ == "__main__":

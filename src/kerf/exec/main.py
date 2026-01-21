@@ -103,18 +103,23 @@ def boot_multikernel(mk_id: int) -> int:
 @click.command(name="exec")
 @click.argument("name", required=False)
 @click.option("--id", type=int, help="Multikernel instance ID to boot (alternative to name)")
+@click.option("--console", "attach_console", is_flag=True, help="Attach to console after boot")
 @click.option("--verbose", "-v", is_flag=True, help="Verbose output")
-def exec_cmd(name: Optional[str], id: Optional[int], verbose: bool):
+def exec_cmd(name: Optional[str], id: Optional[int], attach_console: bool, verbose: bool):
     """
     Boot a multikernel instance using the reboot syscall.
 
     This command boots a previously loaded multikernel instance by name or ID using
     the reboot syscall with the MULTIKERNEL command.
 
+    Use --console to immediately attach to the instance's console after boot.
+    Press Ctrl+] followed by . to detach from the console.
+
     Examples:
 
         kerf exec web-server
         kerf exec --id=1
+        kerf exec web-server --console
     """
     try:
         if not name and id is None:
@@ -216,6 +221,14 @@ def exec_cmd(name: Optional[str], id: Optional[int], verbose: bool):
             click.echo(f"✓ Boot command executed successfully (result: {result})")
         else:
             click.echo("✓ Boot command executed successfully")
+
+        # Attach to console if requested
+        if attach_console:
+            from ..console import run_console
+
+            console_result = run_console(instance_id, instance_name, verbose)
+            if console_result != 0:
+                sys.exit(console_result)
 
         # Note: If successful, this syscall will reboot the system and boot the
         # specified multikernel instance, so we may not reach this point.
