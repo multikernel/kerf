@@ -22,11 +22,14 @@ The guest kernel can then mount the filesystem directly using the physical addre
 import fcntl
 import mmap
 import os
+import shutil
 import struct
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
+
+from kerf.data import get_init_binary_path
 
 DAXFS_MAGIC = 0x64646178
 DAXFS_VERSION = 1
@@ -310,21 +313,23 @@ def _allocate_dma_heap(heap_path: str, size: int) -> tuple[int, mmap.mmap]:
 
 KERF_DAXFS_MNT_DIR = "/var/lib/kerf/daxfs"
 
-KERF_INIT_TEMPLATE = """#!/bin/sh
-mount -t proc proc /proc
-mount -t sysfs sysfs /sys
-mkdir -p /dev/pts
-mount -t devpts devpts /dev/pts
-ifconfig eth0 192.168.122.157
-cat /proc/uptime > /dev/kmsg
-exec {entrypoint}
-"""
+def inject_kerf_init(rootfs_path: str) -> None:
+    """Inject /init binary into rootfs.
 
+    The entrypoint is passed via kernel cmdline as kerf.entrypoint=<path>.
+    """
+    rootfs = Path(rootfs_path)
 
-def inject_kerf_init(rootfs_path: str, entrypoint: str) -> None:
-    """Inject /init wrapper script into rootfs."""
-    init_path = Path(rootfs_path) / "init"
-    init_path.write_text(KERF_INIT_TEMPLATE.format(entrypoint=entrypoint))
+    # Copy the pre-built init binary
+    init_binary = get_init_binary_path()
+    if not init_binary.exists():
+        raise DaxfsError(
+            f"Init binary not found at {init_binary}. "
+            "Run 'make' to build it first."
+        )
+
+    init_path = rootfs / "init"
+    shutil.copy2(init_binary, init_path)
     os.chmod(init_path, 0o755)
 
 

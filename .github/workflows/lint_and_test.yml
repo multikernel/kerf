@@ -26,6 +26,15 @@ jobs:
         virtualenvs-path: .venv
         installer-parallel: true
 
+    - name: Install musl-tools
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y musl-tools
+
+    - name: Build init binary
+      run: |
+        make
+
     - name: Install dependencies
       run: |
         poetry install --no-interaction

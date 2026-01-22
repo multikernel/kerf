@@ -9,6 +9,9 @@ description = "Multikernel Management CLI tool"
 authors = ["Cong Wang"]
 readme = "README.md"
 packages = [{include = "kerf", from = "src"}]
+include = [
+    { path = "src/kerf/data/kerf-init", format = ["sdist", "wheel"] },
+]
 
 [tool.poetry.dependencies]
 python = "^3.9"

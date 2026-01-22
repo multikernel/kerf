@@ -351,6 +351,7 @@ def load(  # pylint: disable=too-many-arguments,too-many-positional-arguments,to
 
         # Handle Docker image or rootfs directory
         daxfs_image = None
+        init_path = None
 
         if image:
             from ..docker.image import extract_image, DockerError
@@ -378,7 +379,7 @@ def load(  # pylint: disable=too-many-arguments,too-many-positional-arguments,to
                     sys.exit(2)
 
                 if not initrd_path:
-                    inject_kerf_init(rootfs_path, init_path)
+                    inject_kerf_init(rootfs_path)
                     if verbose:
                         click.echo(f"Injected /init wrapper (entrypoint: {init_path})")
 
@@ -413,7 +414,7 @@ def load(  # pylint: disable=too-many-arguments,too-many-positional-arguments,to
                 init_path = entrypoint
 
                 if not initrd_path:
-                    inject_kerf_init(str(rootfs_path), init_path)
+                    inject_kerf_init(str(rootfs_path))
                     if verbose:
                         click.echo(f"Injected /init wrapper (entrypoint: {init_path})")
 
@@ -459,8 +460,16 @@ def load(  # pylint: disable=too-many-arguments,too-many-positional-arguments,to
             cmdline_parts.append("rootfstype=daxfs")
             cmdline_parts.append(f"rootflags=phys=0x{daxfs_image.phys_addr:x},size={daxfs_image.size}")
             cmdline_parts.append("init=/init")
+            if init_path:
+                # Quote entrypoint if it contains spaces
+                if ' ' in init_path:
+                    cmdline_parts.append(f'kerf.entrypoint="{init_path}"')
+                else:
+                    cmdline_parts.append(f"kerf.entrypoint={init_path}")
             if verbose:
                 click.echo(f"Daxfs root: rootfstype=daxfs rootflags=phys=0x{daxfs_image.phys_addr:x},size={daxfs_image.size}")
+                if init_path:
+                    click.echo(f"Entrypoint: kerf.entrypoint={init_path}")
 
         # Add IP configuration if specified
         ip_param = build_ip_param(ip_addr, gateway, netmask, hostname, nic)
