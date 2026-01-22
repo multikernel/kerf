@@ -32,6 +32,7 @@ from ..utils import get_instance_id_from_name
 LINUX_REBOOT_MAGIC1 = 0xfee1dead
 LINUX_REBOOT_MAGIC2 = 672274793  # 0x28121969
 LINUX_REBOOT_CMD_MULTIKERNEL_HALT = 0x4D4B4C48
+LINUX_REBOOT_CMD_MULTIKERNEL_HALT_FORCE = 0x4D4B4C46
 
 SYS_REBOOT_X86_64 = 169
 SYS_REBOOT_ARM64 = 142
@@ -68,7 +69,7 @@ class MultikernelBootArgs(ctypes.Structure):
         self.mk_id = 0
 
 
-def halt_multikernel(mk_id: int) -> int:
+def halt_multikernel(mk_id: int, force: bool = False) -> int:
     libc = ctypes.CDLL(None, use_errno=True)
     syscall_fn = libc.syscall
 
@@ -77,11 +78,13 @@ def halt_multikernel(mk_id: int) -> int:
     args = MultikernelBootArgs()
     args.mk_id = mk_id
 
+    cmd = LINUX_REBOOT_CMD_MULTIKERNEL_HALT_FORCE if force else LINUX_REBOOT_CMD_MULTIKERNEL_HALT
+
     syscall_fn.argtypes = [
         ctypes.c_long,      # syscall number
         ctypes.c_ulong,     # LINUX_REBOOT_MAGIC1
         ctypes.c_ulong,     # LINUX_REBOOT_MAGIC2
-        ctypes.c_ulong,     # LINUX_REBOOT_CMD_MULTIKERNEL_HALT
+        ctypes.c_ulong,     # LINUX_REBOOT_CMD_MULTIKERNEL_HALT[_FORCE]
         ctypes.POINTER(MultikernelBootArgs)
     ]
     syscall_fn.restype = ctypes.c_long
@@ -90,7 +93,7 @@ def halt_multikernel(mk_id: int) -> int:
         syscall_num,
         LINUX_REBOOT_MAGIC1,
         LINUX_REBOOT_MAGIC2,
-        LINUX_REBOOT_CMD_MULTIKERNEL_HALT,
+        cmd,
         ctypes.byref(args)
     )
 
@@ -104,8 +107,9 @@ def halt_multikernel(mk_id: int) -> int:
 @click.command(name='kill')
 @click.argument('name', required=False)
 @click.option('--id', type=int, help='Multikernel instance ID to shutdown (alternative to name)')
+@click.option('--force', '-f', is_flag=True, help='Force shutdown without graceful termination')
 @click.option('--verbose', '-v', is_flag=True, help='Verbose output')
-def kill_cmd(name: Optional[str], id: Optional[int], verbose: bool):
+def kill_cmd(name: Optional[str], id: Optional[int], force: bool, verbose: bool):
     """
     Shutdown a multikernel instance using the reboot syscall.
 
@@ -116,6 +120,7 @@ def kill_cmd(name: Optional[str], id: Optional[int], verbose: bool):
 
         kerf kill web-server
         kerf kill --id=1
+        kerf kill --force web-server
     """
     try:
         if not name and id is None:
@@ -216,15 +221,17 @@ def kill_cmd(name: Optional[str], id: Optional[int], verbose: bool):
             )
             sys.exit(1)
 
+        halt_cmd = LINUX_REBOOT_CMD_MULTIKERNEL_HALT_FORCE if force else LINUX_REBOOT_CMD_MULTIKERNEL_HALT
         if verbose:
             click.echo(f"✓ Instance '{instance_name}' is running")
             click.echo(f"Instance ID to shutdown: {instance_id}")
-            click.echo(f"Using reboot syscall with command: 0x{LINUX_REBOOT_CMD_MULTIKERNEL_HALT:x}")
+            click.echo(f"Using reboot syscall with command: 0x{halt_cmd:x}{' (force)' if force else ''}")
             click.echo("Calling reboot syscall...")
         else:
-            click.echo(f"Shutting down instance '{instance_name}' (ID: {instance_id})...")
+            force_str = " (force)" if force else ""
+            click.echo(f"Shutting down instance '{instance_name}' (ID: {instance_id}){force_str}...")
 
-        result = halt_multikernel(instance_id)
+        result = halt_multikernel(instance_id, force=force)
 
         if verbose:
             click.echo(f"✓ Shutdown command executed successfully (result: {result})")
