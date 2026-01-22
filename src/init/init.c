@@ -21,6 +21,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <signal.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -29,7 +30,6 @@
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <termios.h>
-#include <time.h>
 #include <unistd.h>
 
 #define CMDLINE_PATH "/proc/cmdline"
@@ -63,22 +63,19 @@ static void log_error(const char *msg)
     log_msg(buf);
 }
 
+static inline uint64_t rdtsc(void)
+{
+    uint32_t lo, hi;
+    asm volatile("rdtsc" : "=a"(lo), "=d"(hi));
+    return ((uint64_t)hi << 32) | lo;
+}
+
 static void log_starting(void)
 {
-    struct timespec ts;
-    struct tm tm;
-    char buf[80];
+    char buf[64];
+    uint64_t tsc = rdtsc();
 
-    if (clock_gettime(CLOCK_REALTIME, &ts) < 0 ||
-        gmtime_r(&ts.tv_sec, &tm) == NULL) {
-        log_msg("starting");
-        return;
-    }
-
-    snprintf(buf, sizeof(buf), "starting at %04d-%02d-%02d %02d:%02d:%02d.%03ld UTC",
-             tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday,
-             tm.tm_hour, tm.tm_min, tm.tm_sec,
-             ts.tv_nsec / 1000000);
+    snprintf(buf, sizeof(buf), "starting at TSC %lu", tsc);
     log_msg(buf);
 }
 

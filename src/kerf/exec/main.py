@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Optional
 
 import click
+import rdtsc
 
 from ..models import InstanceState
 from ..utils import get_instance_id_from_name
@@ -37,7 +38,6 @@ SYS_REBOOT_X86_64 = 169
 SYS_REBOOT_ARM64 = 142
 SYS_REBOOT_ARM = 88
 SYS_REBOOT_X86 = 88
-
 
 def get_reboot_syscall():
     """Get the reboot syscall number for current architecture."""
@@ -211,7 +211,8 @@ def exec_cmd(name: Optional[str], id: Optional[int], attach_console: bool, verbo
             click.echo(f"✓ Kernel image found for instance '{instance_name}'")
             click.echo(f"Instance ID to boot: {instance_id}")
             click.echo(f"Using reboot syscall with command: 0x{LINUX_REBOOT_CMD_MULTIKERNEL:x}")
-            click.echo("Calling reboot syscall...")
+            tsc = rdtsc.get_cycles()
+            click.echo(f"Calling reboot syscall at TSC {tsc}")
         else:
             click.echo(f"Booting instance '{instance_name}' (ID: {instance_id})...")
 
