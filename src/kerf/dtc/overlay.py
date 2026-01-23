@@ -119,29 +119,53 @@ class OverlayGenerator:
         fdt_sw.begin_node("fragment@0")
         fdt_sw.begin_node("__overlay__")
 
-        # 1. memory-remove (if memory changed)
+        # 1. memory-remove (if memory shrunk or base changed)
         if memory_changed:
-            fdt_sw.begin_node("memory-remove")
-            fdt_sw.property_string("mk,instance", instance_name)
+            if old_mem_base == new_mem_base:
+                # Same base: only remove the excess if shrinking
+                if old_mem_size > new_mem_size:
+                    remove_base = old_mem_base + new_mem_size
+                    remove_size = old_mem_size - new_mem_size
+                    fdt_sw.begin_node("memory-remove")
+                    fdt_sw.property_string("mk,instance", instance_name)
+                    fdt_sw.begin_node("region@0")
+                    reg_data = struct.pack(">QQ", remove_base, remove_size)
+                    fdt_sw.property("reg", reg_data)
+                    fdt_sw.end_node()
+                    fdt_sw.end_node()
+            else:
+                # Different base: remove entire old region
+                fdt_sw.begin_node("memory-remove")
+                fdt_sw.property_string("mk,instance", instance_name)
+                fdt_sw.begin_node("region@0")
+                reg_data = struct.pack(">QQ", old_mem_base, old_mem_size)
+                fdt_sw.property("reg", reg_data)
+                fdt_sw.end_node()
+                fdt_sw.end_node()
 
-            fdt_sw.begin_node("region@0")
-            reg_data = struct.pack(">QQ", old_mem_base, old_mem_size)
-            fdt_sw.property("reg", reg_data)
-            fdt_sw.end_node()
-
-            fdt_sw.end_node()
-
-        # 2. memory-add (if memory changed)
+        # 2. memory-add (if memory grew or base changed)
         if memory_changed:
-            fdt_sw.begin_node("memory-add")
-            fdt_sw.property_string("mk,instance", instance_name)
-
-            fdt_sw.begin_node("region@0")
-            reg_data = struct.pack(">QQ", new_mem_base, new_mem_size)
-            fdt_sw.property("reg", reg_data)
-            fdt_sw.end_node()
-
-            fdt_sw.end_node()
+            if old_mem_base == new_mem_base:
+                # Same base: only add the extension if growing
+                if new_mem_size > old_mem_size:
+                    add_base = old_mem_base + old_mem_size
+                    add_size = new_mem_size - old_mem_size
+                    fdt_sw.begin_node("memory-add")
+                    fdt_sw.property_string("mk,instance", instance_name)
+                    fdt_sw.begin_node("region@0")
+                    reg_data = struct.pack(">QQ", add_base, add_size)
+                    fdt_sw.property("reg", reg_data)
+                    fdt_sw.end_node()
+                    fdt_sw.end_node()
+            else:
+                # Different base: add entire new region
+                fdt_sw.begin_node("memory-add")
+                fdt_sw.property_string("mk,instance", instance_name)
+                fdt_sw.begin_node("region@0")
+                reg_data = struct.pack(">QQ", new_mem_base, new_mem_size)
+                fdt_sw.property("reg", reg_data)
+                fdt_sw.end_node()
+                fdt_sw.end_node()
 
         # 3. cpu-remove (if CPUs removed)
         if cpus_to_remove:
