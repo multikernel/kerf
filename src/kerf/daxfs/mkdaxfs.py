@@ -16,15 +16,16 @@
 DAXFS filesystem image creation.
 
 Creates a daxfs image from a directory and writes it to DMA heap memory.
-The guest kernel can then mount the filesystem directly using the physical address.
+The daxfs filesystem holds a reference to the dma-buf, so the memory persists
+even after the dmabuf fd is closed.
 """
 
+import ctypes
 import fcntl
 import mmap
 import os
 import shutil
 import struct
-import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
@@ -50,7 +51,6 @@ class DaxfsImage:
     """Represents a created daxfs image."""
     phys_addr: int
     size: int
-    dmabuf_fd: int
 
 
 @dataclass
@@ -273,6 +273,22 @@ class DaxfsBuilder:
         return stat.S_ISLNK(mode)
 
 
+def _get_libc():
+    """Get libc with errno support."""
+    return ctypes.CDLL(None, use_errno=True)
+
+
+def _syscall(libc, nr, *args):
+    """Invoke a syscall and raise OSError on failure."""
+    fn = libc.syscall
+    fn.restype = ctypes.c_long
+    ret = fn(ctypes.c_long(nr), *[ctypes.c_long(a) if isinstance(a, int) else a for a in args])
+    if ret < 0:
+        errno_val = ctypes.get_errno()
+        raise OSError(errno_val, os.strerror(errno_val))
+    return ret
+
+
 def _get_daxfs_iomem() -> tuple[int, int]:
     """
     Parse /proc/iomem to find daxfs allocation.
@@ -313,6 +329,23 @@ def _allocate_dma_heap(heap_path: str, size: int) -> tuple[int, mmap.mmap]:
 
 KERF_DAXFS_MNT_DIR = "/var/lib/kerf/daxfs"
 
+# Syscall numbers (same on all architectures, added in kernel 5.2+)
+SYS_MOVE_MOUNT = 429
+SYS_FSOPEN = 430
+SYS_FSCONFIG = 431
+SYS_FSMOUNT = 432
+
+# fsconfig command constants
+FSCONFIG_SET_STRING = 1
+FSCONFIG_SET_FD = 5
+FSCONFIG_CMD_CREATE = 6
+
+# move_mount flags
+MOVE_MOUNT_F_EMPTY_PATH = 0x00000004
+
+AT_FDCWD = -100
+
+
 def inject_kerf_init(rootfs_path: str) -> None:
     """Inject /init binary into rootfs.
 
@@ -333,26 +366,55 @@ def inject_kerf_init(rootfs_path: str) -> None:
     os.chmod(init_path, 0o755)
 
 
-def _mount_daxfs(instance_name: str, phys_addr: int, size: int) -> None:
+def _mount_daxfs(instance_name: str, dmabuf_fd: int) -> None:
     """
-    Mount daxfs on the host kernel with the instance name.
+    Mount daxfs on the host kernel, passing the dmabuf fd directly.
+
+    Uses fsopen/fsconfig/fsmount/move_mount syscalls. The daxfs filesystem
+    takes a reference on the dma-buf, so the fd can be closed after mounting.
 
     Args:
         instance_name: Name of the multikernel instance
-        phys_addr: Physical address of the daxfs image
-        size: Size of the daxfs image in bytes
+        dmabuf_fd: File descriptor for the dma-buf holding the filesystem image
     """
     mnt_dir = Path(KERF_DAXFS_MNT_DIR) / instance_name
     mnt_dir.mkdir(parents=True, exist_ok=True)
 
-    result = subprocess.run(
-        ["mount", "-t", "daxfs", "-o", f"phys=0x{phys_addr:x},size={size},name={instance_name}", "none", str(mnt_dir)],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if result.returncode != 0:
-        raise DaxfsError(f"Failed to mount daxfs: {result.stderr.strip()}")
+    libc = _get_libc()
+    fs_fd = -1
+    mnt_fd = -1
+
+    try:
+        # fsopen("daxfs", 0)
+        fstype = b"daxfs"
+        fs_fd = _syscall(libc, SYS_FSOPEN, ctypes.c_char_p(fstype), 0)
+
+        # fsconfig(fs_fd, FSCONFIG_SET_FD, "dmabuf", NULL, dmabuf_fd)
+        _syscall(libc, SYS_FSCONFIG, fs_fd, FSCONFIG_SET_FD,
+                 ctypes.c_char_p(b"dmabuf"), 0, dmabuf_fd)
+
+        # fsconfig(fs_fd, FSCONFIG_SET_STRING, "name", instance_name, 0)
+        name_bytes = instance_name.encode('utf-8')
+        _syscall(libc, SYS_FSCONFIG, fs_fd, FSCONFIG_SET_STRING,
+                 ctypes.c_char_p(b"name"), ctypes.c_char_p(name_bytes), 0)
+
+        # fsconfig(fs_fd, FSCONFIG_CMD_CREATE, NULL, NULL, 0)
+        _syscall(libc, SYS_FSCONFIG, fs_fd, FSCONFIG_CMD_CREATE, 0, 0, 0)
+
+        # fsmount(fs_fd, 0, 0)
+        mnt_fd = _syscall(libc, SYS_FSMOUNT, fs_fd, 0, 0)
+
+        # move_mount(mnt_fd, "", AT_FDCWD, mountpoint, MOVE_MOUNT_F_EMPTY_PATH)
+        mountpoint = str(mnt_dir).encode('utf-8')
+        _syscall(libc, SYS_MOVE_MOUNT, mnt_fd, ctypes.c_char_p(b""),
+                 AT_FDCWD, ctypes.c_char_p(mountpoint), MOVE_MOUNT_F_EMPTY_PATH)
+    except OSError as e:
+        raise DaxfsError(f"Failed to mount daxfs: {e}") from e
+    finally:
+        if mnt_fd >= 0:
+            os.close(mnt_fd)
+        if fs_fd >= 0:
+            os.close(fs_fd)
 
 
 def create_daxfs_image(
@@ -371,7 +433,7 @@ def create_daxfs_image(
         size: Size to allocate (if None, calculated automatically with 10% padding)
 
     Returns:
-        DaxfsImage with physical address, size, and dmabuf fd
+        DaxfsImage with physical address and size
 
     Raises:
         DaxfsError: If image creation fails
@@ -408,19 +470,18 @@ def create_daxfs_image(
         raise DaxfsError(f"Failed to write daxfs image: {e}") from e
 
     try:
-        phys_addr, actual_size = _get_daxfs_iomem()
+        _mount_daxfs(instance_name, dmabuf_fd)
     except DaxfsError:
         os.close(dmabuf_fd)
         raise
 
-    try:
-        _mount_daxfs(instance_name, phys_addr, actual_size)
-    except DaxfsError:
-        os.close(dmabuf_fd)
-        raise
+    # daxfs now holds a reference to the dma-buf, safe to close
+    os.close(dmabuf_fd)
+
+    # Get the physical address from /proc/iomem for the spawn kernel rootflags
+    phys_addr, actual_size = _get_daxfs_iomem()
 
     return DaxfsImage(
         phys_addr=phys_addr,
         size=actual_size,
-        dmabuf_fd=dmabuf_fd,
     )
