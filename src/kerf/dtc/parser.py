@@ -505,11 +505,37 @@ class DeviceTreeParser:
         except libfdt.FdtException:
             pass
 
+        uring_enabled = False
+        uring_sq = None
+        uring_cq = None
+        uring_shim = None
+        try:
+            uring_node = self.fdt.subnode_offset(resources_node, 'uring')
+            uring_enabled = True
+            try:
+                uring_sq = self.fdt.getprop(uring_node, 'sq-entries').as_uint32()
+            except libfdt.FdtException:
+                pass
+            try:
+                uring_cq = self.fdt.getprop(uring_node, 'cq-entries').as_uint32()
+            except libfdt.FdtException:
+                pass
+            try:
+                uring_shim = self.fdt.getprop(uring_node, 'shim-data-pages').as_uint32()
+            except libfdt.FdtException:
+                pass
+        except libfdt.FdtException:
+            pass
+
         return InstanceResources(
             cpus=cpus,
             memory_base=memory_base,
             memory_bytes=memory_bytes,
-            devices=devices
+            devices=devices,
+            uring=uring_enabled,
+            uring_sq_entries=uring_sq,
+            uring_cq_entries=uring_cq,
+            uring_shim_pages=uring_shim,
         )
 
     def _parse_instance(self, node_offset: int, name: str) -> Instance:
@@ -562,11 +588,37 @@ class DeviceTreeParser:
         except libfdt.FdtException:
             pass
 
+        uring_enabled = False
+        uring_sq = None
+        uring_cq = None
+        uring_shim = None
+        try:
+            uring_node = self.fdt.subnode_offset(resources_node, 'uring')
+            uring_enabled = True
+            try:
+                uring_sq = self.fdt.getprop(uring_node, 'sq-entries').as_uint32()
+            except libfdt.FdtException:
+                pass
+            try:
+                uring_cq = self.fdt.getprop(uring_node, 'cq-entries').as_uint32()
+            except libfdt.FdtException:
+                pass
+            try:
+                uring_shim = self.fdt.getprop(uring_node, 'shim-data-pages').as_uint32()
+            except libfdt.FdtException:
+                pass
+        except libfdt.FdtException:
+            pass
+
         return InstanceResources(
             cpus=cpus,
             memory_base=memory_base,
             memory_bytes=memory_bytes,
-            devices=devices
+            devices=devices,
+            uring=uring_enabled,
+            uring_sq_entries=uring_sq,
+            uring_cq_entries=uring_cq,
+            uring_shim_pages=uring_shim,
         )
 
     def _parse_instance_options(self, node_offset: int) -> Optional[Dict[str, bool]]:

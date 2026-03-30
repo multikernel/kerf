@@ -341,6 +341,16 @@ class OverlayGenerator:
             if instance.resources.memory_policy:
                 fdt_sw.property_string("memory-policy", instance.resources.memory_policy)
 
+            if instance.resources.uring:
+                fdt_sw.begin_node("uring")
+                if instance.resources.uring_sq_entries:
+                    fdt_sw.property_u32("sq-entries", instance.resources.uring_sq_entries)
+                if instance.resources.uring_cq_entries:
+                    fdt_sw.property_u32("cq-entries", instance.resources.uring_cq_entries)
+                if instance.resources.uring_shim_pages:
+                    fdt_sw.property_u32("shim-data-pages", instance.resources.uring_shim_pages)
+                fdt_sw.end_node()
+
             fdt_sw.end_node()  # End resources
 
             # Add options node if options exist

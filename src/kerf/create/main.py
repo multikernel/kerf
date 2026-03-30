@@ -443,6 +443,10 @@ def dump_overlay_for_debug(
 @click.option(
     "--enable-host-kcore", is_flag=True, help="Enable host kcore access for this instance"
 )
+@click.option("--uring", is_flag=True, default=False, help="Enable io_uring shared ring (sq=256, cq=256, shim=64)")
+@click.option("--uring-sq-entries", type=int, default=None, help="io_uring SQ entries (power of 2, default: 256)")
+@click.option("--uring-cq-entries", type=int, default=None, help="io_uring CQ entries (power of 2, default: 256)")
+@click.option("--uring-shim-pages", type=int, default=None, help="Shim shared data pages (default: 64)")
 @click.option("--dry-run", is_flag=True, help="Validate without applying to kernel")
 @click.option("--verbose", "-v", is_flag=True, help="Verbose output")
 def create(  # pylint: disable=too-many-arguments,too-many-positional-arguments
@@ -458,6 +462,10 @@ def create(  # pylint: disable=too-many-arguments,too-many-positional-arguments
     memory_base: Optional[str],
     devices: Optional[str],
     enable_host_kcore: bool,
+    uring: bool,
+    uring_sq_entries: Optional[int],
+    uring_cq_entries: Optional[int],
+    uring_shim_pages: Optional[int],
     dry_run: bool,
     verbose: bool,
 ):
@@ -647,6 +655,7 @@ def create(  # pylint: disable=too-many-arguments,too-many-positional-arguments
                 validate_memory_allocation(modified, memory_base_addr, memory_bytes)
 
             # Create instance resources with topology settings
+            uring_enabled = uring or uring_sq_entries is not None or uring_cq_entries is not None or uring_shim_pages is not None
             resources = InstanceResources(
                 cpus=cpu_list,
                 memory_base=memory_base_addr,
@@ -655,6 +664,10 @@ def create(  # pylint: disable=too-many-arguments,too-many-positional-arguments
                 numa_nodes=numa_node_list,
                 cpu_affinity=cpu_affinity,
                 memory_policy=memory_policy,
+                uring=uring_enabled,
+                uring_sq_entries=uring_sq_entries or (256 if uring_enabled else None),
+                uring_cq_entries=uring_cq_entries or (256 if uring_enabled else None),
+                uring_shim_pages=uring_shim_pages or (64 if uring_enabled else None),
             )
 
             options = None

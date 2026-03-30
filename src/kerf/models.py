@@ -146,6 +146,10 @@ class InstanceResources:
     numa_nodes: Optional[List[int]] = None  # Preferred NUMA nodes
     cpu_affinity: Optional[str] = None  # "compact", "spread", "local"
     memory_policy: Optional[str] = None  # "local", "interleave", "bind"
+    uring: bool = False  # Enable io_uring shared ring
+    uring_sq_entries: Optional[int] = None  # SQ entries (default: 256)
+    uring_cq_entries: Optional[int] = None  # CQ entries (default: 256)
+    uring_shim_pages: Optional[int] = None  # Shim data pages (default: 64)
 
 
 @dataclass
