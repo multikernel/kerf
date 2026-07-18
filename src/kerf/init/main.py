@@ -36,8 +36,9 @@ except ImportError:
     pyudev = None
 
 from ..baseline import BaselineManager
-from ..create.main import parse_cpu_spec, parse_device_list
+from ..create.main import parse_cpu_spec, parse_device_list, parse_memory_spec
 from ..dtc.parser import DeviceTreeParser
+from ..lazy_cma import LAZY_CMA_DEVICE, allocate_multikernel_pool
 from ..dtc.reporter import ValidationReporter
 from ..dtc.validator import MultikernelValidator
 from ..exceptions import KernelInterfaceError, ParseError, ValidationError
@@ -377,6 +378,7 @@ def get_valid_apic_ids_from_system() -> Optional[set]:
 
 def build_baseline_from_cmdline(
     cpus: str,
+    memory: Optional[str] = None,
     devices: Optional[str] = None,
     verbose: bool = False
 ) -> GlobalDeviceTree:
@@ -385,6 +387,9 @@ def build_baseline_from_cmdline(
 
     Args:
         cpus: CPU specification string (e.g., "4-7" or "4,5,6,7")
+        memory: Optional pool size to allocate at runtime via /dev/lazy_cma
+                (e.g., "1GB"); when omitted an existing pool must already
+                be registered in /proc/iomem
         devices: Optional device names (comma-separated, e.g., "enp9s0_dev,nvme0")
         verbose: Whether to print verbose output
 
@@ -392,8 +397,8 @@ def build_baseline_from_cmdline(
         GlobalDeviceTree with resources only (no instances)
 
     Raises:
-        ValueError: If CPU specification is invalid
-        KernelInterfaceError: If memory cannot be determined from /proc/iomem
+        ValueError: If CPU or memory specification is invalid
+        KernelInterfaceError: If the memory pool cannot be found or allocated
     """
     try:
         cpu_list = parse_cpu_spec(cpus)
@@ -430,9 +435,28 @@ def build_baseline_from_cmdline(
 
     memory_pool = get_multikernel_memory_pool_from_iomem()
     if memory_pool is None:
-        raise KernelInterfaceError(
-            "Could not find multikernel memory pool in /proc/iomem. "
-            "Please ensure the multikernel kernel module is loaded and memory is reserved."
+        if not memory:
+            raise KernelInterfaceError(
+                "Could not find multikernel memory pool in /proc/iomem. "
+                "Pass --memory=SIZE (e.g. --memory=1GB) to allocate the pool "
+                "at runtime via {}.".format(LAZY_CMA_DEVICE)
+            )
+
+        pool_bytes = parse_memory_spec(memory)
+        pool_base = allocate_multikernel_pool(pool_bytes)
+        if verbose:
+            click.echo(f"Allocated multikernel memory pool via {LAZY_CMA_DEVICE}:")
+            click.echo(f"  Base: {hex(pool_base)}")
+            click.echo(f"  Size: {pool_bytes} bytes ({pool_bytes / (1024**3):.2f} GB)")
+
+        # Re-read /proc/iomem so the baseline reflects exactly what the
+        # kernel registered for the allocation.
+        memory_pool = get_multikernel_memory_pool_from_iomem() or (pool_base, pool_bytes)
+    elif memory:
+        click.echo(
+            "Note: multikernel memory pool already exists in /proc/iomem; "
+            "ignoring --memory",
+            err=True,
         )
     memory_pool_base, memory_pool_bytes = memory_pool
 
@@ -504,15 +528,16 @@ def build_baseline_from_cmdline(
 
 @click.command()
 @click.pass_context
-@click.option('--input', '-i', help='Input DTS or DTB file containing all resources. Mutually exclusive with --cpus and --devices. When used, all resources must come from the file.')
-@click.option('--cpus', '-c', help='APIC ID specification for baseline (e.g., "128-134" or "128,130,132"). Use physical APIC IDs, not logical CPU numbers. Mutually exclusive with --input. Memory will be parsed from /proc/iomem.')
+@click.option('--input', '-i', help='Input DTS or DTB file containing all resources. Mutually exclusive with --cpus, --memory and --devices. When used, all resources must come from the file.')
+@click.option('--cpus', '-c', help='APIC ID specification for baseline (e.g., "128-134" or "128,130,132"). Use physical APIC IDs, not logical CPU numbers. Mutually exclusive with --input. Memory comes from --memory or an existing pool in /proc/iomem.')
+@click.option('--memory', '-m', help='Memory pool size to allocate at runtime via /dev/lazy_cma (e.g., "1GB", "512MB"). If omitted, an existing pool is discovered from /proc/iomem. Mutually exclusive with --input.')
 @click.option('--devices', '-d', help='Device names (comma-separated, e.g., "enp9s0_dev,nvme0"). Mutually exclusive with --input. Creates minimal device entries in baseline.')
 @click.option('--dry-run', is_flag=True, help='Validate without applying')
 @click.option('--report', is_flag=True, help='Generate detailed validation report')
 @click.option('--format', type=click.Choice(['text', 'json', 'yaml']),
               default='text', help='Report format (default: text)')
 @click.option('--verbose', '-v', is_flag=True, help='Verbose output')
-def init(ctx: click.Context, input: Optional[str], cpus: Optional[str], devices: Optional[str], dry_run: bool, report: bool, format: str, verbose: bool):
+def init(ctx: click.Context, input: Optional[str], cpus: Optional[str], memory: Optional[str], devices: Optional[str], dry_run: bool, report: bool, format: str, verbose: bool):
     """
     Initialize baseline device tree configuration.
 
@@ -526,18 +551,22 @@ def init(ctx: click.Context, input: Optional[str], cpus: Optional[str], devices:
     You can either provide a DTS/DTB file via --input, or construct the
     baseline from command line arguments using --cpus. These options are
     mutually exclusive - when using --input, all resources must come from
-    the DTS file. Memory will be automatically parsed from /proc/iomem
-    when using --cpus.
+    the DTS file. With --cpus, the memory pool is allocated at runtime
+    via /dev/lazy_cma when --memory is given, or discovered from
+    /proc/iomem otherwise.
 
     Examples:
         # Initialize from DTS file (all resources from file)
         kerf init --input=hardware.dts
 
-        # Initialize from command line (APIC IDs 128-134, memory from /proc/iomem)
+        # Initialize from command line, allocating a 1GB pool at runtime
+        kerf init --cpus=128-134 --memory=1GB
+
+        # Initialize reusing a pool already registered in /proc/iomem
         kerf init --cpus=128-134
 
         # Initialize with APIC IDs and devices
-        kerf init --cpus=128,130,132 --devices=enp9s0_dev,nvme0
+        kerf init --cpus=128,130,132 --memory=1GB --devices=enp9s0_dev,nvme0
 
         # Validate baseline without applying
         kerf init --input=hardware.dts --dry-run
@@ -545,10 +574,12 @@ def init(ctx: click.Context, input: Optional[str], cpus: Optional[str], devices:
     try:
         # Validate that --input and resource specification options are mutually exclusive
         # When using --input, all resources must come from the DTS file
-        if input and (cpus or devices):
+        if input and (cpus or memory or devices):
             conflicting = []
             if cpus:
                 conflicting.append("--cpus")
+            if memory:
+                conflicting.append("--memory")
             if devices:
                 conflicting.append("--devices")
             click.echo(f"Error: --input is mutually exclusive with {', '.join(conflicting)}.", err=True)
@@ -560,8 +591,8 @@ def init(ctx: click.Context, input: Optional[str], cpus: Optional[str], devices:
             click.echo("Error: Either --input or --cpus must be specified", err=True)
             click.echo("\nUsage:", err=True)
             click.echo("  kerf init --input=hardware.dts", err=True)
-            click.echo("  kerf init --cpus=4-7", err=True)
-            click.echo("  kerf init --cpus=4-7 --devices=enp9s0_dev", err=True)
+            click.echo("  kerf init --cpus=4-7 --memory=1GB", err=True)
+            click.echo("  kerf init --cpus=4-7 --memory=1GB --devices=enp9s0_dev", err=True)
             sys.exit(2)
 
         parser = DeviceTreeParser()
@@ -588,7 +619,7 @@ def init(ctx: click.Context, input: Optional[str], cpus: Optional[str], devices:
         else:
             # Build from command line arguments
             try:
-                tree = build_baseline_from_cmdline(cpus, devices=devices, verbose=verbose)
+                tree = build_baseline_from_cmdline(cpus, memory=memory, devices=devices, verbose=verbose)
             except ValueError as e:
                 click.echo(f"Error: {e}", err=True)
                 sys.exit(2)
