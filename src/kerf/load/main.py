@@ -241,8 +241,13 @@ def load(  # pylint: disable=too-many-arguments,too-many-positional-arguments,to
     syscall. The kernel is loaded in multikernel mode with the specified ID.
 
     When --image or --rootfs-dir is provided, a daxfs image is created and the
-    kernel boots directly into daxfs as root filesystem (no initrd needed).
-    Use --initrd to override this and provide your own initrd.
+    kernel boots directly into daxfs as root filesystem (no initrd needed if
+    daxfs is built into the kernel).
+
+    If the spawn kernel builds daxfs as a module, pass --initrd with an
+    initramfs containing daxfs.ko and an init that loads the module, mounts
+    daxfs using the rootflags= parameters from the command line, and
+    switch_roots into it (exec'ing /init).
 
     Examples:
 
@@ -378,10 +383,9 @@ def load(  # pylint: disable=too-many-arguments,too-many-positional-arguments,to
                     )
                     sys.exit(2)
 
-                if not initrd_path:
-                    inject_kerf_init(rootfs_path)
-                    if verbose:
-                        click.echo(f"Injected /init wrapper (entrypoint: {init_path})")
+                inject_kerf_init(rootfs_path)
+                if verbose:
+                    click.echo(f"Injected /init wrapper (entrypoint: {init_path})")
 
                 if verbose:
                     click.echo(f"Creating daxfs image for instance {instance_name}...")
@@ -413,10 +417,9 @@ def load(  # pylint: disable=too-many-arguments,too-many-positional-arguments,to
 
                 init_path = entrypoint
 
-                if not initrd_path:
-                    inject_kerf_init(str(rootfs_path))
-                    if verbose:
-                        click.echo(f"Injected /init wrapper (entrypoint: {init_path})")
+                inject_kerf_init(str(rootfs_path))
+                if verbose:
+                    click.echo(f"Injected /init wrapper (entrypoint: {init_path})")
 
                 if verbose:
                     click.echo(f"Using rootfs directory: {rootfs_path}")
@@ -455,8 +458,11 @@ def load(  # pylint: disable=too-many-arguments,too-many-positional-arguments,to
         if cmdline:
             cmdline_parts.append(cmdline)
 
-        # Add daxfs root parameters if using daxfs
-        if daxfs_image and not initrd_path:
+        # Add daxfs root parameters if using daxfs. With an initrd, the
+        # kernel does not mount root itself; the initrd is expected to
+        # load daxfs, mount it using these same rootflags, and switch_root
+        # into it (exec'ing the injected /init).
+        if daxfs_image:
             cmdline_parts.append("rootfstype=daxfs")
             cmdline_parts.append(f"rootflags=phys=0x{daxfs_image.phys_addr:x},size={daxfs_image.size}")
             cmdline_parts.append("init=/init")
