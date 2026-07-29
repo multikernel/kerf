@@ -86,11 +86,30 @@ def run_console(instance_id: int, instance_name: str, verbose: bool = False) -> 
 
             # State for detach sequence detection
             saw_ctrl_bracket = False
+            idle_polls = 0
 
             # I/O loop
             while True:
                 readable, _, _ = select.select([stdin_fd, mktty_fd], [], [], 0.1)
 
+                if not readable:
+                    # Idle: periodically check that the instance is still
+                    # active so the console exits when the spawn halts.
+                    idle_polls += 1
+                    if idle_polls >= 10:
+                        idle_polls = 0
+                        status = get_instance_status(instance_name)
+                        if status is None or status.lower() != InstanceState.ACTIVE.value:
+                            os.write(
+                                stdout_fd,
+                                "\r\nInstance '{}' is no longer active (status: {}).\r\n".format(
+                                    instance_name, status
+                                ).encode("utf-8"),
+                            )
+                            return 0
+                    continue
+
+                idle_polls = 0
                 for fd in readable:
                     if fd == stdin_fd:
                         # Read from stdin
