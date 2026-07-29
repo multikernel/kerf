@@ -364,25 +364,47 @@ def _syscall(libc, nr, *args):
     return ret
 
 
-def _get_daxfs_iomem() -> tuple[int, int]:
-    """
-    Parse /proc/iomem to find daxfs allocation.
-    Returns (phys_addr, size) tuple.
-    """
+def _daxfs_iomem_regions() -> set:
+    """Return the set of (phys_addr, size) daxfs regions in /proc/iomem."""
+    regions = set()
     try:
         with open('/proc/iomem', 'r', encoding='utf-8') as f:
             for line in f:
                 parts = line.strip().split(' : ')
                 if len(parts) == 2 and parts[1] == 'daxfs':
-                    addr_range = parts[0].strip()
-                    start_str, end_str = addr_range.split('-')
+                    start_str, end_str = parts[0].strip().split('-')
                     start = int(start_str, 16)
                     end = int(end_str, 16)
-                    return start, end - start + 1
+                    regions.add((start, end - start + 1))
     except (FileNotFoundError, PermissionError, ValueError):
         pass
+    return regions
 
-    raise DaxfsError("Could not find 'daxfs' entry in /proc/iomem")
+
+def _umount_all(path) -> None:
+    """Unmount any mounts stacked on path (no-op if not mounted)."""
+    libc = _get_libc()
+    path_bytes = str(path).encode('utf-8')
+    while os.path.ismount(path):
+        if libc.umount2(ctypes.c_char_p(path_bytes), 0) < 0:
+            errno_val = ctypes.get_errno()
+            raise DaxfsError(
+                f"Failed to unmount {path}: {os.strerror(errno_val)}"
+            )
+
+
+def unmount_daxfs(instance_name: str) -> None:
+    """Unmount an instance's daxfs image and remove its mountpoint.
+
+    Unmounting drops the filesystem's dma-buf reference, freeing the
+    image memory back to the multikernel pool.
+    """
+    mnt_dir = Path(KERF_DAXFS_MNT_DIR) / instance_name
+    _umount_all(mnt_dir)
+    try:
+        mnt_dir.rmdir()
+    except OSError:
+        pass
 
 
 def _allocate_dma_heap(heap_path: str, size: int) -> tuple[int, mmap.mmap]:
@@ -531,6 +553,14 @@ def create_daxfs_image(
             f"Required size {required_size} exceeds allocated size {size}"
         )
 
+    # Unmount any previous image for this instance first, releasing its
+    # memory back to the pool before the new allocation.
+    _umount_all(Path(KERF_DAXFS_MNT_DIR) / instance_name)
+
+    # The heap allocation registers a 'daxfs' iomem region; snapshot
+    # existing regions (other instances) so ours can be identified after.
+    regions_before = _daxfs_iomem_regions()
+
     try:
         dmabuf_fd, mem = _allocate_dma_heap(heap_path, size)
     except OSError as e:
@@ -552,8 +582,14 @@ def create_daxfs_image(
     # daxfs now holds a reference to the dma-buf, safe to close
     os.close(dmabuf_fd)
 
-    # Get the physical address from /proc/iomem for the spawn kernel rootflags
-    phys_addr, actual_size = _get_daxfs_iomem()
+    new_regions = _daxfs_iomem_regions() - regions_before
+    if len(new_regions) != 1:
+        _umount_all(Path(KERF_DAXFS_MNT_DIR) / instance_name)
+        raise DaxfsError(
+            "Could not identify this image's 'daxfs' region in /proc/iomem "
+            f"(found {len(new_regions)} new entries)"
+        )
+    phys_addr, actual_size = new_regions.pop()
 
     return DaxfsImage(
         phys_addr=phys_addr,

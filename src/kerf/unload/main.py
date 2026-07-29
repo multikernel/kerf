@@ -33,6 +33,16 @@ def _cleanup_load_resources(instance_name: str, _instance_id: int, verbose: bool
     """Clean up resources created by kerf load --image."""
     import shutil
 
+    from ..daxfs import unmount_daxfs, DaxfsError
+
+    # Unmount the daxfs image, releasing its memory back to the pool
+    try:
+        unmount_daxfs(instance_name)
+        if verbose:
+            click.echo(f"✓ Unmounted daxfs image for '{instance_name}'")
+    except DaxfsError as e:
+        click.echo(f"Warning: {e}", err=True)
+
     # Clean up extracted rootfs
     rootfs_path = Path("/var/lib/kerf/rootfs") / instance_name
     if rootfs_path.exists():
