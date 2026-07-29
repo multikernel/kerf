@@ -13,11 +13,17 @@
 # limitations under the License.
 
 """
-DAXFS filesystem image creation.
+DAXFS filesystem image creation (on-disk format v8).
 
 Creates a daxfs image from a directory and writes it to DMA heap memory.
-The daxfs filesystem holds a reference to the dma-buf, so the memory persists
-even after the dmabuf fd is closed.
+The image layout mirrors daxfs tools/mkdaxfs.c:
+
+    [ Superblock (1 block) | Base image | Overlay region ]
+
+The base image holds the read-only snapshot (inode table, flat dirent
+arrays, file data); the overlay region makes the mount writable. The
+daxfs filesystem holds a reference to the dma-buf, so the memory
+persists even after the dmabuf fd is closed.
 """
 
 import ctypes
@@ -25,18 +31,40 @@ import fcntl
 import mmap
 import os
 import shutil
+import stat as stat_mod
 import struct
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
+from typing import Dict, List, Optional, Tuple
 
 from kerf.data import get_init_binary_path
 
-DAXFS_MAGIC = 0x64646178
-DAXFS_VERSION = 1
-DAXFS_BLOCK_SIZE = 4096
+DAXFS_SUPER_MAGIC = 0x64617835  # "dax5"
+DAXFS_VERSION = 8
+DAXFS_MIN_BLOCK_SIZE = 4096
 DAXFS_INODE_SIZE = 64
+DAXFS_NAME_MAX = 255
+# The inode size field counts DAXFS_DIRENT_SIZE per entry, but the kernel
+# indexes the dirent array as struct daxfs_dirent[], which the compiler
+# pads to 4-byte alignment. Entries must be laid out at the padded stride.
+DAXFS_DIRENT_SIZE = 16 + DAXFS_NAME_MAX
+DAXFS_DIRENT_STRIDE = (DAXFS_DIRENT_SIZE + 3) & ~3
 DAXFS_ROOT_INO = 1
+
+DAXFS_OVERLAY_MAGIC = 0x6F766C79  # "ovly"
+DAXFS_OVERLAY_VERSION = 2
+DAXFS_OVL_FREE_END = 0xFFFFFFFFFFFFFFFF
+DAXFS_OVERLAY_BUCKET_SIZE = 16
+DAXFS_DEFAULT_OVERLAY_POOL = 64 * 1024 * 1024
+DAXFS_DEFAULT_BUCKET_COUNT = 65536
+
+# Block size = native page size, validated by the kernel at mount time
+DAXFS_BLOCK_SIZE = max(mmap.PAGESIZE, DAXFS_MIN_BLOCK_SIZE)
+
+SUPERBLOCK_FORMAT = '<IIIIQQQQIIQQQIIQQII'
+INODE_FORMAT = '<IIIIQQI28x'
+DIRENT_HEADER_FORMAT = '<IIH6x'
+OVERLAY_HEADER_FORMAT = '<IIQQQQQQQQ'
 
 DMA_HEAP_IOC_MAGIC = ord('H')
 DMA_HEAP_IOCTL_ALLOC = 0xC0184800
@@ -61,40 +89,71 @@ class FileEntry:
     stat: os.stat_result
     ino: int = 0
     parent_ino: int = 0
-    first_child: int = 0
-    next_sibling: int = 0
     data_offset: int = 0
-    name_strtab_offset: int = 0
+    child_count: int = 0
+    is_hardlink: bool = False
 
 
 class DaxfsBuilder:
-    """Builds a daxfs filesystem image."""
+    """Builds a daxfs v8 filesystem image: base snapshot plus write overlay."""
 
-    def __init__(self, src_dir: str):
+    def __init__(self, src_dir: str,
+                 overlay_pool_size: int = DAXFS_DEFAULT_OVERLAY_POOL):
         self.src_dir = Path(src_dir)
-        self.files: list[FileEntry] = []
+        self.files: List[FileEntry] = []
+        self.files_by_path: Dict[str, FileEntry] = {}
+        # First entry seen for each hardlinked (st_dev, st_ino)
+        self.hardlinks: Dict[Tuple[int, int], FileEntry] = {}
         self.next_ino = 1
-        self.strtab_size = 0
+        self.base_size = 0
+        self.overlay_pool_size = overlay_pool_size
+        self.overlay_buckets = self._auto_bucket_count(overlay_pool_size)
+
+    @staticmethod
+    def _align(value: int, alignment: int) -> int:
+        return (value + alignment - 1) & ~(alignment - 1)
+
+    @staticmethod
+    def _auto_bucket_count(pool_size: int) -> int:
+        """Size the overlay bucket count from the pool.
+
+        Target ~2x pool pages so the open-addressed table stays near 0.5
+        load, floored at the mkdaxfs default (matches tools/mkdaxfs.c).
+        """
+        pool_pages = (pool_size + DAXFS_BLOCK_SIZE - 1) // DAXFS_BLOCK_SIZE
+        buckets = 1
+        while buckets < pool_pages * 2 and buckets < (1 << 31):
+            buckets <<= 1
+        return max(buckets, DAXFS_DEFAULT_BUCKET_COUNT)
 
     def _add_file(self, relpath: str, stat_result: os.stat_result) -> FileEntry:
-        """Add a file entry."""
         entry = FileEntry(
             path=relpath,
-            name=os.path.basename(relpath) if relpath else "",
+            name=os.path.basename(relpath)[:DAXFS_NAME_MAX] if relpath else "",
             stat=stat_result,
-            ino=self.next_ino,
         )
-        self.next_ino += 1
-        self.strtab_size += len(entry.name) + 1
+
+        # Hardlinked regular files share one inode and one data extent
+        if stat_mod.S_ISREG(stat_result.st_mode) and stat_result.st_nlink > 1:
+            key = (stat_result.st_dev, stat_result.st_ino)
+            owner = self.hardlinks.get(key)
+            if owner is not None:
+                entry.ino = owner.ino
+                entry.is_hardlink = True
+            else:
+                entry.ino = self.next_ino
+                self.next_ino += 1
+                self.hardlinks[key] = entry
+        else:
+            entry.ino = self.next_ino
+            self.next_ino += 1
+
         self.files.append(entry)
+        self.files_by_path[relpath] = entry
         return entry
 
     def _scan_directory_recursive(self, relpath: str) -> None:
-        """Recursively scan a directory."""
-        if relpath:
-            fullpath = self.src_dir / relpath
-        else:
-            fullpath = self.src_dir
+        fullpath = self.src_dir / relpath if relpath else self.src_dir
 
         try:
             entries = list(fullpath.iterdir())
@@ -102,10 +161,7 @@ class DaxfsBuilder:
             return
 
         for entry in sorted(entries, key=lambda e: e.name):
-            if relpath:
-                newrel = f"{relpath}/{entry.name}"
-            else:
-                newrel = entry.name
+            newrel = f"{relpath}/{entry.name}" if relpath else entry.name
 
             try:
                 file_stat = entry.lstat()
@@ -123,154 +179,173 @@ class DaxfsBuilder:
         self._add_file("", root_stat)
         self._scan_directory_recursive("")
 
-    def _find_by_path(self, path: str) -> Optional[FileEntry]:
-        """Find file entry by path."""
-        for e in self.files:
-            if e.path == path:
-                return e
-        return None
-
-    def _find_by_ino(self, ino: int) -> Optional[FileEntry]:
-        """Find file entry by inode number."""
-        for e in self.files:
-            if e.ino == ino:
-                return e
-        return None
-
     def build_tree(self) -> None:
-        """Build the directory tree structure."""
+        """Assign parent inodes and count directory children."""
         for e in self.files:
             if not e.path:
                 e.parent_ino = 0
                 continue
 
-            parent_path = os.path.dirname(e.path)
-            parent = self._find_by_path(parent_path)
+            parent = self.files_by_path.get(os.path.dirname(e.path))
             if parent:
                 e.parent_ino = parent.ino
-
-                if parent.first_child == 0:
-                    parent.first_child = e.ino
-                else:
-                    sibling = self._find_by_ino(parent.first_child)
-                    while sibling and sibling.next_sibling:
-                        sibling = self._find_by_ino(sibling.next_sibling)
-                    if sibling:
-                        sibling.next_sibling = e.ino
+                parent.child_count += 1
 
     def calculate_offsets(self) -> None:
-        """Calculate data offsets for all files."""
-        inode_offset = DAXFS_BLOCK_SIZE
-        strtab_offset = inode_offset + len(self.files) * DAXFS_INODE_SIZE
-        data_offset = self._align(strtab_offset + self.strtab_size, DAXFS_BLOCK_SIZE)
-        str_off = 0
+        """Assign base-relative data offsets and compute the base size."""
+        data_offset = self._align(len(self.files) * DAXFS_INODE_SIZE,
+                                  DAXFS_BLOCK_SIZE)
 
         for e in self.files:
-            e.name_strtab_offset = str_off
-            str_off += len(e.name) + 1
-
-            if self._is_regular(e.stat.st_mode) or self._is_symlink(e.stat.st_mode):
+            mode = e.stat.st_mode
+            if stat_mod.S_ISREG(mode):
+                if e.is_hardlink:
+                    owner = self.hardlinks[(e.stat.st_dev, e.stat.st_ino)]
+                    e.data_offset = owner.data_offset
+                else:
+                    e.data_offset = data_offset
+                    data_offset += self._align(e.stat.st_size, DAXFS_BLOCK_SIZE)
+            elif stat_mod.S_ISLNK(mode):
                 e.data_offset = data_offset
-                data_offset += self._align(e.stat.st_size, DAXFS_BLOCK_SIZE)
+                data_offset += self._align(e.stat.st_size + 1, DAXFS_BLOCK_SIZE)
+            elif stat_mod.S_ISDIR(mode) and e.child_count > 0:
+                e.data_offset = data_offset
+                data_offset += self._align(e.child_count * DAXFS_DIRENT_STRIDE,
+                                           DAXFS_BLOCK_SIZE)
+
+        self.base_size = data_offset
+
+    def _overlay_region_size(self) -> int:
+        bucket_array = self._align(
+            self.overlay_buckets * DAXFS_OVERLAY_BUCKET_SIZE, DAXFS_BLOCK_SIZE)
+        return DAXFS_BLOCK_SIZE + bucket_array + self.overlay_pool_size
+
+    def _overlay_offset(self) -> int:
+        return self._align(DAXFS_BLOCK_SIZE + self.base_size, DAXFS_BLOCK_SIZE)
 
     def calculate_total_size(self) -> int:
-        """Calculate total image size."""
-        inode_offset = DAXFS_BLOCK_SIZE
-        strtab_offset = inode_offset + len(self.files) * DAXFS_INODE_SIZE
-        data_offset = self._align(strtab_offset + self.strtab_size, DAXFS_BLOCK_SIZE)
-        total = data_offset
-
-        for e in self.files:
-            if self._is_regular(e.stat.st_mode) or self._is_symlink(e.stat.st_mode):
-                total += self._align(e.stat.st_size, DAXFS_BLOCK_SIZE)
-
-        return total
+        """Calculate total image size: superblock + base + overlay."""
+        return self._overlay_offset() + self._overlay_region_size()
 
     def write_image(self, mem: mmap.mmap, mem_size: int) -> None:
         """Write the daxfs image to memory."""
-        inode_offset = DAXFS_BLOCK_SIZE
-        strtab_offset = inode_offset + len(self.files) * DAXFS_INODE_SIZE
-        data_offset = self._align(strtab_offset + self.strtab_size, DAXFS_BLOCK_SIZE)
         total_size = self.calculate_total_size()
+        if total_size > mem_size:
+            raise DaxfsError(
+                f"Image size {total_size} exceeds allocated size {mem_size}"
+            )
+
+        zero_chunk = b'\x00' * (4 * 1024 * 1024)
+        mem.seek(0)
+        remaining = mem_size
+        while remaining > 0:
+            mem.write(zero_chunk[:min(remaining, len(zero_chunk))])
+            remaining -= min(remaining, len(zero_chunk))
+
+        base_offset = DAXFS_BLOCK_SIZE
+        base_data_offset = self._align(len(self.files) * DAXFS_INODE_SIZE,
+                                       DAXFS_BLOCK_SIZE)
+        overlay_offset = self._overlay_offset()
+        bucket_array = self._align(
+            self.overlay_buckets * DAXFS_OVERLAY_BUCKET_SIZE, DAXFS_BLOCK_SIZE)
 
         mem.seek(0)
-        mem.write(b'\x00' * mem_size)
-
-        mem.seek(0)
-        super_block = struct.pack(
-            '<IIIIQQIIQQQ',
-            DAXFS_MAGIC,
+        mem.write(struct.pack(
+            SUPERBLOCK_FORMAT,
+            DAXFS_SUPER_MAGIC,
             DAXFS_VERSION,
-            0,
             DAXFS_BLOCK_SIZE,
+            0,                          # reserved0
             total_size,
-            inode_offset,
+            base_offset,
+            self.base_size,
+            0,                          # inode_offset (relative to base)
             len(self.files),
             DAXFS_ROOT_INO,
-            strtab_offset,
-            self.strtab_size,
-            data_offset,
-        )
-        mem.write(super_block)
+            base_data_offset,           # data_offset (relative to base)
+            overlay_offset,
+            self._overlay_region_size(),
+            self.overlay_buckets,
+            self.overlay_buckets.bit_length() - 1,
+            0, 0, 0, 0,                 # no pcache
+        ))
+
+        self._write_base(mem, base_offset)
+        self._write_overlay(mem, overlay_offset, bucket_array)
+
+    def _write_base(self, mem: mmap.mmap, base_offset: int) -> None:
+        children: Dict[int, List[FileEntry]] = {}
+        for e in self.files:
+            if e.path:
+                children.setdefault(e.parent_ino, []).append(e)
 
         for e in self.files:
-            mem.seek(inode_offset + (e.ino - 1) * DAXFS_INODE_SIZE)
-            inode_data = struct.pack(
-                '<IIIIQQIIIIII8s',
+            mode = e.stat.st_mode
+
+            if stat_mod.S_ISDIR(mode):
+                size = e.child_count * DAXFS_DIRENT_SIZE
+            elif stat_mod.S_ISREG(mode) or stat_mod.S_ISLNK(mode):
+                size = e.stat.st_size
+            else:
+                size = 0
+
+            mem.seek(base_offset + (e.ino - 1) * DAXFS_INODE_SIZE)
+            mem.write(struct.pack(
+                INODE_FORMAT,
                 e.ino,
-                e.stat.st_mode,
+                mode,
                 e.stat.st_uid,
                 e.stat.st_gid,
-                e.stat.st_size,
+                size,
                 e.data_offset,
-                e.name_strtab_offset,
-                len(e.name),
-                e.parent_ino,
                 e.stat.st_nlink,
-                e.first_child,
-                e.next_sibling,
-                b'\x00' * 8,
-            )
-            mem.write(inode_data)
+            ))
 
-            mem.seek(strtab_offset + e.name_strtab_offset)
-            mem.write(e.name.encode('utf-8') + b'\x00')
-
-            if self._is_regular(e.stat.st_mode):
-                fullpath = self.src_dir / e.path
+            if stat_mod.S_ISREG(mode) and not e.is_hardlink:
+                self._write_file_data(mem, base_offset + e.data_offset, e)
+            elif stat_mod.S_ISLNK(mode):
                 try:
-                    with open(fullpath, 'rb') as f:
-                        content = f.read()
-                    mem.seek(e.data_offset)
-                    mem.write(content)
-                except (PermissionError, FileNotFoundError, IsADirectoryError):
-                    pass
-
-            elif self._is_symlink(e.stat.st_mode):
-                fullpath = self.src_dir / e.path
-                try:
-                    target = os.readlink(fullpath)
-                    mem.seek(e.data_offset)
-                    mem.write(target.encode('utf-8'))
+                    target = os.readlink(self.src_dir / e.path)
+                    mem.seek(base_offset + e.data_offset)
+                    mem.write(target.encode('utf-8') + b'\x00')
                 except (PermissionError, FileNotFoundError):
                     pass
+            elif stat_mod.S_ISDIR(mode) and e.child_count > 0:
+                for i, child in enumerate(children.get(e.ino, [])):
+                    name = child.name.encode('utf-8')[:DAXFS_NAME_MAX]
+                    mem.seek(base_offset + e.data_offset
+                             + i * DAXFS_DIRENT_STRIDE)
+                    mem.write(struct.pack(DIRENT_HEADER_FORMAT,
+                                          child.ino,
+                                          child.stat.st_mode,
+                                          len(name)))
+                    mem.write(name)
 
-    @staticmethod
-    def _align(value: int, alignment: int) -> int:
-        """Align value to a boundary."""
-        return (value + alignment - 1) & ~(alignment - 1)
+    def _write_file_data(self, mem: mmap.mmap, offset: int,
+                         entry: FileEntry) -> None:
+        try:
+            with open(self.src_dir / entry.path, 'rb') as f:
+                mem.seek(offset)
+                shutil.copyfileobj(f, mem)
+        except (PermissionError, FileNotFoundError, IsADirectoryError):
+            pass
 
-    @staticmethod
-    def _is_regular(mode: int) -> bool:
-        """Check if mode is regular file."""
-        import stat
-        return stat.S_ISREG(mode)
-
-    @staticmethod
-    def _is_symlink(mode: int) -> bool:
-        """Check if mode is symlink."""
-        import stat
-        return stat.S_ISLNK(mode)
+    def _write_overlay(self, mem: mmap.mmap, overlay_offset: int,
+                       bucket_array: int) -> None:
+        mem.seek(overlay_offset)
+        mem.write(struct.pack(
+            OVERLAY_HEADER_FORMAT,
+            DAXFS_OVERLAY_MAGIC,
+            DAXFS_OVERLAY_VERSION,
+            DAXFS_BLOCK_SIZE,                   # bucket_offset
+            DAXFS_BLOCK_SIZE + bucket_array,    # pool_offset
+            self.overlay_pool_size,
+            0,                                  # pool_alloc
+            self.next_ino,
+            DAXFS_OVL_FREE_END,                 # free_inode
+            DAXFS_OVL_FREE_END,                 # free_data
+            DAXFS_OVL_FREE_END,                 # free_dirent
+        ))
 
 
 def _get_libc():
@@ -430,7 +505,7 @@ def create_daxfs_image(
         rootfs_path: Path to the root filesystem directory
         instance_name: Name of the multikernel instance
         heap_path: Path to the DMA heap device
-        size: Size to allocate (if None, calculated automatically with 10% padding)
+        size: Size to allocate (if None, calculated automatically)
 
     Returns:
         DaxfsImage with physical address and size
@@ -449,8 +524,7 @@ def create_daxfs_image(
     required_size = builder.calculate_total_size()
 
     if size is None:
-        size = int(required_size * 1.1)
-        size = (size + DAXFS_BLOCK_SIZE - 1) & ~(DAXFS_BLOCK_SIZE - 1)
+        size = required_size
 
     if required_size > size:
         raise DaxfsError(
