@@ -18,6 +18,7 @@ DTB generation from device tree models.
 
 import libfdt
 from ..models import GlobalDeviceTree, Instance
+from .cells import pack_cpu_ids
 
 
 class InstanceExtractor:
@@ -121,10 +122,7 @@ class InstanceExtractor:
 
     def _add_cpu_properties_sw(self, fdt_sw, cpus):
         """Add CPU properties directly to resources node."""
-        import struct
-
-        available_data = struct.pack(">" + "I" * len(cpus.available), *cpus.available)
-        fdt_sw.property("cpus", available_data)
+        fdt_sw.property("cpus", pack_cpu_ids(cpus.available))
 
     def _add_memory_properties_sw(self, fdt_sw, memory):
         """Add memory properties directly to resources node."""
@@ -200,12 +198,7 @@ class InstanceExtractor:
 
             fdt_sw.begin_node("resources")
 
-            import struct
-
-            cpus_data = struct.pack(
-                ">" + "I" * len(instance.resources.cpus), *instance.resources.cpus
-            )
-            fdt_sw.property("cpus", cpus_data)
+            fdt_sw.property("cpus", pack_cpu_ids(instance.resources.cpus))
 
             fdt_sw.property_u64("memory-base", instance.resources.memory_base)
             fdt_sw.property_u64("memory-bytes", instance.resources.memory_bytes)
@@ -269,14 +262,8 @@ class InstanceExtractor:
         cpus_offset = self.fdt.add_subnode(parent_offset, "cpus")
         self.fdt.setprop_u32(cpus_offset, "total", cpus.total)
 
-        # Convert lists to proper format for FDT
-        import struct
-
-        host_reserved_data = struct.pack(">" + "I" * len(cpus.host_reserved), *cpus.host_reserved)
-        self.fdt.setprop(cpus_offset, "host-reserved", host_reserved_data)
-
-        available_data = struct.pack(">" + "I" * len(cpus.available), *cpus.available)
-        self.fdt.setprop(cpus_offset, "available", available_data)
+        self.fdt.setprop(cpus_offset, "host-reserved", pack_cpu_ids(cpus.host_reserved))
+        self.fdt.setprop(cpus_offset, "available", pack_cpu_ids(cpus.available))
 
     def _add_memory_section(self, parent_offset: int, memory):
         """Add memory section to DTB."""
@@ -347,11 +334,7 @@ class InstanceExtractor:
         """Add instance resources section."""
         resources_offset = self.fdt.add_subnode(parent_offset, "resources")
 
-        # Convert CPU list to proper format
-        import struct
-
-        cpus_data = struct.pack(">" + "I" * len(instance.resources.cpus), *instance.resources.cpus)
-        self.fdt.setprop(resources_offset, "cpus", cpus_data)
+        self.fdt.setprop(resources_offset, "cpus", pack_cpu_ids(instance.resources.cpus))
 
         self.fdt.setprop_u64(resources_offset, "memory-base", instance.resources.memory_base)
         self.fdt.setprop_u64(resources_offset, "memory-bytes", instance.resources.memory_bytes)

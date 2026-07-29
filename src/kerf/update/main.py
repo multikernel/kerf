@@ -193,6 +193,7 @@ def update(
             from pathlib import Path
             import libfdt
             import struct
+            from ..dtc.cells import unpack_cpu_ids
             from ..models import Instance, InstanceResources
 
             instance_dt_path = Path(f'/sys/fs/multikernel/instances/{name}/device_tree')
@@ -216,7 +217,7 @@ def update(
                     raise ResourceError(f"No resources node found for instance '{instance_node_name}'")
 
                 cpus_prop = fdt.getprop(resources_offset, 'cpus')
-                cpus = list(struct.unpack(f'>{len(cpus_prop)//4}I', cpus_prop))
+                cpus = unpack_cpu_ids(cpus_prop)
 
                 memory_base_prop = fdt.getprop(resources_offset, 'memory-base')
                 memory_base = struct.unpack('>Q', memory_base_prop)[0]

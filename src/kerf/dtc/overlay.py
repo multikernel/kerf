@@ -24,6 +24,7 @@ from typing import Set
 import libfdt
 
 from ..models import GlobalDeviceTree
+from .cells import pack_cpu_id, pack_cpu_ids
 
 
 class OverlayGenerator:
@@ -174,8 +175,7 @@ class OverlayGenerator:
 
             for cpu_id in cpus_to_remove:
                 fdt_sw.begin_node(f"cpu@{cpu_id}")
-                reg_data = struct.pack(">I", cpu_id)
-                fdt_sw.property("reg", reg_data)
+                fdt_sw.property("reg", pack_cpu_id(cpu_id))
                 fdt_sw.end_node()
 
             fdt_sw.end_node()
@@ -187,8 +187,7 @@ class OverlayGenerator:
 
             for cpu_id in cpus_to_add:
                 fdt_sw.begin_node(f"cpu@{cpu_id}")
-                reg_data = struct.pack(">I", cpu_id)
-                fdt_sw.property("reg", reg_data)
+                fdt_sw.property("reg", pack_cpu_id(cpu_id))
 
                 if new_instance.resources.numa_nodes:
                     fdt_sw.property_u32("numa-node", new_instance.resources.numa_nodes[0])
@@ -254,8 +253,6 @@ class OverlayGenerator:
         self, fdt_sw, fragment_id, operation, instance_name, cpu_ids, numa_nodes
     ):
         """Helper to add CPU operation fragment."""
-        import struct
-
         fdt_sw.begin_node(f"fragment@{fragment_id}")
         fdt_sw.begin_node("__overlay__")
         fdt_sw.begin_node(operation)
@@ -263,8 +260,7 @@ class OverlayGenerator:
 
         for cpu_id in cpu_ids:
             fdt_sw.begin_node(f"cpu@{cpu_id}")
-            reg_data = struct.pack(">I", cpu_id)
-            fdt_sw.property("reg", reg_data)
+            fdt_sw.property("reg", pack_cpu_id(cpu_id))
 
             if operation == "cpu-add" and numa_nodes:
                 fdt_sw.property_u32("numa-node", numa_nodes[0])
@@ -313,12 +309,7 @@ class OverlayGenerator:
 
             fdt_sw.begin_node("resources")
 
-            import struct
-
-            cpus_data = struct.pack(
-                ">" + "I" * len(instance.resources.cpus), *instance.resources.cpus
-            )
-            fdt_sw.property("cpus", cpus_data)
+            fdt_sw.property("cpus", pack_cpu_ids(instance.resources.cpus))
 
             fdt_sw.property_u64("memory-base", instance.resources.memory_base)
             fdt_sw.property_u64("memory-bytes", instance.resources.memory_bytes)

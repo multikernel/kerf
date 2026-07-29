@@ -22,6 +22,7 @@ from typing import Dict, List, Optional
 import libfdt
 
 from ..exceptions import ParseError
+from .cells import unpack_cpu_ids
 from ..models import (
     CPUAllocation,
     DeviceInfo,
@@ -204,7 +205,7 @@ class DeviceTreeParser:
         """Parse CPU allocation from resources node."""
         try:
             cpus_prop = self.fdt.getprop(resources_node, 'cpus')
-            available = cpus_prop.as_uint32_list()
+            available = unpack_cpu_ids(cpus_prop)
         except libfdt.FdtException:
             # No cpus property means all CPUs are allocated
             available = []
@@ -481,7 +482,7 @@ class DeviceTreeParser:
 
         try:
             cpus_prop = self.fdt.getprop(resources_node, 'cpus')
-            cpus = cpus_prop.as_uint32_list()
+            cpus = unpack_cpu_ids(cpus_prop)
         except libfdt.FdtException as e:
             raise ParseError(f"Missing 'cpus' property in resources: {e}") from e
 
@@ -565,7 +566,7 @@ class DeviceTreeParser:
             raise ParseError(f"Missing resources node for instance: {e}") from e
 
         try:
-            cpus = self.fdt.getprop(resources_node, 'cpus').as_uint32_list()
+            cpus = unpack_cpu_ids(self.fdt.getprop(resources_node, 'cpus'))
         except libfdt.FdtException as e:
             raise ParseError(f"Missing 'cpus' property in instance resources: {e}") from e
 
