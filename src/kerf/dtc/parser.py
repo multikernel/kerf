@@ -887,11 +887,14 @@ class DeviceTreeParser:
         if not resources_text:
             raise ParseError("Missing /resources section in DTS")
 
-        cpus_match = re.search(r'cpus\s*=\s*<([^>]+)>', self._strip_nested_blocks(resources_text))
+        cpus_match = re.search(
+            r'cpus\s*=\s*(?:/bits/\s+(?:32|64)\s*)?<([^>]+)>',
+            self._strip_nested_blocks(resources_text),
+        )
         if not cpus_match:
             raise ParseError("Missing 'cpus' property in /resources")
 
-        available = [int(x.strip()) for x in cpus_match.group(1).split()]
+        available = [int(x, 0) for x in cpus_match.group(1).split()]
         if available:
             total = max(available) + 1
         else:
