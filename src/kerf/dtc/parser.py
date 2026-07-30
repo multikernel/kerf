@@ -34,6 +34,7 @@ from ..models import (
     NUMANode,
     OverlayInstanceData,
     TopologySection,
+    PCIHostBridge,
 )
 
 
@@ -197,13 +198,51 @@ class DeviceTreeParser:
 
         # Parse devices
         devices = self._parse_devices(resources_node)
+        pci_host_bridges = self._parse_pci_host_bridges(resources_node)
 
         return HardwareInventory(
             cpus=cpus,
             memory=memory,
             topology=topology,
-            devices=devices
+            devices=devices,
+            pci_host_bridges=pci_host_bridges
         )
+
+    def _parse_pci_host_bridges(self, resources_node: int) -> List[PCIHostBridge]:
+        """Parse and validate PCI host bridge discovery metadata."""
+        try:
+            bridges_node = self.fdt.subnode_offset(resources_node, 'pci-host-bridges')
+        except libfdt.FdtException:
+            return []
+
+        bridges = []
+        try:
+            offset = self.fdt.first_subnode(bridges_node)
+        except libfdt.FdtException:
+            return bridges
+
+        while offset >= 0:
+            name = self.fdt.get_name(offset)
+            try:
+                segment = self.fdt.getprop(offset, 'segment').as_uint32()
+                bus_range = self.fdt.getprop(offset, 'bus-range').as_uint32_list()
+                ecam_base = self.fdt.getprop(offset, 'ecam-base').as_uint64()
+            except libfdt.FdtException as exc:
+                raise ParseError(f"Invalid PCI host bridge '{name}': {exc}") from exc
+
+            if len(bus_range) != 2:
+                raise ParseError(f"Invalid bus-range for PCI host bridge '{name}'")
+
+            bridge = PCIHostBridge(segment, bus_range[0], bus_range[1], ecam_base)
+            self._validate_pci_host_bridge(bridge, bridges, name)
+            bridges.append(bridge)
+
+            try:
+                offset = self.fdt.next_subnode(offset)
+            except libfdt.FdtException:
+                break
+
+        return bridges
 
     def _parse_cpu_allocation(self, resources_node: int) -> CPUAllocation:
         """Parse CPU allocation from resources node."""
@@ -725,13 +764,80 @@ class DeviceTreeParser:
 
         # Parse devices
         devices = self._parse_devices_from_dts(dts_content)
+        pci_host_bridges = self._parse_pci_host_bridges_from_dts(dts_content)
 
         return HardwareInventory(
             cpus=cpus,
             memory=memory,
             topology=topology,
-            devices=devices
+            devices=devices,
+            pci_host_bridges=pci_host_bridges
         )
+
+    def _parse_pci_host_bridges_from_dts(self, dts_content: str) -> List[PCIHostBridge]:
+        """Parse PCI host bridge metadata from DTS source."""
+        resources_text = self._extract_resources_section(dts_content)
+        if not resources_text:
+            return []
+
+        section_match = re.search(r'pci-host-bridges\s*\{', resources_text)
+        if not section_match:
+            return []
+
+        start = section_match.end() - 1
+        depth = 0
+        end = start
+        for index, char in enumerate(resources_text[start:], start):
+            if char == '{':
+                depth += 1
+            elif char == '}':
+                depth -= 1
+                if depth == 0:
+                    end = index
+                    break
+        if depth != 0:
+            raise ParseError("Unterminated pci-host-bridges section")
+
+        section = resources_text[start + 1:end]
+        bridges = []
+        for match in re.finditer(r'([\w@,.-]+)\s*\{([^{}]*)\}', section, re.DOTALL):
+            name, body = match.groups()
+            segment_match = re.search(r'segment\s*=\s*<([^>]+)>', body)
+            bus_match = re.search(r'bus-range\s*=\s*<([^>]+)>', body)
+            ecam_match = re.search(r'ecam-base\s*=.*?<([^>]+)>', body)
+            if not segment_match or not bus_match or not ecam_match:
+                raise ParseError(f"Invalid PCI host bridge '{name}'")
+
+            bus_cells = bus_match.group(1).split()
+            if len(bus_cells) != 2:
+                raise ParseError(f"Invalid bus-range for PCI host bridge '{name}'")
+
+            bridge = PCIHostBridge(
+                self._parse_hex_value(segment_match.group(1)),
+                int(bus_cells[0], 0),
+                int(bus_cells[1], 0),
+                self._parse_hex_value(ecam_match.group(1)),
+            )
+            self._validate_pci_host_bridge(bridge, bridges, name)
+            bridges.append(bridge)
+        return bridges
+
+    @staticmethod
+    def _validate_pci_host_bridge(bridge, existing, name):
+        if not 0 <= bridge.segment <= 0xffff:
+            raise ParseError(f"Invalid segment for PCI host bridge '{name}'")
+        if not 0 <= bridge.bus_start <= bridge.bus_end <= 0xff:
+            raise ParseError(f"Invalid bus-range for PCI host bridge '{name}'")
+        if not bridge.ecam_base or bridge.ecam_base % (1024 * 1024):
+            raise ParseError(f"Invalid ECAM base for PCI host bridge '{name}'")
+
+        for other in existing:
+            if (other.segment == bridge.segment and
+                    bridge.bus_start <= other.bus_end and
+                    bridge.bus_end >= other.bus_start):
+                raise ParseError(
+                    f"Overlapping PCI host bridge bus ranges in segment {bridge.segment:04x}"
+                )
 
     def _extract_braced_block(self, text: str, name: str) -> Optional[str]:
         """Extract the body of a named `name { ... }` block with balanced braces."""

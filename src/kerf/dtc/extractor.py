@@ -105,6 +105,8 @@ class InstanceExtractor:
 
         if tree.hardware.topology and tree.hardware.topology.numa_nodes:
             self._add_topology_section_sw(fdt_sw, tree.hardware.topology)
+        if tree.hardware.pci_host_bridges:
+            self._add_pci_host_bridges_sw(fdt_sw, tree.hardware.pci_host_bridges)
 
         if tree.hardware.devices:
             self._add_devices_section_sw(fdt_sw, tree.hardware.devices)
@@ -158,6 +160,21 @@ class InstanceExtractor:
 
         fdt_sw.end_node()  # End numa-nodes
         fdt_sw.end_node()  # End topology
+
+    def _add_pci_host_bridges_sw(self, fdt_sw, bridges):
+        """Add architecture-neutral PCI host bridge discovery metadata."""
+        import struct
+
+        fdt_sw.begin_node("pci-host-bridges")
+        for bridge in bridges:
+            fdt_sw.begin_node(f"host@{bridge.segment:04x},{bridge.bus_start:02x}")
+            fdt_sw.property_u32("segment", bridge.segment)
+            fdt_sw.property(
+                "bus-range", struct.pack(">II", bridge.bus_start, bridge.bus_end)
+            )
+            fdt_sw.property_u64("ecam-base", bridge.ecam_base)
+            fdt_sw.end_node()
+        fdt_sw.end_node()
 
     def _add_devices_section_sw(self, fdt_sw, devices):
         """Add devices section using FdtSw."""

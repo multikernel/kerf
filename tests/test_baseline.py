@@ -118,6 +118,28 @@ class TestBaselineManager:
         with pytest.raises(KernelInterfaceError, match="not found"):
             manager.read_baseline()
 
+    def test_write_and_read_pci_host_bridge_metadata(self, sample_hardware):
+        """PCI host bridge records survive the baseline model round trip."""
+        from kerf.models import GlobalDeviceTree, PCIHostBridge
+
+        sample_hardware.pci_host_bridges = [
+            PCIHostBridge(segment=0, bus_start=0, bus_end=255, ecam_base=0xb0000000)
+        ]
+        with tempfile.NamedTemporaryFile(delete=False) as f:
+            baseline_path = f.name
+        try:
+            tree = GlobalDeviceTree(
+                hardware=sample_hardware, instances={}, device_references={}
+            )
+            manager = BaselineManager(baseline_path=baseline_path)
+            manager.write_baseline(tree)
+            assert manager.read_baseline().hardware.pci_host_bridges == (
+                sample_hardware.pci_host_bridges
+            )
+        finally:
+            if os.path.exists(baseline_path):
+                os.unlink(baseline_path)
+
     def test_write_baseline_invalid_tree(self, sample_tree):
         """Test writing baseline with invalid tree (has instances)."""
         with tempfile.NamedTemporaryFile(delete=False) as f:

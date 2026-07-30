@@ -16,7 +16,7 @@
 Data models for multikernel device tree representation.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import List, Dict, Optional, Set, Tuple
 from enum import Enum
 
@@ -134,6 +134,13 @@ class DeviceInfo:
     namespaces: Optional[int] = None
     host_reserved_ns: Optional[int] = None
     available_ns: Optional[List[int]] = None
+@dataclass(frozen=True)
+class PCIHostBridge:
+    """Architecture-neutral PCI host bridge discovery metadata."""
+    segment: int
+    bus_start: int
+    bus_end: int
+    ecam_base: int
 
 
 @dataclass
@@ -201,6 +208,7 @@ class HardwareInventory:
     memory: MemoryAllocation
     topology: Optional[TopologySection] = None
     devices: Dict[str, DeviceInfo] = None
+    pci_host_bridges: List[PCIHostBridge] = field(default_factory=list)
 
 
 @dataclass
