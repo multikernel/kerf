@@ -123,7 +123,7 @@ Baseline DTB (static)
 - **Format Support**: DTS to DTB compilation for baseline configuration
 - **Error Reporting**: Detailed error messages with actionable suggestions
 - **Resource Analysis**: Complete resource utilization reporting
-- **CPU & NUMA Topology**: Full support for CPU topology and NUMA-aware resource allocation
+- **CPU & NUMA Topology**: Automatic host topology discovery and NUMA-aware CPU auto-allocation
 
 ### Command Line Interface
 ```bash
@@ -136,6 +136,9 @@ kerf init --cpus=4-31 --devices=enp9s0_dev,nvme0
 # Create kernel instance with resource allocation
 kerf create web-server --cpus=4-7 --memory=2GB
 kerf create database --cpu-count=8 --memory=16GB
+
+# Topology-aware auto-allocation (see CPU and NUMA Topology Support)
+kerf create database --cpu-count=8 --memory=16GB --numa-nodes=0 --memory-policy=local
 
 # Load kernel image with initrd and boot parameters
 kerf load --kernel=/boot/vmlinuz --initrd=/boot/initrd.img \
@@ -330,6 +333,7 @@ The `examples/` directory contains sample baseline Device Tree Source (DTS) file
 - **`baseline.dts`** - Complete baseline with CPU, memory, and device resources (32 CPUs, 16GB memory)
 - **`minimal.dts`** - Simple baseline for testing and development (8 CPUs, 8GB memory)
 - **`edge_computing.dts`** - Edge computing baseline with GPU support for AI inference (16 CPUs, 32GB memory)
+- **`simple_numa.dts`** - Basic NUMA baseline with 2 NUMA nodes and device locality
 - **`numa_topology.dts`** - Advanced NUMA topology baseline with 4 NUMA nodes and topology-aware allocation
 - **`system.dts`** - Example baseline with various device configurations
 - **`conflict_example.dts`** - Intentionally invalid baseline demonstrating common validation errors
@@ -338,15 +342,42 @@ The `examples/` directory contains sample baseline Device Tree Source (DTS) file
 
 ## CPU and NUMA Topology Support
 
-Kerf provides comprehensive support for CPU and NUMA topology management:
+Kerf tracks the host's NUMA topology in the baseline device tree and uses it in three separable ways:
 
-### Key Features
-- **CPU Topology**: Socket, core, and thread mapping with SMT/hyperthreading support
-- **NUMA Awareness**: NUMA node definition with memory regions and CPU assignments
-- **Topology Policies**: CPU affinity (`compact`, `spread`, `local`) and memory policies (`local`, `interleave`, `bind`)
-- **Performance Validation**: Automatic validation of topology constraints and performance warnings
+1. **Discovery**: `kerf init` records the host topology automatically: NUMA nodes and distances from `/sys/devices/system/node/`, per-node memory ranges from `/proc/zoneinfo`, and PCI device locality from sysfs `numa_node`. All CPU values are physical CPU IDs (APIC IDs on x86), translated from logical CPU numbers via `/proc/cpuinfo`.
+2. **Auto-allocation**: `kerf create --cpu-count=N` places CPUs according to a topology-aware policy.
+3. **Validation**: every operation reports topology violations as warnings.
 
-For detailed information about CPU and NUMA topology support, see [CPU_NUMA_TOPOLOGY.md](docs/CPU_NUMA_TOPOLOGY.md).
+### Topology-Aware Allocation
+
+```bash
+# 8 CPUs from NUMA node 0, memory policy local (auto-allocated, compact by default)
+kerf create database --cpu-count=8 --memory=16GB --numa-nodes=0 --memory-policy=local
+
+# 16 CPUs spread across NUMA nodes 0 and 1
+kerf create compute --cpu-count=16 --memory=32GB --numa-nodes=0,1 --cpu-affinity=spread
+
+# All CPUs from a single node that can satisfy the request
+kerf create realtime --cpu-count=4 --memory=8GB --cpu-affinity=local
+```
+
+`--cpu-affinity` policies (auto-allocation defaults to `compact`):
+- `compact`: same NUMA node, consecutive IDs where possible; best cache locality
+- `spread`: round-robin across the requested NUMA nodes; throughput workloads
+- `local`: all CPUs from one node that can satisfy the request; fails if no single node can
+
+### Manual Allocation Stays Authoritative
+
+```bash
+# Deliberately cross topology boundaries: honored, warnings only
+kerf create web-server --cpus=128,136 --memory=2GB --memory-base=0x100000000
+```
+
+Explicit resource specs (`--cpus`, `--memory-base`, explicit device names) are used verbatim, and no placement policy is attached unless `--cpu-affinity` is passed explicitly. Topology violations (CPUs outside the configured NUMA nodes, affinity mismatches, remote memory) are reported as warnings and never block. Hard errors are reserved for impossible requests: nonexistent APIC IDs or NUMA nodes, and conflicts with other instances.
+
+A hand-written topology section in the baseline DTS (see `examples/simple_numa.dts` and `examples/numa_topology.dts`) overrides discovery when using `kerf init --input=...`.
+
+Current limitation: instance memory is still allocated first-fit from a single contiguous pool; `--memory-policy` is recorded and validated but does not yet drive placement. Per-NUMA-node memory pools are planned (`/dev/lazy_cma` already accepts a NUMA node).
 
 ## References
 
