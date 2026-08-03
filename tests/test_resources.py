@@ -155,7 +155,7 @@ class TestMemoryAllocation:
         memory_base = 0x10000000  # Below pool base
         memory_bytes = 1024**3
 
-        with pytest.raises(ResourceError, match="below pool base"):
+        with pytest.raises(ResourceError, match="not within any memory pool"):
             validate_memory_allocation(sample_tree, memory_base, memory_bytes)
 
     def test_validate_memory_allocation_misaligned(self, sample_tree):

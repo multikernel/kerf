@@ -299,9 +299,18 @@ def display_baseline_info(tree: GlobalDeviceTree, verbose: bool = False):
     click.echo(
         f"    Host Reserved:   {reserved_gb:.2f} GB ({hardware.memory.host_reserved_bytes} bytes)"
     )
-    click.echo(f"    Pool Base:       0x{hardware.memory.memory_pool_base:x}")
-    click.echo(f"    Pool Size:       {pool_gb:.2f} GB ({hardware.memory.memory_pool_bytes} bytes)")
-    click.echo(f"    Pool End:        0x{hardware.memory.memory_pool_end:x}")
+    if hardware.memory.pools:
+        click.echo("    Pools:")
+        for pool in hardware.memory.pools:
+            pool_size_gb = pool.size / (1024**3)
+            node_str = f"NUMA node {pool.numa_node}" if pool.numa_node is not None else "any node"
+            click.echo(
+                f"      0x{pool.base:x}-0x{pool.end:x}: {pool_size_gb:.2f} GB ({node_str})"
+            )
+    else:
+        click.echo(f"    Pool Base:       0x{hardware.memory.memory_pool_base:x}")
+        click.echo(f"    Pool Size:       {pool_gb:.2f} GB ({hardware.memory.memory_pool_bytes} bytes)")
+        click.echo(f"    Pool End:        0x{hardware.memory.memory_pool_end:x}")
 
     # NUMA Topology
     if hardware.topology and hardware.topology.numa_nodes:
@@ -327,6 +336,8 @@ def display_baseline_info(tree: GlobalDeviceTree, verbose: bool = False):
                 click.echo(f"      Type:          {device_info.device_type}")
             if device_info.pci_id:
                 click.echo(f"      PCI ID:        {device_info.pci_id}")
+            if device_info.numa_node is not None:
+                click.echo(f"      NUMA Node:     {device_info.numa_node}")
             if device_info.sriov_vfs:
                 click.echo(f"      SR-IOV VFs:    {device_info.sriov_vfs} total")
                 if device_info.available_vfs:

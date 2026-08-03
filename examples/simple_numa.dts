@@ -2,7 +2,13 @@
  * Simple NUMA Baseline Example
  *
  * Baseline defines hardware resources with basic NUMA configuration.
- * Usage: kerf init --input=simple_numa.dts --apply
+ * All CPU values are physical CPU IDs (APIC IDs on x86), not logical
+ * CPU numbers.
+ *
+ * Note: `kerf init --cpus=...` discovers the host topology automatically;
+ * a hand-written topology section is only needed for explicit control.
+ *
+ * Usage: kerf init --input=simple_numa.dts
  */
 
 /multikernel-v1/;
