@@ -49,6 +49,7 @@ from ..models import (
     HardwareInventory,
     MemoryAllocation,
 )
+from ..topology import discover_numa_topology, read_pci_numa_node
 
 
 MULTIKERNEL_MOUNT_POINT = "/sys/fs/multikernel"
@@ -262,7 +263,8 @@ def detect_pci_device(device_name: str) -> Optional[DeviceInfo]:
             device_type="pci",
             pci_id=pci_slot,
             vendor_id=vendor_id,
-            device_id=device_id
+            device_id=device_id,
+            numa_node=read_pci_numa_node(pci_device_path)
         )
     except (OSError, IOError, ValueError, AttributeError, pyudev.DeviceNotFoundError):
         return None
@@ -511,9 +513,19 @@ def build_baseline_from_cmdline(
                     f"Please ensure the device exists and is accessible, or use --input with a DTS file to specify device details."
                 )
 
+    topology = discover_numa_topology()
+    if verbose and topology and topology.numa_nodes:
+        click.echo(f"Discovered NUMA topology: {len(topology.numa_nodes)} node(s)")
+        for node_id, node in sorted(topology.numa_nodes.items()):
+            click.echo(
+                f"  Node {node_id}: APIC IDs {node.cpus}, "
+                f"memory {hex(node.memory_base)}-{hex(node.memory_base + node.memory_size)}"
+            )
+
     hardware = HardwareInventory(
         cpus=cpu_allocation,
         memory=memory_allocation,
+        topology=topology,
         devices=device_dict
     )
 

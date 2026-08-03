@@ -412,9 +412,11 @@ def dump_overlay_for_debug(
 @click.option(
     "--cpu-affinity",
     type=click.Choice(["compact", "spread", "local"]),
-    default="compact",
+    default=None,
     help="CPU affinity policy: compact (same NUMA node, consecutive), "
-    "spread (across NUMA nodes), or local (co-locate with memory)",
+    "spread (across NUMA nodes), or local (co-locate with memory). "
+    "Auto-allocation (--cpu-count) defaults to compact; explicit --cpus "
+    "follows the requested CPUs exactly unless a policy is given",
 )
 @click.option(
     "--numa-nodes",
@@ -625,17 +627,21 @@ def create(  # pylint: disable=too-many-arguments,too-many-positional-arguments
             else:
                 final_instance_id = None
 
-            # Allocate CPUs based on specification
+            # Allocate CPUs based on specification. Explicit CPU lists are
+            # authoritative: the user may deliberately cross topology
+            # boundaries, so no placement policy is attached unless asked for.
             if is_count:
                 # Allocate CPUs automatically from available pool with topology awareness
+                effective_affinity = cpu_affinity or "compact"
                 cpu_list = allocate_cpus_from_pool(
                     modified,
                     cpu_spec_value,  # cpu_spec_value is int (count)
-                    cpu_affinity=cpu_affinity,
+                    cpu_affinity=effective_affinity,
                     numa_nodes=numa_node_list,
                 )
             else:
                 # Use explicitly specified CPUs
+                effective_affinity = cpu_affinity
                 cpu_list = cpu_spec_value  # cpu_spec_value is List[int]
 
             # Validate CPU allocation (against baseline and existing instances)
@@ -662,7 +668,7 @@ def create(  # pylint: disable=too-many-arguments,too-many-positional-arguments
                 memory_bytes=memory_bytes,
                 devices=device_list,
                 numa_nodes=numa_node_list,
-                cpu_affinity=cpu_affinity,
+                cpu_affinity=effective_affinity,
                 memory_policy=memory_policy,
                 uring=uring_enabled,
                 uring_sq_entries=uring_sq_entries or (256 if uring_enabled else None),

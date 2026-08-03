@@ -108,6 +108,20 @@ class TestDeviceTreeParser:
         assert device.compatible == "intel,i40e"
         assert device.sriov_vfs == 8
 
+    @pytest.mark.parametrize(
+        ("declaration", "expected"),
+        [
+            ("<2 3>", [2, 3]),
+            ("/bits/ 64 <0x2 0x3>", [2, 3]),
+        ],
+    )
+    def test_parse_cpu_ids_from_dts(self, declaration, expected):
+        """Test legacy and explicit-width CPU cells in DTS sources."""
+        dts = f"/dts-v1/; / {{ resources {{ cpus = {declaration}; }}; }};"
+        cpus = DeviceTreeParser()._parse_cpus_from_dts(dts)
+
+        assert cpus.available == expected
+
 
 class TestInstanceExtractor:
     """Test instance extraction."""

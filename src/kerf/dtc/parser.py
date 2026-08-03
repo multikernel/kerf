@@ -34,6 +34,7 @@ from ..models import (
     NUMANode,
     OverlayInstanceData,
     TopologySection,
+    PCIHostBridge,
 )
 
 
@@ -48,6 +49,10 @@ class DeviceTreeParser:
         """Parse DTS content into GlobalDeviceTree model."""
         # Create a simple DTS parser that can handle our multikernel format
         # This is a production-ready implementation for the specific DTS format we use
+
+        # Strip comments first: they may appear inside multi-line property values
+        dts_content = re.sub(r'/\*.*?\*/', '', dts_content, flags=re.DOTALL)
+        dts_content = re.sub(r'//[^\n]*', '', dts_content)
 
         # Parse the DTS content using regex and string parsing
 
@@ -193,13 +198,51 @@ class DeviceTreeParser:
 
         # Parse devices
         devices = self._parse_devices(resources_node)
+        pci_host_bridges = self._parse_pci_host_bridges(resources_node)
 
         return HardwareInventory(
             cpus=cpus,
             memory=memory,
             topology=topology,
-            devices=devices
+            devices=devices,
+            pci_host_bridges=pci_host_bridges
         )
+
+    def _parse_pci_host_bridges(self, resources_node: int) -> List[PCIHostBridge]:
+        """Parse and validate PCI host bridge discovery metadata."""
+        try:
+            bridges_node = self.fdt.subnode_offset(resources_node, 'pci-host-bridges')
+        except libfdt.FdtException:
+            return []
+
+        bridges = []
+        try:
+            offset = self.fdt.first_subnode(bridges_node)
+        except libfdt.FdtException:
+            return bridges
+
+        while offset >= 0:
+            name = self.fdt.get_name(offset)
+            try:
+                segment = self.fdt.getprop(offset, 'segment').as_uint32()
+                bus_range = self.fdt.getprop(offset, 'bus-range').as_uint32_list()
+                ecam_base = self.fdt.getprop(offset, 'ecam-base').as_uint64()
+            except libfdt.FdtException as exc:
+                raise ParseError(f"Invalid PCI host bridge '{name}': {exc}") from exc
+
+            if len(bus_range) != 2:
+                raise ParseError(f"Invalid bus-range for PCI host bridge '{name}'")
+
+            bridge = PCIHostBridge(segment, bus_range[0], bus_range[1], ecam_base)
+            self._validate_pci_host_bridge(bridge, bridges, name)
+            bridges.append(bridge)
+
+            try:
+                offset = self.fdt.next_subnode(offset)
+            except libfdt.FdtException:
+                break
+
+        return bridges
 
     def _parse_cpu_allocation(self, resources_node: int) -> CPUAllocation:
         """Parse CPU allocation from resources node."""
@@ -291,6 +334,7 @@ class DeviceTreeParser:
         pci_id = None
         vendor_id = None
         device_id = None
+        numa_node = None
         sriov_vfs = None
         host_reserved_vf = None
         available_vfs = None
@@ -320,6 +364,11 @@ class DeviceTreeParser:
 
         try:
             device_id = self.fdt.getprop(node_offset, 'device-id').as_uint32()
+        except libfdt.FdtException:
+            pass
+
+        try:
+            numa_node = self.fdt.getprop(node_offset, 'numa-node').as_uint32()
         except libfdt.FdtException:
             pass
 
@@ -361,6 +410,7 @@ class DeviceTreeParser:
             pci_id=pci_id,
             vendor_id=vendor_id,
             device_id=device_id,
+            numa_node=numa_node,
             sriov_vfs=sriov_vfs,
             host_reserved_vf=host_reserved_vf,
             available_vfs=available_vfs,
@@ -714,37 +764,121 @@ class DeviceTreeParser:
 
         # Parse devices
         devices = self._parse_devices_from_dts(dts_content)
+        pci_host_bridges = self._parse_pci_host_bridges_from_dts(dts_content)
 
         return HardwareInventory(
             cpus=cpus,
             memory=memory,
             topology=topology,
-            devices=devices
+            devices=devices,
+            pci_host_bridges=pci_host_bridges
         )
 
-    def _extract_resources_section(self, dts_content: str) -> Optional[str]:
-        """Extract the resources section content with proper brace matching."""
+    def _parse_pci_host_bridges_from_dts(self, dts_content: str) -> List[PCIHostBridge]:
+        """Parse PCI host bridge metadata from DTS source."""
+        resources_text = self._extract_resources_section(dts_content)
+        if not resources_text:
+            return []
 
-        resources_start = re.search(r'resources\s*\{', dts_content)
-        if not resources_start:
+        section_match = re.search(r'pci-host-bridges\s*\{', resources_text)
+        if not section_match:
+            return []
+
+        start = section_match.end() - 1
+        depth = 0
+        end = start
+        for index, char in enumerate(resources_text[start:], start):
+            if char == '{':
+                depth += 1
+            elif char == '}':
+                depth -= 1
+                if depth == 0:
+                    end = index
+                    break
+        if depth != 0:
+            raise ParseError("Unterminated pci-host-bridges section")
+
+        section = resources_text[start + 1:end]
+        bridges = []
+        for match in re.finditer(r'([\w@,.-]+)\s*\{([^{}]*)\}', section, re.DOTALL):
+            name, body = match.groups()
+            segment_match = re.search(r'segment\s*=\s*<([^>]+)>', body)
+            bus_match = re.search(r'bus-range\s*=\s*<([^>]+)>', body)
+            ecam_match = re.search(r'ecam-base\s*=.*?<([^>]+)>', body)
+            if not segment_match or not bus_match or not ecam_match:
+                raise ParseError(f"Invalid PCI host bridge '{name}'")
+
+            bus_cells = bus_match.group(1).split()
+            if len(bus_cells) != 2:
+                raise ParseError(f"Invalid bus-range for PCI host bridge '{name}'")
+
+            bridge = PCIHostBridge(
+                self._parse_hex_value(segment_match.group(1)),
+                int(bus_cells[0], 0),
+                int(bus_cells[1], 0),
+                self._parse_hex_value(ecam_match.group(1)),
+            )
+            self._validate_pci_host_bridge(bridge, bridges, name)
+            bridges.append(bridge)
+        return bridges
+
+    @staticmethod
+    def _validate_pci_host_bridge(bridge, existing, name):
+        if not 0 <= bridge.segment <= 0xffff:
+            raise ParseError(f"Invalid segment for PCI host bridge '{name}'")
+        if not 0 <= bridge.bus_start <= bridge.bus_end <= 0xff:
+            raise ParseError(f"Invalid bus-range for PCI host bridge '{name}'")
+        if not bridge.ecam_base or bridge.ecam_base % (1024 * 1024):
+            raise ParseError(f"Invalid ECAM base for PCI host bridge '{name}'")
+
+        for other in existing:
+            if (other.segment == bridge.segment and
+                    bridge.bus_start <= other.bus_end and
+                    bridge.bus_end >= other.bus_start):
+                raise ParseError(
+                    f"Overlapping PCI host bridge bus ranges in segment {bridge.segment:04x}"
+                )
+
+    def _extract_braced_block(self, text: str, name: str) -> Optional[str]:
+        """Extract the body of a named `name { ... }` block with balanced braces."""
+        start = re.search(re.escape(name) + r'\s*\{', text)
+        if not start:
             return None
 
-        start_pos = resources_start.end() - 1
+        start_pos = start.end() - 1
         brace_count = 0
-        end_pos = start_pos
 
-        for i, char in enumerate(dts_content[start_pos:], start_pos):
+        for i, char in enumerate(text[start_pos:], start_pos):
             if char == '{':
                 brace_count += 1
             elif char == '}':
                 brace_count -= 1
                 if brace_count == 0:
-                    end_pos = i
-                    break
-
-        if brace_count == 0:
-            return dts_content[start_pos+1:end_pos]
+                    return text[start_pos+1:i]
         return None
+
+    def _strip_nested_blocks(self, text: str) -> str:
+        """Remove nested `{ ... }` blocks, leaving only direct properties.
+
+        Needed because sub-sections such as topology NUMA nodes carry
+        properties (cpus, memory-base) that shadow the direct resource
+        properties under naive regex matching.
+        """
+        result = []
+        depth = 0
+        for char in text:
+            if char == '{':
+                depth += 1
+            elif char == '}':
+                depth = max(0, depth - 1)
+                continue
+            if depth == 0:
+                result.append(char)
+        return ''.join(result)
+
+    def _extract_resources_section(self, dts_content: str) -> Optional[str]:
+        """Extract the resources section content with proper brace matching."""
+        return self._extract_braced_block(dts_content, 'resources')
 
     def _parse_cpus_from_dts(self, dts_content: str) -> CPUAllocation:
         """Parse CPU allocation from DTS content."""
@@ -753,11 +887,14 @@ class DeviceTreeParser:
         if not resources_text:
             raise ParseError("Missing /resources section in DTS")
 
-        cpus_match = re.search(r'cpus\s*=\s*<([^>]+)>', resources_text)
+        cpus_match = re.search(
+            r'cpus\s*=\s*(?:/bits/\s+(?:32|64)\s*)?<([^>]+)>',
+            self._strip_nested_blocks(resources_text),
+        )
         if not cpus_match:
             raise ParseError("Missing 'cpus' property in /resources")
 
-        available = [int(x.strip()) for x in cpus_match.group(1).split()]
+        available = [int(x, 0) for x in cpus_match.group(1).split()]
         if available:
             total = max(available) + 1
         else:
@@ -781,11 +918,13 @@ class DeviceTreeParser:
         if not resources_text:
             raise ParseError("Missing /resources section in DTS")
 
-        memory_base_match = re.search(r'memory-base\s*=\s*<([^>]+)>', resources_text)
+        direct_properties = self._strip_nested_blocks(resources_text)
+
+        memory_base_match = re.search(r'memory-base\s*=\s*<([^>]+)>', direct_properties)
         if not memory_base_match:
             raise ParseError("Missing 'memory-base' property in /resources")
 
-        memory_bytes_match = re.search(r'memory-bytes\s*=\s*<([^>]+)>', resources_text)
+        memory_bytes_match = re.search(r'memory-bytes\s*=\s*<([^>]+)>', direct_properties)
         if not memory_bytes_match:
             raise ParseError("Missing 'memory-bytes' property in /resources")
 
@@ -875,6 +1014,7 @@ class DeviceTreeParser:
         pci_id = None
         vendor_id = None
         device_id = None
+        numa_node = None
         sriov_vfs = None
         host_reserved_vf = None
         available_vfs = None
@@ -901,6 +1041,10 @@ class DeviceTreeParser:
         device_id_match = re.search(r'device-id\s*=\s*<([^>]+)>', content)
         if device_id_match:
             device_id = self._parse_hex_value(device_id_match.group(1))
+
+        numa_node_match = re.search(r'numa-node\s*=\s*<(\d+)>', content)
+        if numa_node_match:
+            numa_node = int(numa_node_match.group(1))
 
         sriov_vfs_match = re.search(r'sriov-vfs\s*=\s*<(\d+)>', content)
         if sriov_vfs_match:
@@ -934,6 +1078,7 @@ class DeviceTreeParser:
             pci_id=pci_id,
             vendor_id=vendor_id,
             device_id=device_id,
+            numa_node=numa_node,
             sriov_vfs=sriov_vfs,
             host_reserved_vf=host_reserved_vf,
             available_vfs=available_vfs,
@@ -1184,12 +1329,9 @@ class DeviceTreeParser:
     def _parse_topology_from_dts(self, dts_content: str) -> Optional[TopologySection]:
         """Parse topology section from DTS content."""
 
-        # Look for topology section
-        topology_section = re.search(r'topology\s*\{([^}]+)\}', dts_content, re.DOTALL)
-        if not topology_section:
+        topology_text = self._extract_braced_block(dts_content, 'topology')
+        if topology_text is None:
             return None
-
-        topology_text = topology_section.group(1)
 
         # Parse NUMA nodes from topology section
         numa_nodes = self._parse_numa_nodes_from_dts(topology_text)
@@ -1201,15 +1343,12 @@ class DeviceTreeParser:
 
         numa_nodes = {}
 
-        # Look for numa-nodes subsection
-        numa_section = re.search(r'numa-nodes\s*\{([^}]+)\}', topology_text, re.DOTALL)
-        if not numa_section:
+        numa_text = self._extract_braced_block(topology_text, 'numa-nodes')
+        if numa_text is None:
             return None
 
-        numa_text = numa_section.group(1)
-
-        # Find all NUMA node definitions
-        node_pattern = r'node@(\d+)\s*\{([^}]+)\}'
+        # Find all NUMA node definitions (node bodies contain no nested blocks)
+        node_pattern = r'node@(\d+)\s*\{([^{}]*)\}'
         node_matches = re.finditer(node_pattern, numa_text, re.DOTALL)
 
         for match in node_matches:
@@ -1233,17 +1372,16 @@ class DeviceTreeParser:
             if memory_size_match:
                 memory_size = self._parse_hex_value(memory_size_match.group(1))
 
-            # Parse CPUs
+            # Parse CPUs (physical CPU IDs, decimal or hex)
             cpus_match = re.search(r'cpus\s*=\s*<([^>]+)>', node_content)
             if cpus_match:
-                cpus = [int(x.strip()) for x in cpus_match.group(1).split()]
+                cpus = [int(x.strip(), 0) for x in cpus_match.group(1).split()]
 
-            # Parse distance matrix (optional)
+            # Parse distance matrix, encoded as (target-node, distance) pairs
             distance_match = re.search(r'distance-matrix\s*=\s*<([^>]+)>', node_content)
             if distance_match:
-                distances = [int(x.strip()) for x in distance_match.group(1).split()]
-                # Simple distance matrix parsing - would need more sophisticated logic for full matrix
-                _ = distances  # Mark as intentionally unused for now
+                distances = [int(x.strip(), 0) for x in distance_match.group(1).split()]
+                distance_matrix = dict(zip(distances[0::2], distances[1::2]))
 
             # Parse memory type
             memory_type_match = re.search(r'memory-type\s*=\s*"([^"]+)"', node_content)
@@ -1267,21 +1405,18 @@ class DeviceTreeParser:
 
         topology = {}
 
-        # Look for cores section
-        cores_section = re.search(r'cores\s*\{([^}]+)\}', dts_content, re.DOTALL)
-        if not cores_section:
+        cores_text = self._extract_braced_block(dts_content, 'cores')
+        if cores_text is None:
             return None
 
-        cores_text = cores_section.group(1)
-
-        # Find all core definitions
+        # Find all core definitions (core bodies contain no nested blocks)
         core_pattern = r'core@(\d+)\s*\{\s*cpus\s*=\s*<([^>]+)>\s*;\s*\}'
         core_matches = re.finditer(core_pattern, cores_text, re.DOTALL)
 
         for match in core_matches:
             core_id = int(match.group(1))
             cpus_str = match.group(2)
-            cpus = [int(x.strip()) for x in cpus_str.split()]
+            cpus = [int(x.strip(), 0) for x in cpus_str.split()]
 
             # Create topology entries for each CPU in this core
             for i, cpu_id in enumerate(cpus):
@@ -1318,18 +1453,23 @@ class DeviceTreeParser:
 
         nodes = {}
 
-        # Iterate through NUMA node definitions
-        offset = self.fdt.first_subnode(numa_nodes_node)
+        try:
+            offset = self.fdt.first_subnode(numa_nodes_node)
+        except libfdt.FdtException:
+            return None
+
         while offset >= 0:
-            try:
-                node_name = self.fdt.get_name(offset)
-                if node_name.startswith('node@'):
+            node_name = self.fdt.get_name(offset)
+            if node_name.startswith('node@'):
+                try:
                     node_id = int(node_name.split('@')[1])
-                    node_info = self._parse_numa_node_info(offset, node_id)
-                    nodes[node_id] = node_info
+                    nodes[node_id] = self._parse_numa_node_info(offset, node_id)
+                except ValueError:
+                    pass
+            try:
                 offset = self.fdt.next_subnode(offset)
-            except Exception:
-                offset = self.fdt.next_subnode(offset)
+            except libfdt.FdtException:
+                break
 
         return nodes if nodes else None
 
@@ -1349,18 +1489,18 @@ class DeviceTreeParser:
         except libfdt.FdtException:
             pass
 
-        # Parse CPUs
+        # Parse CPUs (physical CPU IDs, 64-bit cells like all other cpus properties)
         cpus = []
         try:
-            cpus = self.fdt.getprop(node_offset, 'cpus').as_uint32_list()
+            cpus = unpack_cpu_ids(self.fdt.getprop(node_offset, 'cpus'))
         except libfdt.FdtException:
             pass
 
-        # Parse distance matrix (optional)
+        # Parse distance matrix, encoded as (target-node, distance) u32 pairs
         distance_matrix = {}
         try:
-            _ = self.fdt.getprop(node_offset, 'distance-matrix').as_uint32_list()
-            # Simple distance matrix parsing - would need more sophisticated logic for full matrix
+            values = self.fdt.getprop(node_offset, 'distance-matrix').as_uint32_list()
+            distance_matrix = dict(zip(values[0::2], values[1::2]))
         except libfdt.FdtException:
             pass
 
