@@ -117,8 +117,35 @@ def get_allocated_memory_regions(tree: GlobalDeviceTree) -> List[tuple[int, int]
     return regions
 
 
+def _find_gap_in_pool(
+    pool, allocated_regions: List[tuple[int, int]], size_bytes: int, alignment: int
+) -> Optional[int]:
+    """First-fit a region of size_bytes into one pool, avoiding allocations."""
+    # Only allocations overlapping this pool matter
+    regions = sorted(
+        (base, size)
+        for base, size in allocated_regions
+        if base < pool.end and base + size > pool.base
+    )
+
+    cursor = (pool.base + alignment - 1) // alignment * alignment
+    for base, size in regions:
+        if cursor + size_bytes <= base:
+            return cursor
+        cursor = max(cursor, base + size)
+        cursor = (cursor + alignment - 1) // alignment * alignment
+
+    if cursor + size_bytes <= pool.end:
+        return cursor
+    return None
+
+
 def find_available_memory_base(
-    tree: GlobalDeviceTree, size_bytes: int, alignment: int = 0x1000, use_iomem: bool = True
+    tree: GlobalDeviceTree,
+    size_bytes: int,
+    alignment: int = 0x1000,
+    use_iomem: bool = True,
+    numa_nodes: Optional[List[int]] = None,
 ) -> Optional[int]:
     """
     Find available memory region for allocation.
@@ -129,51 +156,24 @@ def find_available_memory_base(
         alignment: Required alignment (default 4KB)
         use_iomem: If True, read actual allocations from /proc/iomem (kernel source of truth).
                    If False, use allocations from tree (for validation/dry-run).
+        numa_nodes: If given, only allocate from pools on these NUMA nodes.
 
     Returns:
         Base address for allocation, or None if no space available
     """
-    pool_base = tree.hardware.memory.memory_pool_base
-    pool_end = tree.hardware.memory.memory_pool_end
+    pools = tree.hardware.memory.get_pools()
+    if numa_nodes is not None:
+        pools = [pool for pool in pools if pool.numa_node in numa_nodes]
 
     if use_iomem:
         allocated_regions = get_allocated_memory_regions_from_iomem()
     else:
         allocated_regions = get_allocated_memory_regions(tree)
-    # Sort by base address
-    allocated_regions.sort()
 
-    # Try to find gap between allocations or at start/end
-    if not allocated_regions:
-        # No allocations yet, use start of pool (aligned)
-        aligned_base = (pool_base + alignment - 1) // alignment * alignment
-        if aligned_base + size_bytes <= pool_end:
-            return aligned_base
-        return None
-
-    # Check gap at start
-    first_base = allocated_regions[0][0]
-    aligned_base = (pool_base + alignment - 1) // alignment * alignment
-    if aligned_base + size_bytes <= first_base:
-        return aligned_base
-
-    # Check gaps between allocations
-    for i in range(len(allocated_regions) - 1):
-        current_end = allocated_regions[i][0] + allocated_regions[i][1]
-        next_base = allocated_regions[i + 1][0]
-
-        # Align current_end
-        aligned_base = (current_end + alignment - 1) // alignment * alignment
-
-        if aligned_base + size_bytes <= next_base:
-            return aligned_base
-
-    # Check gap at end
-    last_end = allocated_regions[-1][0] + allocated_regions[-1][1]
-    aligned_base = (last_end + alignment - 1) // alignment * alignment
-    if aligned_base + size_bytes <= pool_end:
-        return aligned_base
-
+    for pool in pools:
+        base = _find_gap_in_pool(pool, allocated_regions, size_bytes, alignment)
+        if base is not None:
+            return base
     return None
 
 
@@ -245,18 +245,19 @@ def validate_memory_allocation(
     Raises:
         ResourceError: If memory region is invalid or conflicts
     """
-    pool_base = tree.hardware.memory.memory_pool_base
-    pool_end = tree.hardware.memory.memory_pool_end
+    pools = tree.hardware.memory.get_pools()
     memory_end = memory_base + memory_bytes
 
-    # Check memory is within pool
-    if memory_base < pool_base:
-        raise ResourceError(f"Memory base {hex(memory_base)} is below pool base {hex(pool_base)}")
-
-    if memory_end > pool_end:
+    # The region must lie entirely within a single pool
+    if not any(pool.base <= memory_base and memory_end <= pool.end for pool in pools):
+        pool_list = ", ".join(
+            f"{hex(pool.base)}-{hex(pool.end)}"
+            + (f" (node {pool.numa_node})" if pool.numa_node is not None else "")
+            for pool in pools
+        )
         raise ResourceError(
-            f"Memory region extends beyond pool: "
-            f"{hex(memory_base)}-{hex(memory_end)} vs pool end {hex(pool_end)}"
+            f"Memory region {hex(memory_base)}-{hex(memory_end)} is not within "
+            f"any memory pool. Pools: {pool_list}"
         )
 
     # Check alignment (4KB)
