@@ -15,6 +15,7 @@
 """
 Tests for topology support: DTB round-trip, DTS parsing, and host discovery.
 """
+# pylint: disable=redefined-outer-name  # pytest fixtures
 
 import pytest
 
@@ -425,7 +426,7 @@ class TestInitTopologyWiring:
 
         class FakeDevices:
             @staticmethod
-            def from_path(context, path):
+            def from_path(_context, _path):
                 return FakeDevice()
 
         class FakePyudev:
@@ -457,7 +458,7 @@ class TestManualAllocationStaysAuthoritative:
             def read_baseline(self):
                 return tree
 
-            def has_instance(self, name):
+            def has_instance(self, _name):
                 return False
 
         monkeypatch.setattr(create_main, "DeviceTreeManager", FakeManager)

@@ -287,7 +287,7 @@ class DeviceTreeParser:
             except libfdt.FdtException:
                 break
 
-        return pools if pools else None
+        return pools or None
 
     def _parse_devices(self, resources_node: int) -> Dict[str, DeviceInfo]:
         """Parse device information from resources node."""
@@ -870,16 +870,15 @@ class DeviceTreeParser:
             host_reserved_bytes=host_reserved_bytes,
             memory_pool_base=memory_pool_base,
             memory_pool_bytes=memory_pool_bytes,
-            pools=pools
+            pools=pools or None
         )
 
-    def _parse_memory_pools_from_dts(self, resources_text: str) -> Optional[List[MemoryPool]]:
+    def _parse_memory_pools_from_dts(self, resources_text: str) -> List[MemoryPool]:
         """Parse per-NUMA-node memory pools from a memory-pools block."""
+        pools = []
         pools_text = self._extract_braced_block(resources_text, 'memory-pools')
         if pools_text is None:
-            return None
-
-        pools = []
+            return pools
         for match in re.finditer(r'pool@(\d+)\s*\{([^{}]*)\}', pools_text, re.DOTALL):
             content = match.group(2)
             base_match = re.search(r'base\s*=\s*<([^>]+)>', content)
@@ -898,7 +897,7 @@ class DeviceTreeParser:
                 )
             )
 
-        return pools if pools else None
+        return pools
 
     def _parse_devices_from_dts(self, dts_content: str) -> Dict[str, DeviceInfo]:
         """Parse device information from DTS content."""
