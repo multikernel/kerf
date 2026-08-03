@@ -133,6 +133,9 @@ kerf init --cpus=4-7
 # Initialize with CPUs and devices
 kerf init --cpus=4-31 --devices=enp9s0_dev,nvme0
 
+# Initialize with one memory pool per NUMA node
+kerf init --cpus=4-31 --memory=8GB@0,8GB@1
+
 # Create kernel instance with resource allocation
 kerf create web-server --cpus=4-7 --memory=2GB
 kerf create database --cpu-count=8 --memory=16GB
@@ -230,9 +233,9 @@ DTS: /instances/compute                  →  /sys/kernel/multikernel/instances/
 ### Memory Allocation Validation
 
 **Rules:**
-1. Memory regions must be within the baseline memory pool
+1. Memory regions must lie entirely within a single baseline memory pool
 2. Memory regions cannot overlap between instances
-3. Sum of all allocations must not exceed baseline memory pool size
+3. Sum of all allocations must not exceed the total baseline pool size
 4. Memory base addresses must be page-aligned (4KB = 0x1000)
 
 
@@ -377,7 +380,26 @@ Explicit resource specs (`--cpus`, `--memory-base`, explicit device names) are u
 
 A hand-written topology section in the baseline DTS (see `examples/simple_numa.dts` and `examples/numa_topology.dts`) overrides discovery when using `kerf init --input=...`.
 
-Current limitation: instance memory is still allocated first-fit from a single contiguous pool; `--memory-policy` is recorded and validated but does not yet drive placement. Per-NUMA-node memory pools are planned (`/dev/lazy_cma` already accepts a NUMA node).
+### Per-NUMA-Node Memory Pools
+
+`kerf init` can allocate one memory pool per NUMA node instead of a single anonymous pool:
+
+```bash
+# One pool per NUMA node, allocated via /dev/lazy_cma on the requested node
+kerf init --cpus=128-142 --memory=8GB@0,8GB@1
+
+# Single pool on any node (legacy behavior)
+kerf init --cpus=128-142 --memory=1GB
+```
+
+Pools already registered in `/proc/iomem` are rediscovered on re-init and matched to NUMA nodes through the discovered topology. The pool layout is recorded in the baseline (`memory-pools` section, ignored by the kernel) and drives instance memory placement:
+
+- `--memory-policy=local`: instance memory must come from a pool on the same node as its CPUs; the create fails if that cannot be satisfied
+- `--memory-policy=bind`: memory must come from a pool on the `--numa-nodes` list
+- no policy: kerf prefers a CPU-local pool and silently falls back to any pool
+- explicit `--memory-base`: authoritative as always; it must lie within a single pool, and locality problems are warnings
+
+`--memory-policy=interleave` is accepted but not implemented: instances receive one contiguous region, so true interleaving needs kernel-side support for multiple regions per instance.
 
 ## References
 

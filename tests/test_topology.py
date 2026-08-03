@@ -387,8 +387,8 @@ class TestInitTopologyWiring:
         monkeypatch.setattr(init_main, "get_valid_apic_ids_from_system", lambda: {0, 128, 130})
         monkeypatch.setattr(
             init_main,
-            "get_multikernel_memory_pool_from_iomem",
-            lambda: (0x4_0000_0000, 0x1_0000_0000),
+            "get_multikernel_memory_pools_from_iomem",
+            lambda: [(0x4_0000_0000, 0x1_0000_0000)],
         )
         monkeypatch.setattr(init_main, "discover_numa_topology", lambda: section)
 
@@ -401,8 +401,8 @@ class TestInitTopologyWiring:
         monkeypatch.setattr(init_main, "get_valid_apic_ids_from_system", lambda: {0, 128, 130})
         monkeypatch.setattr(
             init_main,
-            "get_multikernel_memory_pool_from_iomem",
-            lambda: (0x4_0000_0000, 0x1_0000_0000),
+            "get_multikernel_memory_pools_from_iomem",
+            lambda: [(0x4_0000_0000, 0x1_0000_0000)],
         )
         monkeypatch.setattr(init_main, "discover_numa_topology", lambda: None)
 

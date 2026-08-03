@@ -188,17 +188,18 @@ class MultikernelValidator:
 
         return None
 
-    def _get_multikernel_memory_pool_from_iomem(self) -> Optional[Tuple[int, int]]:
+    def _get_multikernel_memory_pools_from_iomem(self) -> List[Tuple[int, int]]:
         """
-        Get multikernel memory pool region from /proc/iomem.
-        Returns (base_address, size_bytes) or None if not found.
+        Get all multikernel memory pool regions from /proc/iomem.
+        Returns a list of (base_address, size_bytes) tuples.
 
         Expected format: "40000000-7fefffff : Multikernel Memory Pool"
         """
+        regions = []
         try:
             iomem_path = Path("/proc/iomem")
             if not iomem_path.exists():
-                return None
+                return regions
             with open(iomem_path, "r", encoding="utf-8") as f:
                 for line in f:
                     if "multikernel" in line.lower():
@@ -207,12 +208,11 @@ class MultikernelValidator:
                             base = int(match.group(1), 16)
                             end = int(match.group(2), 16)
                             # Size is end - start + 1 (inclusive range)
-                            size = end - base + 1
-                            return (base, size)
+                            regions.append((base, end - base + 1))
         except (OSError, IOError, ValueError):
             pass
 
-        return None
+        return regions
 
     def _validate_hardware_inventory(self, tree: GlobalDeviceTree):
         """Validate hardware inventory consistency and against running system."""
@@ -285,40 +285,28 @@ class MultikernelValidator:
         if memory.memory_pool_bytes <= 0:
             self.errors.append("Hardware inventory: Spawn pool size must be positive")
 
-        iomem_pool = self._get_multikernel_memory_pool_from_iomem()
-        if iomem_pool is None or (
-            memory.memory_pool_base != iomem_pool[0] or memory.memory_pool_bytes != iomem_pool[1]
-        ):
-            # Pool doesn't match kernel-provided pool, validate against total_bytes
-            if memory.memory_pool_base + memory.memory_pool_bytes > memory.total_bytes:
-                self.errors.append("Hardware inventory: Spawn pool extends beyond total memory")
-        if iomem_pool is not None:
-            iomem_base, iomem_size = iomem_pool
-            iomem_end = iomem_base + iomem_size
-
-            if memory.memory_pool_base != iomem_base:
-                self.errors.append(
-                    f"Hardware inventory: Memory pool base ({hex(memory.memory_pool_base)}) "
-                    f"does not match multikernel pool in /proc/iomem ({hex(iomem_base)})"
+        pools = memory.get_pools()
+        iomem_regions = self._get_multikernel_memory_pools_from_iomem()
+        if iomem_regions:
+            # Every configured pool must lie within a reserved multikernel region
+            for pool in pools:
+                contained = any(
+                    iomem_base <= pool.base and pool.end <= iomem_base + iomem_size
+                    for iomem_base, iomem_size in iomem_regions
                 )
-
-            pool_end = memory.memory_pool_base + memory.memory_pool_bytes
-            if pool_end > iomem_end:
-                exceeds_by = pool_end - iomem_end
-                self.errors.append(
-                    f"Hardware inventory: Memory pool extends beyond multikernel reserved pool in /proc/iomem "
-                    f"by {exceeds_by} bytes ({exceeds_by / (1024**3):.2f} GB). "
-                    f"Configured pool: {hex(memory.memory_pool_base)}-{hex(pool_end-1)}, "
-                    f"Reserved pool: {hex(iomem_base)}-{hex(iomem_end-1)}"
-                )
-
-            if memory.memory_pool_bytes > iomem_size:
-                self.errors.append(
-                    f"Hardware inventory: Memory pool size ({memory.memory_pool_bytes} bytes = "
-                    f"{memory.memory_pool_bytes / (1024**3):.2f} GB) exceeds multikernel reserved pool "
-                    f"({iomem_size} bytes = {iomem_size / (1024**3):.2f} GB) in /proc/iomem"
-                )
+                if not contained:
+                    region_list = ", ".join(
+                        f"{hex(base)}-{hex(base + size - 1)}" for base, size in iomem_regions
+                    )
+                    node_hint = f" (node {pool.numa_node})" if pool.numa_node is not None else ""
+                    self.errors.append(
+                        f"Hardware inventory: Memory pool {hex(pool.base)}-{hex(pool.end - 1)}"
+                        f"{node_hint} is not within any multikernel reserved pool in /proc/iomem. "
+                        f"Reserved pools: {region_list}"
+                    )
         else:
+            if max(pool.end for pool in pools) > memory.total_bytes:
+                self.errors.append("Hardware inventory: Spawn pool extends beyond total memory")
             self.warnings.append("Could not find multikernel memory pool in /proc/iomem")
 
     def _validate_instances(self, tree: GlobalDeviceTree):
@@ -354,14 +342,15 @@ class MultikernelValidator:
         cpus = tree.hardware.cpus
         instance_cpus = set(instance.resources.cpus)
 
+        known_cpus = set(cpus.available) | set(cpus.host_reserved)
         for cpu in instance_cpus:
-            if cpu < 0 or cpu >= cpus.total:
+            if cpu < 0 or cpu not in known_cpus:
                 error_msg = self._format_error_with_context(
                     error_type="CPU allocation error",
                     instance_name=instance.name,
                     problem=f"CPU {cpu} does not exist in hardware inventory",
-                    current_state=f"Hardware has CPUs 0-{cpus.total-1}",
-                    suggestion=f"Use CPUs in range 0-{cpus.total-1}",
+                    current_state=f"Hardware physical CPU IDs: {sorted(known_cpus)}",
+                    suggestion=f"Use available physical CPU IDs: {sorted(cpus.available)}",
                     alternative="Check hardware inventory configuration",
                     pattern=f"cpus = <{','.join(map(str, sorted(instance_cpus)))}>",
                 )
@@ -414,29 +403,21 @@ class MultikernelValidator:
         memory_start = instance_memory.memory_base
         memory_end = memory_start + instance_memory.memory_bytes
 
-        if memory_start < memory.memory_pool_base:
-            error_msg = self._format_error_with_context(
-                error_type="Memory allocation error",
-                instance_name=instance.name,
-                problem=f"Memory base {hex(memory_start)} is before memory pool start",
-                current_state=f"Spawn pool starts at {hex(memory.memory_pool_base)}",
-                suggestion=f"Use memory base >= {hex(memory.memory_pool_base)}",
-                alternative="Adjust memory pool configuration",
-                pattern=f"memory-base = <{hex(memory_start)}>",
+        pools = memory.get_pools()
+        if not any(pool.base <= memory_start and memory_end <= pool.end for pool in pools):
+            pool_list = ", ".join(
+                f"{hex(pool.base)}-{hex(pool.end)}"
+                + (f" (node {pool.numa_node})" if pool.numa_node is not None else "")
+                for pool in pools
             )
-            self.errors.append(error_msg)
-
-        if memory_end > memory.memory_pool_base + memory.memory_pool_bytes:
-            pool_end = memory.memory_pool_base + memory.memory_pool_bytes
-            exceeds_by = memory_end - pool_end
             error_msg = self._format_error_with_context(
                 error_type="Memory allocation error",
                 instance_name=instance.name,
-                problem="Memory region extends beyond memory pool",
-                current_state=f"Instance memory: {hex(memory_start)}-{hex(memory_end)}, Pool: {hex(memory.memory_pool_base)}-{hex(pool_end)}",
-                suggestion=f"Reduce memory size by {hex(exceeds_by)} or use different base address",
+                problem="Memory region is not within any memory pool",
+                current_state=f"Instance memory: {hex(memory_start)}-{hex(memory_end)}, Pools: {pool_list}",
+                suggestion="Use a base address inside a single memory pool",
                 alternative="Increase memory pool size or adjust memory allocation",
-                pattern=f"memory-size = <{hex(instance_memory.memory_bytes)}>",
+                pattern=f"memory-base = <{hex(memory_start)}>",
             )
             self.errors.append(error_msg)
 
@@ -540,10 +521,11 @@ class MultikernelValidator:
                 f"Total CPU allocation ({total_cpus_allocated}) exceeds available CPUs ({available_cpus})"
             )
 
-        if total_memory_allocated > tree.hardware.memory.memory_pool_bytes:
+        total_pool_bytes = sum(pool.size for pool in tree.hardware.memory.get_pools())
+        if total_memory_allocated > total_pool_bytes:
             self.errors.append(
                 f"Total memory allocation ({total_memory_allocated} bytes) "
-                f"exceeds memory pool ({tree.hardware.memory.memory_pool_bytes} bytes)"
+                f"exceeds memory pools ({total_pool_bytes} bytes)"
             )
 
     def _validate_device_references(self, tree: GlobalDeviceTree):

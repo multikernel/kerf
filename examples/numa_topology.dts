@@ -11,6 +11,10 @@
  * The per-node distance-matrix property is a flat list of
  * <target-node distance> pairs.
  *
+ * Memory is declared as one pool per NUMA node via memory-pools;
+ * kerf allocates instance memory from these pools according to
+ * --memory-policy (local, bind).
+ *
  * Usage: kerf init --input=numa_topology.dts
  */
 
@@ -65,8 +69,28 @@
             };
         };
 
-        memory-base = <0x0 0x800000000>;
-        memory-bytes = <0x0 0x1800000000>;  // 96GB
+        memory-pools {
+            pool@0 {
+                base = <0x2 0x00000000>;
+                size = <0x6 0x00000000>;  // 24GB (first 8GB of node 0 is host)
+                numa-node = <0>;
+            };
+            pool@1 {
+                base = <0x8 0x00000000>;
+                size = <0x8 0x00000000>;  // 32GB
+                numa-node = <1>;
+            };
+            pool@2 {
+                base = <0x10 0x00000000>;
+                size = <0x8 0x00000000>;  // 32GB
+                numa-node = <2>;
+            };
+            pool@3 {
+                base = <0x18 0x00000000>;
+                size = <0x8 0x00000000>;  // 32GB
+                numa-node = <3>;
+            };
+        };
 
         devices {
             eth0: ethernet@0 {

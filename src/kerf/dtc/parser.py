@@ -30,6 +30,7 @@ from ..models import (
     HardwareInventory,
     Instance,
     InstanceResources,
+    MemoryPool,
     MemoryAllocation,
     NUMANode,
     OverlayInstanceData,
@@ -251,8 +252,42 @@ class DeviceTreeParser:
             total_bytes=total_bytes,
             host_reserved_bytes=host_reserved_bytes,
             memory_pool_base=memory_pool_base,
-            memory_pool_bytes=memory_pool_bytes
+            memory_pool_bytes=memory_pool_bytes,
+            pools=self._parse_memory_pools(resources_node)
         )
+
+    def _parse_memory_pools(self, resources_node: int) -> Optional[List[MemoryPool]]:
+        """Parse per-NUMA-node memory pools from the memory-pools subnode."""
+        try:
+            pools_node = self.fdt.subnode_offset(resources_node, 'memory-pools')
+        except libfdt.FdtException:
+            return None
+
+        pools = []
+        try:
+            offset = self.fdt.first_subnode(pools_node)
+        except libfdt.FdtException:
+            return None
+
+        while offset >= 0:
+            try:
+                base = self.fdt.getprop(offset, 'base').as_uint64()
+                size = self.fdt.getprop(offset, 'size').as_uint64()
+            except libfdt.FdtException:
+                base = None
+            if base is not None:
+                numa_node = None
+                try:
+                    numa_node = self.fdt.getprop(offset, 'numa-node').as_uint32()
+                except libfdt.FdtException:
+                    pass
+                pools.append(MemoryPool(base=base, size=size, numa_node=numa_node))
+            try:
+                offset = self.fdt.next_subnode(offset)
+            except libfdt.FdtException:
+                break
+
+        return pools if pools else None
 
     def _parse_devices(self, resources_node: int) -> Dict[str, DeviceInfo]:
         """Parse device information from resources node."""
@@ -810,17 +845,22 @@ class DeviceTreeParser:
             raise ParseError("Missing /resources section in DTS")
 
         direct_properties = self._strip_nested_blocks(resources_text)
+        pools = self._parse_memory_pools_from_dts(resources_text)
 
         memory_base_match = re.search(r'memory-base\s*=\s*<([^>]+)>', direct_properties)
-        if not memory_base_match:
-            raise ParseError("Missing 'memory-base' property in /resources")
-
         memory_bytes_match = re.search(r'memory-bytes\s*=\s*<([^>]+)>', direct_properties)
-        if not memory_bytes_match:
-            raise ParseError("Missing 'memory-bytes' property in /resources")
 
-        memory_pool_base = self._parse_hex_value(memory_base_match.group(1))
-        memory_pool_bytes = self._parse_hex_value(memory_bytes_match.group(1))
+        if memory_base_match and memory_bytes_match:
+            memory_pool_base = self._parse_hex_value(memory_base_match.group(1))
+            memory_pool_bytes = self._parse_hex_value(memory_bytes_match.group(1))
+        elif pools:
+            # Envelope derived from the declared pools
+            memory_pool_base = min(pool.base for pool in pools)
+            memory_pool_bytes = sum(pool.size for pool in pools)
+        elif not memory_base_match:
+            raise ParseError("Missing 'memory-base' property in /resources")
+        else:
+            raise ParseError("Missing 'memory-bytes' property in /resources")
 
         total_bytes = memory_pool_base + memory_pool_bytes
         host_reserved_bytes = 0
@@ -829,8 +869,36 @@ class DeviceTreeParser:
             total_bytes=total_bytes,
             host_reserved_bytes=host_reserved_bytes,
             memory_pool_base=memory_pool_base,
-            memory_pool_bytes=memory_pool_bytes
+            memory_pool_bytes=memory_pool_bytes,
+            pools=pools
         )
+
+    def _parse_memory_pools_from_dts(self, resources_text: str) -> Optional[List[MemoryPool]]:
+        """Parse per-NUMA-node memory pools from a memory-pools block."""
+        pools_text = self._extract_braced_block(resources_text, 'memory-pools')
+        if pools_text is None:
+            return None
+
+        pools = []
+        for match in re.finditer(r'pool@(\d+)\s*\{([^{}]*)\}', pools_text, re.DOTALL):
+            content = match.group(2)
+            base_match = re.search(r'base\s*=\s*<([^>]+)>', content)
+            size_match = re.search(r'size\s*=\s*<([^>]+)>', content)
+            if not base_match or not size_match:
+                continue
+            numa_node = None
+            numa_match = re.search(r'numa-node\s*=\s*<(\d+)>', content)
+            if numa_match:
+                numa_node = int(numa_match.group(1))
+            pools.append(
+                MemoryPool(
+                    base=self._parse_hex_value(base_match.group(1)),
+                    size=self._parse_hex_value(size_match.group(1)),
+                    numa_node=numa_node,
+                )
+            )
+
+        return pools if pools else None
 
     def _parse_devices_from_dts(self, dts_content: str) -> Dict[str, DeviceInfo]:
         """Parse device information from DTS content."""

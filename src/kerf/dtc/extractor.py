@@ -132,6 +132,17 @@ class InstanceExtractor:
         fdt_sw.property_u64("memory-base", memory.memory_pool_base)
         fdt_sw.property_u64("memory-bytes", memory.memory_pool_bytes)
 
+        if memory.pools:
+            fdt_sw.begin_node("memory-pools")
+            for index, pool in enumerate(memory.pools):
+                fdt_sw.begin_node(f"pool@{index}")
+                fdt_sw.property_u64("base", pool.base)
+                fdt_sw.property_u64("size", pool.size)
+                if pool.numa_node is not None:
+                    fdt_sw.property_u32("numa-node", pool.numa_node)
+                fdt_sw.end_node()
+            fdt_sw.end_node()
+
     def _add_topology_section_sw(self, fdt_sw, topology):
         """Add topology section (NUMA nodes) using FdtSw."""
         import struct
