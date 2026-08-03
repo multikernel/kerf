@@ -507,7 +507,7 @@ def build_baseline_from_cmdline(
                 "Could not find multikernel memory pool in /proc/iomem. "
                 "Pass --memory=SIZE (e.g. --memory=1GB) or per-node sizes "
                 "(e.g. --memory=8GB@0,8GB@1) to allocate pools at runtime "
-                "via {}.".format(LAZY_CMA_DEVICE)
+                f"via {LAZY_CMA_DEVICE}."
             )
 
         for pool_bytes, node in parse_memory_pool_spec(memory):

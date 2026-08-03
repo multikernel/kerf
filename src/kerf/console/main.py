@@ -102,9 +102,8 @@ def run_console(instance_id: int, instance_name: str, verbose: bool = False) -> 
                         if status is None or status.lower() != InstanceState.ACTIVE.value:
                             os.write(
                                 stdout_fd,
-                                "\r\nInstance '{}' is no longer active (status: {}).\r\n".format(
-                                    instance_name, status
-                                ).encode("utf-8"),
+                                f"\r\nInstance '{instance_name}' is no longer active "
+                                f"(status: {status}).\r\n".encode("utf-8"),
                             )
                             return 0
                     continue

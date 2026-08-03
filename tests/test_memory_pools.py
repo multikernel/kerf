@@ -370,7 +370,7 @@ class TestMemoryPolicyPlacement:
             def read_baseline(self):
                 return tree
 
-            def has_instance(self, name):
+            def has_instance(self, _name):
                 return False
 
         monkeypatch.setattr(create_main, "DeviceTreeManager", FakeManager)
