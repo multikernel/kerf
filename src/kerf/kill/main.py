@@ -201,13 +201,19 @@ def kill_cmd(name: Optional[str], id: Optional[int], force: bool, verbose: bool)
                 status = f.read().strip()
 
             status_lower = status.lower()
-            if status_lower != InstanceState.ACTIVE.value:
+            # A force halt is also valid on a 'loaded' instance: a previous
+            # halt settles the state before every CPU is confirmed parked,
+            # and rerunning it is how CPUs missed the first time are rescued.
+            allowed = {InstanceState.ACTIVE.value}
+            if force:
+                allowed.add(InstanceState.LOADED.value)
+            if status_lower not in allowed:
                 click.echo(
                     f"Error: Instance '{instance_name}' (ID: {instance_id}) is not running",
                     err=True
                 )
                 click.echo(
-                    f"Current status: '{status}' (expected: '{InstanceState.ACTIVE.value}')",
+                    f"Current status: '{status}' (expected: {' or '.join(sorted(allowed))})",
                     err=True
                 )
                 sys.exit(1)
