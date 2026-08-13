@@ -296,6 +296,10 @@ def load(  # pylint: disable=too-many-arguments,too-many-positional-arguments,to
             click.echo("Error: --entrypoint is required when using --rootfs-dir", err=True)
             sys.exit(2)
 
+        if entrypoint and not image and not rootfs_dir:
+            click.echo("Error: --entrypoint requires --image or --rootfs-dir", err=True)
+            sys.exit(2)
+
         instance_name = None
         instance_id = None
 
