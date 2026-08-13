@@ -374,6 +374,7 @@ def load(  # pylint: disable=too-many-arguments,too-many-positional-arguments,to
         # Handle Docker image or rootfs directory
         daxfs_image = None
         init_path = None
+        image_id = None
 
         if image:
             from ..docker.image import extract_image, DockerError
@@ -383,7 +384,7 @@ def load(  # pylint: disable=too-many-arguments,too-many-positional-arguments,to
                 if verbose:
                     click.echo(f"Extracting Docker image: {image}")
 
-                rootfs_path, default_cmd = extract_image(image, instance_name)
+                rootfs_path, default_cmd, image_id = extract_image(image, instance_name)
 
                 if verbose:
                     click.echo(f"Rootfs extracted to: {rootfs_path}")
@@ -563,6 +564,8 @@ def load(  # pylint: disable=too-many-arguments,too-many-positional-arguments,to
                     "path": str(rootfs_path),
                     "entrypoint": init_path,
                 }
+                if image_id:
+                    rootfs_meta["image_id"] = image_id
                 if daxfs_image:
                     rootfs_meta["daxfs"] = {
                         "phys_addr": daxfs_image.phys_addr,

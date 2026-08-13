@@ -293,6 +293,32 @@ class TestDisplayMetadata:
         )
         assert "/var/lib/kerf/rootfs/web-server" in capsys.readouterr().out
 
+    def test_docker_image_id_only_in_verbose(self, capsys):
+        from kerf.show.main import display_instance_info
+
+        metadata = self._metadata()
+        metadata["rootfs"] = {
+            "source": "docker",
+            "image": "nginx:latest",
+            "image_id": "sha256:" + "ef" * 32,
+            "entrypoint": "/docker-entrypoint.sh",
+        }
+
+        display_instance_info(
+            {"name": "web-server", "id": "1", "status": "loaded"},
+            kimage_data=None,
+            metadata=metadata,
+        )
+        assert "ef" * 32 not in capsys.readouterr().out
+
+        display_instance_info(
+            {"name": "web-server", "id": "1", "status": "loaded"},
+            kimage_data=None,
+            metadata=metadata,
+            verbose=True,
+        )
+        assert "sha256:" + "ef" * 32 in capsys.readouterr().out
+
     def test_directory_rootfs_section(self, capsys):
         from kerf.show.main import display_instance_info
 
