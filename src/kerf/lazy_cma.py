@@ -43,7 +43,7 @@ _LAZY_CMA_NAME_MAX = 64
 #     __u32 pad;
 #     char name[64];     /* iomem resource name */
 # };
-_ALLOC_FORMAT = "<QQiI{}s".format(_LAZY_CMA_NAME_MAX)
+_ALLOC_FORMAT = f"<QQiI{_LAZY_CMA_NAME_MAX}s"
 _ALLOC_SIZE = struct.calcsize(_ALLOC_FORMAT)
 
 _IOC_WRITE = 1
@@ -75,14 +75,13 @@ def allocate(size_bytes: int, name: str, node: int = -1) -> int:
         ValueError: If the arguments are invalid
     """
     if size_bytes <= 0:
-        raise ValueError("Allocation size must be positive, got {}".format(size_bytes))
+        raise ValueError(f"Allocation size must be positive, got {size_bytes}")
 
     encoded_name = name.encode("utf-8")
     if len(encoded_name) >= _LAZY_CMA_NAME_MAX:
         raise ValueError(
-            "Resource name too long ({} bytes, max {})".format(
-                len(encoded_name), _LAZY_CMA_NAME_MAX - 1
-            )
+            f"Resource name too long ({len(encoded_name)} bytes, "
+            f"max {_LAZY_CMA_NAME_MAX - 1})"
         )
 
     request = bytearray(
@@ -93,24 +92,23 @@ def allocate(size_bytes: int, name: str, node: int = -1) -> int:
         fd = os.open(LAZY_CMA_DEVICE, os.O_RDWR)
     except FileNotFoundError as exc:
         raise KernelInterfaceError(
-            "{} not found. Load the lazy_cma kernel module first "
-            "(e.g. insmod lazy_cma.ko).".format(LAZY_CMA_DEVICE)
+            f"{LAZY_CMA_DEVICE} not found. Load the lazy_cma kernel module "
+            "first (e.g. insmod lazy_cma.ko)."
         ) from exc
     except PermissionError as exc:
         raise KernelInterfaceError(
-            "Permission denied opening {}. kerf must run as root to "
-            "allocate pool memory.".format(LAZY_CMA_DEVICE)
+            f"Permission denied opening {LAZY_CMA_DEVICE}. kerf must run as "
+            "root to allocate pool memory."
         ) from exc
 
     try:
         fcntl.ioctl(fd, LAZY_CMA_IOCTL_ALLOC, request)
     except OSError as exc:
         raise KernelInterfaceError(
-            "lazy_cma allocation of {} bytes failed: {} (errno {}). "
+            f"lazy_cma allocation of {size_bytes} bytes failed: "
+            f"{os.strerror(exc.errno)} (errno {exc.errno}). "
             "The system may not have enough contiguous free memory; "
-            "try a smaller pool size.".format(
-                size_bytes, os.strerror(exc.errno), exc.errno
-            )
+            "try a smaller pool size."
         ) from exc
     finally:
         os.close(fd)
@@ -118,8 +116,8 @@ def allocate(size_bytes: int, name: str, node: int = -1) -> int:
     _, phys_addr, _, _, _ = struct.unpack(_ALLOC_FORMAT, bytes(request))
     if phys_addr == 0:
         raise KernelInterfaceError(
-            "lazy_cma returned physical address 0 for a {} byte "
-            "allocation".format(size_bytes)
+            f"lazy_cma returned physical address 0 for a {size_bytes} byte "
+            "allocation"
         )
 
     return phys_addr

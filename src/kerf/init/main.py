@@ -439,7 +439,7 @@ def build_baseline_from_cmdline(
             raise KernelInterfaceError(
                 "Could not find multikernel memory pool in /proc/iomem. "
                 "Pass --memory=SIZE (e.g. --memory=1GB) to allocate the pool "
-                "at runtime via {}.".format(LAZY_CMA_DEVICE)
+                f"at runtime via {LAZY_CMA_DEVICE}."
             )
 
         pool_bytes = parse_memory_spec(memory)
