@@ -20,11 +20,13 @@ import ctypes
 import os
 import platform
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
 import click
 
+from ..metadata import inspect_kernel_image, save_instance_metadata
 from ..utils import get_instance_id_from_name, get_instance_name_from_id
 from ..vmlinuz import BZIMAGE_HEADER_SIZE, VmlinuzError, is_bzimage, open_kernel_fd
 
@@ -546,6 +548,17 @@ def load(  # pylint: disable=too-many-arguments,too-many-positional-arguments,to
                 click.echo(f"✓ Kernel loaded successfully (result: {result})")
             else:
                 click.echo("✓ Kernel loaded successfully")
+
+            # Record image provenance for kerf show; /proc/kimage only
+            # knows about the loaded segments, not the source file
+            try:
+                save_instance_metadata(instance_name, {
+                    "kernel": inspect_kernel_image(kernel_path),
+                    "initrd": str(initrd_path) if initrd_path else None,
+                    "loaded_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                })
+            except OSError as e:
+                click.echo(f"Warning: Failed to record instance metadata: {e}", err=True)
 
         except OSError as e:
             click.echo(f"Error: kexec_file_load failed: {e}", err=True)

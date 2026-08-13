@@ -34,6 +34,12 @@ def _cleanup_load_resources(instance_name: str, _instance_id: int, verbose: bool
     import shutil
 
     from ..daxfs import unmount_daxfs, DaxfsError
+    from ..metadata import delete_instance_metadata
+
+    try:
+        delete_instance_metadata(instance_name)
+    except OSError as e:
+        click.echo(f"Warning: Failed to remove instance metadata: {e}", err=True)
 
     # Unmount the daxfs image, releasing its memory back to the pool
     try:

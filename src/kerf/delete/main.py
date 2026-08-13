@@ -190,6 +190,13 @@ def delete(
 
             tx_id = manager.apply_removal_overlay(instance_name)
 
+            try:
+                from ..metadata import delete_instance_metadata
+
+                delete_instance_metadata(instance_name)
+            except OSError:
+                pass
+
             click.echo(f"✓ Deleted instance '{instance_name}' (transaction {tx_id})")
             if verbose:
                 click.echo(f"  Instance ID: {instance_id}")

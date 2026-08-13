@@ -68,7 +68,12 @@ def make_elf64(body: bytes = b"kernel code segment") -> bytes:
     return ehdr + phdr + body
 
 
-def make_bzimage(payload: bytes, setup_sects: int = 4, version: int = 0x020F) -> bytes:
+def make_bzimage(
+    payload: bytes,
+    setup_sects: int = 4,
+    version: int = 0x020F,
+    version_string: str = None,
+) -> bytes:
     """Build a minimal bzImage wrapping the given compressed payload."""
     header = bytearray(512 * ((setup_sects or 4) + 1))
     header[0x1F1] = setup_sects
@@ -76,6 +81,12 @@ def make_bzimage(payload: bytes, setup_sects: int = 4, version: int = 0x020F) ->
     struct.pack_into("<H", header, 0x206, version)
     struct.pack_into("<I", header, 0x248, 0)  # payload_offset
     struct.pack_into("<I", header, 0x24C, len(payload))  # payload_length
+    if version_string is not None:
+        # kernel_version holds a pointer to the string, less 0x200
+        ptr = 0x300
+        struct.pack_into("<H", header, 0x20E, ptr)
+        encoded = version_string.encode("ascii") + b"\x00"
+        header[ptr + 0x200:ptr + 0x200 + len(encoded)] = encoded
     return bytes(header) + payload
 
 
