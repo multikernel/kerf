@@ -101,18 +101,29 @@ def _unlz4(payload: bytes) -> bytes:
 
 
 _DECOMPRESSORS = [
-    (b"\x1f\x8b", _gunzip),
-    (b"\xfd7zXZ\x00", _unxz),
-    (b"BZh", _bunzip2),
-    (b"\x28\xb5\x2f\xfd", _unzstd),
-    (b"\x02\x21\x4c\x18", _unlz4),
-    (b"\x04\x22\x4d\x18", _unlz4),
-    (b"\x5d\x00", _unlzma),
+    (b"\x1f\x8b", "gzip", _gunzip),
+    (b"\xfd7zXZ\x00", "xz", _unxz),
+    (b"BZh", "bzip2", _bunzip2),
+    (b"\x28\xb5\x2f\xfd", "zstd", _unzstd),
+    (b"\x02\x21\x4c\x18", "lz4", _unlz4),
+    (b"\x04\x22\x4d\x18", "lz4", _unlz4),
+    (b"\x5d\x00", "lzma", _unlzma),
 ]
 
 
+def payload_compression(data: bytes) -> "str | None":
+    """Compression format name of a bzImage payload, or None if unknown."""
+    payload = _locate_payload(data)
+    for magic, name, _ in _DECOMPRESSORS:
+        if payload.startswith(magic):
+            return name
+    if payload.startswith(b"\x89LZO"):
+        return "lzo"
+    return None
+
+
 def _decompress(payload: bytes) -> bytes:
-    for magic, decompress in _DECOMPRESSORS:
+    for magic, _, decompress in _DECOMPRESSORS:
         if payload.startswith(magic):
             try:
                 return decompress(payload)
@@ -140,8 +151,8 @@ def _elf_size(data: bytes) -> int:
     return min(end, len(data))
 
 
-def extract_vmlinux(data: bytes) -> bytes:
-    """Extract the embedded ELF vmlinux from a bzImage."""
+def _locate_payload(data: bytes) -> bytes:
+    """Locate the compressed payload inside a bzImage."""
     if not is_bzimage(data):
         raise VmlinuzError("not a bzImage (missing HdrS boot protocol magic)")
 
@@ -160,8 +171,12 @@ def extract_vmlinux(data: bytes) -> bytes:
     payload = data[start:start + payload_length]
     if len(payload) < payload_length:
         raise VmlinuzError("bzImage is truncated (payload extends past end of file)")
+    return payload
 
-    vmlinux = _decompress(payload)
+
+def extract_vmlinux(data: bytes) -> bytes:
+    """Extract the embedded ELF vmlinux from a bzImage."""
+    vmlinux = _decompress(_locate_payload(data))
     if not vmlinux.startswith(ELF_MAGIC):
         raise VmlinuzError("decompressed payload is not an ELF image")
 

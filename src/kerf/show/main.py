@@ -31,6 +31,7 @@ import libfdt
 from ..baseline import BaselineManager
 from ..dtc.parser import DeviceTreeParser
 from ..exceptions import KernelInterfaceError, ParseError
+from ..metadata import load_instance_metadata
 from ..models import GlobalDeviceTree
 from ..utils import get_instance_id_from_name, get_instance_status
 
@@ -337,10 +338,37 @@ def display_baseline_info(tree: GlobalDeviceTree, verbose: bool = False):
                     click.echo(f"      Available NS:  {device_info.available_ns}")
 
 
+def _display_kernel_metadata(metadata: Dict, verbose: bool = False):
+    """Display the load metadata rows of the Kernel Image section."""
+    kernel = metadata.get("kernel") or {}
+    if kernel.get("path"):
+        click.echo(f"    {'Image':15} {kernel['path']}")
+    image_format = kernel.get("format")
+    if image_format == "bzImage":
+        compression = kernel.get("compression")
+        detail = "vmlinux extracted at load"
+        if compression:
+            detail = f"{compression} compressed, {detail}"
+        click.echo(f"    {'Format':15} bzImage ({detail})")
+    elif image_format == "vmlinux":
+        click.echo(f"    {'Format':15} vmlinux (ELF)")
+    elif image_format:
+        click.echo(f"    {'Format':15} {image_format}")
+    if kernel.get("version"):
+        click.echo(f"    {'Version':15} {kernel['version']}")
+    if metadata.get("initrd"):
+        click.echo(f"    {'Initrd':15} {metadata['initrd']}")
+    if metadata.get("loaded_at"):
+        click.echo(f"    {'Loaded At':15} {metadata['loaded_at']}")
+    if verbose and kernel.get("sha256"):
+        click.echo(f"    {'Sha256':15} {kernel['sha256']}")
+
+
 def display_instance_info(
     instance_info: Dict[str, Optional[str]],
     kimage_data: Optional[Dict[str, str]] = None,
     verbose: bool = False,
+    metadata: Optional[Dict] = None,
 ):
     """
     Display formatted instance information.
@@ -349,6 +377,7 @@ def display_instance_info(
         instance_info: Instance information dictionary
         kimage_data: Optional kimage data for this instance
         verbose: Whether to show verbose information
+        metadata: Optional load metadata recorded by kerf load
     """
     name = instance_info.get("name", "unknown")
     instance_id = instance_info.get("id")
@@ -365,13 +394,16 @@ def display_instance_info(
     if status:
         click.echo(f"  Status:          {status}")
 
-    # Kernel image information from /proc/kimage
-    if kimage_data:
+    # Kernel image information from /proc/kimage plus load metadata
+    if kimage_data or metadata:
         click.echo("\n  Kernel Image:")
-        for key, value in kimage_data.items():
-            # Format key nicely
-            key_display = key.replace("_", " ").title()
-            click.echo(f"    {key_display:15} {value}")
+        if kimage_data:
+            for key, value in kimage_data.items():
+                # Format key nicely
+                key_display = key.replace("_", " ").title()
+                click.echo(f"    {key_display:15} {value}")
+        if metadata:
+            _display_kernel_metadata(metadata, verbose)
     elif instance_id and verbose:
         click.echo("\n  Kernel Image:     (not loaded)")
 
@@ -457,7 +489,10 @@ def show(name: Optional[str], verbose: bool):
             kimage_data = kimage_table.get(instance_id)
 
             # Display information
-            display_instance_info(instance_info, kimage_data, verbose)
+            display_instance_info(
+                instance_info, kimage_data, verbose,
+                metadata=load_instance_metadata(name),
+            )
         else:
             # Show all instances and baseline
             instance_names = get_all_instance_names()
@@ -503,7 +538,10 @@ def show(name: Optional[str], verbose: bool):
                     except (ValueError, TypeError):
                         pass
 
-                display_instance_info(instance_info, kimage_data, verbose)
+                display_instance_info(
+                    instance_info, kimage_data, verbose,
+                    metadata=load_instance_metadata(inst_name),
+                )
 
             click.echo()
 
