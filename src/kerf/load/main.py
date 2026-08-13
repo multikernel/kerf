@@ -26,6 +26,7 @@ from typing import Optional
 import click
 
 from ..utils import get_instance_id_from_name, get_instance_name_from_id
+from ..vmlinuz import BZIMAGE_HEADER_SIZE, VmlinuzError, is_bzimage, open_kernel_fd
 
 
 # KEXEC flags definitions
@@ -239,6 +240,12 @@ def load(  # pylint: disable=too-many-arguments,too-many-positional-arguments,to
 
     This command loads a kernel image into memory using the kexec_file_load
     syscall. The kernel is loaded in multikernel mode with the specified ID.
+
+    Both an uncompressed ELF vmlinux and a compressed bzImage (vmlinuz) are
+    accepted. For a bzImage, the embedded vmlinux is extracted in userspace
+    before loading, since the kernel side only accepts ELF images. Note that
+    an extracted vmlinux carries no signature, so this will not work on
+    hosts enforcing kexec signature verification (Secure Boot lockdown).
 
     When --image or --rootfs-dir is provided, a daxfs image is created and the
     kernel boots directly into daxfs as root filesystem (no initrd needed if
@@ -500,9 +507,17 @@ def load(  # pylint: disable=too-many-arguments,too-many-positional-arguments,to
             click.echo(f"Command line: {cmdline_str if cmdline_str else '(empty)'}")
             click.echo(f"Flags: 0x{flags:x}")
 
-        # Open kernel file
+        # Open kernel file, extracting the embedded vmlinux if it is a
+        # bzImage, since the kexec ELF loader only accepts vmlinux
         try:
-            kernel_fd = os.open(str(kernel_path), os.O_RDONLY)
+            with open(kernel_path, "rb") as f:
+                kernel_is_bzimage = is_bzimage(f.read(BZIMAGE_HEADER_SIZE))
+            if kernel_is_bzimage and verbose:
+                click.echo("bzImage detected, extracting embedded vmlinux")
+            kernel_fd = open_kernel_fd(kernel_path)
+        except VmlinuzError as e:
+            click.echo(f"Error: {e}", err=True)
+            sys.exit(3)
         except OSError as e:
             click.echo(f"Error: Failed to open kernel image: {e}", err=True)
             sys.exit(3)
