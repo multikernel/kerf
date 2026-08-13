@@ -249,6 +249,79 @@ class TestDisplayMetadata:
         assert "ab" * 32 in out
         assert "cd" * 32 in out
 
+    def test_docker_rootfs_section(self, capsys):
+        from kerf.show.main import display_instance_info
+
+        metadata = self._metadata()
+        metadata["rootfs"] = {
+            "source": "docker",
+            "image": "nginx:latest",
+            "path": "/var/lib/kerf/rootfs/web-server",
+            "entrypoint": "/docker-entrypoint.sh",
+            "daxfs": {"phys_addr": 0xF80000000, "size": 536870912},
+        }
+
+        display_instance_info(
+            {"name": "web-server", "id": "1", "status": "loaded"},
+            kimage_data=None,
+            metadata=metadata,
+        )
+        out = capsys.readouterr().out
+        assert "Rootfs:" in out
+        assert "nginx:latest" in out
+        assert "/docker-entrypoint.sh" in out
+        assert "phys=0xf80000000" in out
+        assert "size=536870912" in out
+        assert "/var/lib/kerf/rootfs/web-server" not in out
+
+    def test_docker_rootfs_extraction_path_in_verbose(self, capsys):
+        from kerf.show.main import display_instance_info
+
+        metadata = self._metadata()
+        metadata["rootfs"] = {
+            "source": "docker",
+            "image": "nginx:latest",
+            "path": "/var/lib/kerf/rootfs/web-server",
+            "entrypoint": "/docker-entrypoint.sh",
+        }
+
+        display_instance_info(
+            {"name": "web-server", "id": "1", "status": "loaded"},
+            kimage_data=None,
+            metadata=metadata,
+            verbose=True,
+        )
+        assert "/var/lib/kerf/rootfs/web-server" in capsys.readouterr().out
+
+    def test_directory_rootfs_section(self, capsys):
+        from kerf.show.main import display_instance_info
+
+        metadata = self._metadata()
+        metadata["rootfs"] = {
+            "source": "directory",
+            "path": "/mnt/rootfs",
+            "entrypoint": "/sbin/init",
+        }
+
+        display_instance_info(
+            {"name": "web-server", "id": "1", "status": "loaded"},
+            kimage_data=None,
+            metadata=metadata,
+        )
+        out = capsys.readouterr().out
+        assert "/mnt/rootfs (directory)" in out
+        assert "/sbin/init" in out
+
+    def test_rootfs_section_absent_when_not_used(self, capsys):
+        from kerf.show.main import display_instance_info
+
+        display_instance_info(
+            {"name": "web-server", "id": "1", "status": "loaded"},
+            kimage_data=None,
+            metadata=self._metadata(),
+        )
+        assert "Rootfs:" not in capsys.readouterr().out
+
     def test_plain_vmlinux_format_line(self, capsys):
         from kerf.show.main import display_instance_info
 

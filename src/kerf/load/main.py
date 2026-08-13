@@ -555,10 +555,24 @@ def load(  # pylint: disable=too-many-arguments,too-many-positional-arguments,to
 
             # Record image provenance for kerf show; /proc/kimage only
             # knows about the loaded segments, not the source file
+            rootfs_meta = None
+            if image or rootfs_dir:
+                rootfs_meta = {
+                    "source": "docker" if image else "directory",
+                    "image": image,
+                    "path": str(rootfs_path),
+                    "entrypoint": init_path,
+                }
+                if daxfs_image:
+                    rootfs_meta["daxfs"] = {
+                        "phys_addr": daxfs_image.phys_addr,
+                        "size": daxfs_image.size,
+                    }
             try:
                 save_instance_metadata(instance_name, {
                     "kernel": inspect_kernel_image(kernel_path),
                     "initrd": inspect_initrd_image(initrd_path) if initrd_path else None,
+                    "rootfs": rootfs_meta,
                     "loaded_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
                 })
             except OSError as e:
