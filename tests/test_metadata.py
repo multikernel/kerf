@@ -59,8 +59,8 @@ class TestInstanceMetadataStore:
     def test_delete_missing_is_noop(self):
         delete_instance_metadata("no-such-instance")
 
-    def test_load_corrupt_file_returns_none(self, instances_dir):
-        (instances_dir / "web-server.json").write_text("not json{")
+    def test_load_corrupt_file_returns_none(self, tmp_path):
+        (tmp_path / "web-server.json").write_text("not json{")
         assert load_instance_metadata("web-server") is None
 
 
