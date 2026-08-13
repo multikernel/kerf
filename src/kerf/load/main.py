@@ -26,7 +26,11 @@ from typing import Optional
 
 import click
 
-from ..metadata import inspect_kernel_image, save_instance_metadata
+from ..metadata import (
+    inspect_initrd_image,
+    inspect_kernel_image,
+    save_instance_metadata,
+)
 from ..utils import get_instance_id_from_name, get_instance_name_from_id
 from ..vmlinuz import BZIMAGE_HEADER_SIZE, VmlinuzError, is_bzimage, open_kernel_fd
 
@@ -554,7 +558,7 @@ def load(  # pylint: disable=too-many-arguments,too-many-positional-arguments,to
             try:
                 save_instance_metadata(instance_name, {
                     "kernel": inspect_kernel_image(kernel_path),
-                    "initrd": str(initrd_path) if initrd_path else None,
+                    "initrd": inspect_initrd_image(initrd_path) if initrd_path else None,
                     "loaded_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
                 })
             except OSError as e:

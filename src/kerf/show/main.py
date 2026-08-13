@@ -356,12 +356,24 @@ def _display_kernel_metadata(metadata: Dict, verbose: bool = False):
         click.echo(f"    {'Format':15} {image_format}")
     if kernel.get("version"):
         click.echo(f"    {'Version':15} {kernel['version']}")
-    if metadata.get("initrd"):
-        click.echo(f"    {'Initrd':15} {metadata['initrd']}")
+    initrd = metadata.get("initrd")
+    if isinstance(initrd, dict):
+        initrd_line = initrd.get("path", "")
+        if initrd.get("compression") == "cpio":
+            initrd_line += " (uncompressed cpio)"
+        elif initrd.get("compression"):
+            initrd_line += f" ({initrd['compression']} compressed)"
+        click.echo(f"    {'Initrd':15} {initrd_line}")
+    elif initrd:
+        # Records from before initrd inspection hold just the path
+        click.echo(f"    {'Initrd':15} {initrd}")
     if metadata.get("loaded_at"):
         click.echo(f"    {'Loaded At':15} {metadata['loaded_at']}")
-    if verbose and kernel.get("sha256"):
-        click.echo(f"    {'Sha256':15} {kernel['sha256']}")
+    if verbose:
+        if kernel.get("sha256"):
+            click.echo(f"    {'Sha256':15} {kernel['sha256']}")
+        if isinstance(initrd, dict) and initrd.get("sha256"):
+            click.echo(f"    {'Initrd Sha256':15} {initrd['sha256']}")
 
 
 def display_instance_info(

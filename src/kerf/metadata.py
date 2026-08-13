@@ -27,7 +27,13 @@ import struct
 from pathlib import Path
 from typing import Optional
 
-from .vmlinuz import ELF_MAGIC, VmlinuzError, is_bzimage, payload_compression
+from .vmlinuz import (
+    ELF_MAGIC,
+    VmlinuzError,
+    compression_format,
+    is_bzimage,
+    payload_compression,
+)
 
 KERF_INSTANCES_DIR = "/var/lib/kerf/instances"
 
@@ -107,3 +113,22 @@ def inspect_kernel_image(path) -> dict:
         info["format"] = "vmlinux"
         info["version"] = _vmlinux_version(data)
     return info
+
+
+# newc, crc, and odc cpio archive magics
+_CPIO_MAGICS = (b"070701", b"070702", b"070707")
+
+
+def inspect_initrd_image(path) -> dict:
+    """Describe an initrd file for the instance metadata record."""
+    data = Path(path).read_bytes()
+    if data.startswith(_CPIO_MAGICS):
+        compression = "cpio"
+    else:
+        compression = compression_format(data)
+    return {
+        "path": str(path),
+        "size": len(data),
+        "sha256": hashlib.sha256(data).hexdigest(),
+        "compression": compression,
+    }
