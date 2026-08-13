@@ -36,6 +36,21 @@ def pack_cpu_id(cpu_id: int) -> bytes:
     return struct.pack(">Q", cpu_id)
 
 
+def parse_cpu_id_cells(cell_text: str) -> List[int]:
+    """Decode a DTS "cpus" cell list into physical CPU IDs.
+
+    kerf emits cpus as 64-bit cells, which dtc renders back as pairs of
+    32-bit cells whose high half is zero (physical CPU IDs fit in 32
+    bits on x86). An even-length list whose even-index cells are all
+    zero is therefore decoded as such pairs; anything else is treated
+    as legacy one-cell-per-CPU, decimal or hex.
+    """
+    cells = [int(token, 0) for token in cell_text.split()]
+    if cells and len(cells) % 2 == 0 and all(cell == 0 for cell in cells[0::2]):
+        return [(high << 32) | low for high, low in zip(cells[0::2], cells[1::2])]
+    return cells
+
+
 def unpack_cpu_ids(data: bytes) -> List[int]:
     """Decode a "cpus" property into a list of physical CPU IDs.
 

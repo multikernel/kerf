@@ -18,8 +18,9 @@ Validation layer for multikernel device tree configurations.
 
 import re
 from pathlib import Path
-from typing import List, Dict, Tuple, Optional
+from typing import List, Tuple, Optional
 from ..models import GlobalDeviceTree, ValidationResult, ResourceUsage
+from ..topology import read_logical_to_physical_cpu_map
 
 
 class MultikernelValidator:
@@ -100,67 +101,10 @@ class MultikernelValidator:
         )
 
     def _get_system_cpu_ids(self) -> Optional[set[int]]:
-        """
-        Get the set of physical CPU IDs from /proc/cpuinfo.
-        Maps logical processor IDs to physical IDs and returns the set of physical IDs.
-        """
-        try:
-            cpuinfo_path = Path("/proc/cpuinfo")
-            if cpuinfo_path.exists():
-                with open(cpuinfo_path, "r", encoding="utf-8") as f:
-                    content = f.read()
-                    physical_ids = set()
-                    current_physical_id = None
-
-                    for line in content.split("\n"):
-                        if line.startswith("processor"):
-                            # Extract logical processor ID
-                            current_physical_id = None
-                        elif line.startswith("physical id"):
-                            # Extract physical ID for current processor
-                            match = re.search(r"physical id\s*:\s*(\d+)", line)
-                            if match:
-                                current_physical_id = int(match.group(1))
-                                physical_ids.add(current_physical_id)
-
-                    if physical_ids:
-                        return physical_ids
-        except (OSError, IOError, ValueError):
-            pass
-
-        return None
-
-    def _get_processor_to_physical_id_map(self) -> Optional[Dict[int, int]]:
-        """
-        Get mapping from logical processor ID to physical ID from /proc/cpuinfo.
-        Returns dict mapping processor ID -> physical ID.
-        """
-        try:
-            cpuinfo_path = Path("/proc/cpuinfo")
-            if cpuinfo_path.exists():
-                with open(cpuinfo_path, "r", encoding="utf-8") as f:
-                    content = f.read()
-                    processor_to_physical = {}
-                    current_processor = None
-
-                    for line in content.split("\n"):
-                        if line.startswith("processor"):
-                            # Extract logical processor ID
-                            match = re.search(r"processor\s*:\s*(\d+)", line)
-                            if match:
-                                current_processor = int(match.group(1))
-                        elif line.startswith("physical id") and current_processor is not None:
-                            # Extract physical ID for current processor
-                            match = re.search(r"physical id\s*:\s*(\d+)", line)
-                            if match:
-                                physical_id = int(match.group(1))
-                                processor_to_physical[current_processor] = physical_id
-
-                    if processor_to_physical:
-                        return processor_to_physical
-        except (OSError, IOError, ValueError):
-            pass
-
+        """Get the set of physical CPU IDs (APIC IDs) on this system."""
+        cpu_map = read_logical_to_physical_cpu_map()
+        if cpu_map:
+            return set(cpu_map.values())
         return None
 
     def _get_system_cpu_count(self) -> Optional[int]:
@@ -231,51 +175,28 @@ class MultikernelValidator:
                 f"Hardware inventory: CPU overlap between host and available: {sorted(overlap)}"
             )
 
-        processor_to_physical = self._get_processor_to_physical_id_map()
-        if processor_to_physical is not None:
-            system_physical_ids = set(processor_to_physical.values())
-            system_cpu_count = len(system_physical_ids)
-
-            if cpus.total > system_cpu_count:
+        system_physical_ids = self._get_system_cpu_ids()
+        if system_physical_ids is not None:
+            # total is sized as max physical CPU ID + 1, so compare against
+            # the system's highest ID rather than the CPU count
+            if cpus.total > max(system_physical_ids) + 1:
                 self.warnings.append(
-                    f"Hardware inventory: Total CPU count ({cpus.total}) exceeds system physical CPU count ({system_cpu_count}). "
+                    f"Hardware inventory: Total CPU count ({cpus.total}) exceeds the highest "
+                    f"system physical CPU ID ({max(system_physical_ids)}) + 1. "
                     f"This may indicate CPUs were hot-unplugged after baseline was created."
                 )
 
-            all_cpu_ids = set()
-            if cpus.host_reserved:
-                all_cpu_ids.update(cpus.host_reserved)
-            if cpus.available:
-                all_cpu_ids.update(cpus.available)
-
-            if all_cpu_ids:
-                invalid_processors = []
-                physical_ids_used = set()
-
-                for cpu_id in all_cpu_ids:
-                    if cpu_id not in processor_to_physical:
-                        invalid_processors.append(cpu_id)
-                    else:
-                        physical_ids_used.add(processor_to_physical[cpu_id])
-
-                if invalid_processors:
-                    valid_processors = sorted(processor_to_physical.keys())
-                    self.warnings.append(
-                        f"Hardware inventory: CPU IDs (logical processors) {sorted(invalid_processors)} do not exist in system. "
-                        f"Available logical processors: {valid_processors}. "
-                        f"This may indicate CPUs were hot-unplugged after baseline was created."
-                    )
-
-                invalid_physical_ids = physical_ids_used - system_physical_ids
-                if invalid_physical_ids:
-                    self.warnings.append(
-                        f"Hardware inventory: Physical CPU IDs {sorted(invalid_physical_ids)} do not exist in system. "
-                        f"Available physical CPU IDs: {sorted(system_physical_ids)}. "
-                        f"This may indicate CPUs were hot-unplugged after baseline was created."
-                    )
+            all_cpu_ids = set(cpus.host_reserved) | set(cpus.available)
+            invalid_physical_ids = all_cpu_ids - system_physical_ids
+            if invalid_physical_ids:
+                self.warnings.append(
+                    f"Hardware inventory: Physical CPU IDs {sorted(invalid_physical_ids)} do not exist in system. "
+                    f"Available physical CPU IDs: {sorted(system_physical_ids)}. "
+                    f"This may indicate CPUs were hot-unplugged after baseline was created."
+                )
         else:
             self.warnings.append(
-                "Could not determine CPU to physical ID mapping from /proc/cpuinfo - skipping CPU validation"
+                "Could not determine physical CPU IDs from /proc/cpuinfo - skipping CPU validation"
             )
 
         memory = tree.hardware.memory

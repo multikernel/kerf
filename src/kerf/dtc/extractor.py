@@ -251,6 +251,20 @@ class InstanceExtractor:
                 stringlist_data = b'\0'.join(d.encode('utf-8') for d in instance.resources.devices) + b'\0'
                 fdt_sw.property("device-names", stringlist_data)
 
+            if instance.resources.numa_nodes:
+                import struct
+
+                numa_data = struct.pack(
+                    ">" + "I" * len(instance.resources.numa_nodes), *instance.resources.numa_nodes
+                )
+                fdt_sw.property("numa-nodes", numa_data)
+
+            if instance.resources.cpu_affinity:
+                fdt_sw.property_string("cpu-affinity", instance.resources.cpu_affinity)
+
+            if instance.resources.memory_policy:
+                fdt_sw.property_string("memory-policy", instance.resources.memory_policy)
+
             if instance.resources.uring:
                 fdt_sw.begin_node("uring")
                 if instance.resources.uring_sq_entries:
@@ -386,6 +400,20 @@ class InstanceExtractor:
         if instance.resources.devices:
             stringlist_data = b'\0'.join(d.encode('utf-8') for d in instance.resources.devices) + b'\0'
             self.fdt.setprop(resources_offset, "device-names", stringlist_data)
+
+        if instance.resources.numa_nodes:
+            import struct
+
+            numa_data = struct.pack(
+                ">" + "I" * len(instance.resources.numa_nodes), *instance.resources.numa_nodes
+            )
+            self.fdt.setprop(resources_offset, "numa-nodes", numa_data)
+
+        if instance.resources.cpu_affinity:
+            self.fdt.setprop_str(resources_offset, "cpu-affinity", instance.resources.cpu_affinity)
+
+        if instance.resources.memory_policy:
+            self.fdt.setprop_str(resources_offset, "memory-policy", instance.resources.memory_policy)
 
     def _add_device_references(self, parent_offset: int, tree: GlobalDeviceTree):
         """Add device reference nodes."""

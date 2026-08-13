@@ -17,12 +17,12 @@ Device tree parsing and model building.
 """
 
 import re
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 import libfdt
 
 from ..exceptions import ParseError
-from .cells import unpack_cpu_ids
+from .cells import parse_cpu_id_cells, unpack_cpu_ids
 from ..models import (
     CPUAllocation,
     DeviceInfo,
@@ -574,11 +574,16 @@ class DeviceTreeParser:
         except libfdt.FdtException:
             pass
 
+        numa_nodes, cpu_affinity, memory_policy = self._parse_placement_props(resources_node)
+
         return InstanceResources(
             cpus=cpus,
             memory_base=memory_base,
             memory_bytes=memory_bytes,
             devices=devices,
+            numa_nodes=numa_nodes,
+            cpu_affinity=cpu_affinity,
+            memory_policy=memory_policy,
             uring=uring_enabled,
             uring_sq_entries=uring_sq,
             uring_cq_entries=uring_cq,
@@ -657,16 +662,46 @@ class DeviceTreeParser:
         except libfdt.FdtException:
             pass
 
+        numa_nodes, cpu_affinity, memory_policy = self._parse_placement_props(resources_node)
+
         return InstanceResources(
             cpus=cpus,
             memory_base=memory_base,
             memory_bytes=memory_bytes,
             devices=devices,
+            numa_nodes=numa_nodes,
+            cpu_affinity=cpu_affinity,
+            memory_policy=memory_policy,
             uring=uring_enabled,
             uring_sq_entries=uring_sq,
             uring_cq_entries=uring_cq,
             uring_shim_pages=uring_shim,
         )
+
+    def _parse_placement_props(
+        self, resources_node: int
+    ) -> Tuple[Optional[List[int]], Optional[str], Optional[str]]:
+        """Parse optional NUMA placement properties from a resources node."""
+        numa_nodes = None
+        try:
+            values = self.fdt.getprop(resources_node, 'numa-nodes').as_uint32_list()
+            numa_nodes = list(values)
+        except libfdt.FdtException:
+            pass
+
+        cpu_affinity = None
+        try:
+            cpu_affinity = self.fdt.getprop(resources_node, 'cpu-affinity').as_str()
+        except libfdt.FdtException:
+            pass
+
+        memory_policy = None
+        try:
+            memory_policy = self.fdt.getprop(resources_node, 'memory-policy').as_str()
+        except libfdt.FdtException:
+            pass
+
+        return numa_nodes, cpu_affinity, memory_policy
 
     def _parse_instance_options(self, node_offset: int) -> Optional[Dict[str, bool]]:
         """Parse instance options from DTB node."""
@@ -820,7 +855,7 @@ class DeviceTreeParser:
         if not cpus_match:
             raise ParseError("Missing 'cpus' property in /resources")
 
-        available = [int(x.strip()) for x in cpus_match.group(1).split()]
+        available = parse_cpu_id_cells(cpus_match.group(1))
         if available:
             total = max(available) + 1
         else:
@@ -1161,7 +1196,7 @@ class DeviceTreeParser:
         cpus_match = re.search(r'cpus\s*=\s*<([^>]+)>', resources_text)
         if not cpus_match:
             raise ParseError("Missing 'cpus' in resources")
-        cpus = [int(x.strip()) for x in cpus_match.group(1).split()]
+        cpus = parse_cpu_id_cells(cpus_match.group(1))
 
         # Parse memory base
         memory_base_match = re.search(r'memory-base\s*=\s*<([^>]+)>', resources_text)
@@ -1333,7 +1368,7 @@ class DeviceTreeParser:
             # Parse CPUs (physical CPU IDs, decimal or hex)
             cpus_match = re.search(r'cpus\s*=\s*<([^>]+)>', node_content)
             if cpus_match:
-                cpus = [int(x.strip(), 0) for x in cpus_match.group(1).split()]
+                cpus = parse_cpu_id_cells(cpus_match.group(1))
 
             # Parse distance matrix, encoded as (target-node, distance) pairs
             distance_match = re.search(r'distance-matrix\s*=\s*<([^>]+)>', node_content)
@@ -1374,7 +1409,7 @@ class DeviceTreeParser:
         for match in core_matches:
             core_id = int(match.group(1))
             cpus_str = match.group(2)
-            cpus = [int(x.strip(), 0) for x in cpus_str.split()]
+            cpus = parse_cpu_id_cells(cpus_str)
 
             # Create topology entries for each CPU in this core
             for i, cpu_id in enumerate(cpus):
