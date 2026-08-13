@@ -16,6 +16,7 @@
 OCI image extraction and configuration parsing via the Docker daemon API.
 """
 
+import hashlib
 import http.client
 import json
 import shutil
@@ -133,7 +134,7 @@ def _image_request_with_pull(method: str, path_template: str, image_ref: str
     return resp
 
 
-def extract_image(image_ref: str, instance_name: str) -> Tuple[str, List[str]]:
+def extract_image(image_ref: str, instance_name: str) -> Tuple[str, List[str], str]:
     """
     Extract an image filesystem to a directory via the Docker daemon.
 
@@ -142,7 +143,9 @@ def extract_image(image_ref: str, instance_name: str) -> Tuple[str, List[str]]:
         instance_name: Instance name for directory naming
 
     Returns:
-        Tuple of (rootfs_path, entrypoint_cmd)
+        Tuple of (rootfs_path, entrypoint_cmd, image_id), where image_id
+        is the sha256 digest of the image config blob, or None if the
+        image tar has no config
 
     Raises:
         DockerError: If extraction fails
@@ -161,6 +164,7 @@ def extract_image(image_ref: str, instance_name: str) -> Tuple[str, List[str]]:
 
         entrypoint = []
         cmd = []
+        image_id = None
 
         with tarfile.open(tar_path, 'r') as tar:
             manifest_data = None
@@ -178,7 +182,10 @@ def extract_image(image_ref: str, instance_name: str) -> Tuple[str, List[str]]:
                         if member.name == config_file:
                             f = tar.extractfile(member)
                             if f:
-                                config = json.load(f)
+                                raw_config = f.read()
+                                # The image ID is the digest of the config blob
+                                image_id = "sha256:" + hashlib.sha256(raw_config).hexdigest()
+                                config = json.loads(raw_config)
                                 oci_config = config.get("config", {})
                                 entrypoint = oci_config.get("Entrypoint") or []
                                 cmd = oci_config.get("Cmd") or []
@@ -191,10 +198,15 @@ def extract_image(image_ref: str, instance_name: str) -> Tuple[str, List[str]]:
                             layer_file = tar.extractfile(member)
                             if layer_file:
                                 with tarfile.open(fileobj=layer_file, mode='r:*') as layer_tar:
-                                    layer_tar.extractall(path=rootfs_path)
+                                    # A rootfs needs full metadata (setuid bits,
+                                    # device nodes, absolute symlinks), which the
+                                    # Python 3.14 default 'data' filter rejects
+                                    layer_tar.extractall(
+                                        path=rootfs_path, filter="fully_trusted"
+                                    )
                             break
 
-    return str(rootfs_path), entrypoint + cmd
+    return str(rootfs_path), entrypoint + cmd, image_id
 
 
 def get_image_entrypoint(image_ref: str) -> List[str]:

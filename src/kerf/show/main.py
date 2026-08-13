@@ -382,6 +382,8 @@ def _display_rootfs_metadata(rootfs: Dict, verbose: bool = False):
     if rootfs.get("source") == "docker":
         if rootfs.get("image"):
             click.echo(f"    {'Image':15} {rootfs['image']}")
+        if verbose and rootfs.get("image_id"):
+            click.echo(f"    {'Image Id':15} {rootfs['image_id']}")
         if verbose and rootfs.get("path"):
             click.echo(f"    {'Extracted To':15} {rootfs['path']}")
     elif rootfs.get("path"):
