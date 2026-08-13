@@ -376,6 +376,25 @@ def _display_kernel_metadata(metadata: Dict, verbose: bool = False):
             click.echo(f"    {'Initrd Sha256':15} {initrd['sha256']}")
 
 
+def _display_rootfs_metadata(rootfs: Dict, verbose: bool = False):
+    """Display the Rootfs section recorded for --image / --rootfs-dir loads."""
+    click.echo("\n  Rootfs:")
+    if rootfs.get("source") == "docker":
+        if rootfs.get("image"):
+            click.echo(f"    {'Image':15} {rootfs['image']}")
+        if verbose and rootfs.get("path"):
+            click.echo(f"    {'Extracted To':15} {rootfs['path']}")
+    elif rootfs.get("path"):
+        click.echo(f"    {'Source':15} {rootfs['path']} (directory)")
+    if rootfs.get("entrypoint"):
+        click.echo(f"    {'Entrypoint':15} {rootfs['entrypoint']}")
+    daxfs = rootfs.get("daxfs") or {}
+    if daxfs.get("phys_addr") is not None:
+        click.echo(
+            f"    {'Daxfs':15} phys=0x{daxfs['phys_addr']:x}, size={daxfs.get('size')}"
+        )
+
+
 def display_instance_info(
     instance_info: Dict[str, Optional[str]],
     kimage_data: Optional[Dict[str, str]] = None,
@@ -418,6 +437,9 @@ def display_instance_info(
             _display_kernel_metadata(metadata, verbose)
     elif instance_id and verbose:
         click.echo("\n  Kernel Image:     (not loaded)")
+
+    if metadata and metadata.get("rootfs"):
+        _display_rootfs_metadata(metadata["rootfs"], verbose)
 
     # Device tree source
     if "device_tree_source" in instance_info and instance_info["device_tree_source"]:
