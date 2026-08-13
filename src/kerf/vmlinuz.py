@@ -111,15 +111,19 @@ _DECOMPRESSORS = [
 ]
 
 
-def payload_compression(data: bytes) -> "str | None":
-    """Compression format name of a bzImage payload, or None if unknown."""
-    payload = _locate_payload(data)
+def compression_format(data: bytes) -> "str | None":
+    """Compression format name from a buffer's leading magic, or None."""
     for magic, name, _ in _DECOMPRESSORS:
-        if payload.startswith(magic):
+        if data.startswith(magic):
             return name
-    if payload.startswith(b"\x89LZO"):
+    if data.startswith(b"\x89LZO"):
         return "lzo"
     return None
+
+
+def payload_compression(data: bytes) -> "str | None":
+    """Compression format name of a bzImage payload, or None if unknown."""
+    return compression_format(_locate_payload(data))
 
 
 def _decompress(payload: bytes) -> bytes:

@@ -23,6 +23,7 @@ import pytest
 
 from kerf.metadata import (
     delete_instance_metadata,
+    inspect_initrd_image,
     inspect_kernel_image,
     load_instance_metadata,
     save_instance_metadata,
@@ -118,6 +119,39 @@ class TestInspectKernelImage:
         assert inspect_kernel_image(path)["format"] == "unknown"
 
 
+class TestInspectInitrdImage:
+    def test_gzip_initrd(self, tmp_path):
+        data = gzip.compress(b"fake cpio archive contents")
+        path = tmp_path / "initrd.img"
+        path.write_bytes(data)
+
+        info = inspect_initrd_image(path)
+        assert info["path"] == str(path)
+        assert info["compression"] == "gzip"
+        assert info["size"] == len(data)
+        assert info["sha256"] == hashlib.sha256(data).hexdigest()
+
+    def test_zstd_initrd_detected_from_magic(self, tmp_path):
+        path = tmp_path / "initrd.img"
+        path.write_bytes(b"\x28\xb5\x2f\xfd" + b"\x00" * 32)
+
+        assert inspect_initrd_image(path)["compression"] == "zstd"
+
+    def test_uncompressed_cpio_initrd(self, tmp_path):
+        # Distro initrds often start with an uncompressed early
+        # microcode cpio in newc format
+        path = tmp_path / "initrd.img"
+        path.write_bytes(b"070701" + b"0" * 104 + b"TRAILER!!!")
+
+        assert inspect_initrd_image(path)["compression"] == "cpio"
+
+    def test_unknown_initrd_format(self, tmp_path):
+        path = tmp_path / "initrd.img"
+        path.write_bytes(b"mystery bytes")
+
+        assert inspect_initrd_image(path)["compression"] is None
+
+
 class TestDisplayMetadata:
     def _metadata(self):
         return {
@@ -129,7 +163,12 @@ class TestDisplayMetadata:
                 "size": 12345,
                 "sha256": "ab" * 32,
             },
-            "initrd": "/boot/initrd.img",
+            "initrd": {
+                "path": "/boot/initrd.img",
+                "compression": "zstd",
+                "size": 6789,
+                "sha256": "cd" * 32,
+            },
             "loaded_at": "2026-08-13T10:00:00+00:00",
         }
 
@@ -146,8 +185,34 @@ class TestDisplayMetadata:
         assert "/boot/vmlinuz-7.0.11" in out
         assert "bzImage (zstd compressed, vmlinux extracted at load)" in out
         assert "7.0.11-test #1 SMP" in out
-        assert "/boot/initrd.img" in out
+        assert "/boot/initrd.img (zstd compressed)" in out
         assert "2026-08-13T10:00:00+00:00" in out
+
+    def test_initrd_row_absent_when_not_used(self, capsys):
+        from kerf.show.main import display_instance_info
+
+        metadata = self._metadata()
+        metadata["initrd"] = None
+
+        display_instance_info(
+            {"name": "web-server", "id": "1", "status": "loaded"},
+            kimage_data=None,
+            metadata=metadata,
+        )
+        assert "Initrd" not in capsys.readouterr().out
+
+    def test_uncompressed_cpio_initrd_row(self, capsys):
+        from kerf.show.main import display_instance_info
+
+        metadata = self._metadata()
+        metadata["initrd"]["compression"] = "cpio"
+
+        display_instance_info(
+            {"name": "web-server", "id": "1", "status": "loaded"},
+            kimage_data=None,
+            metadata=metadata,
+        )
+        assert "/boot/initrd.img (uncompressed cpio)" in capsys.readouterr().out
 
     def test_metadata_shown_without_kimage_data(self, capsys):
         from kerf.show.main import display_instance_info
@@ -170,7 +235,9 @@ class TestDisplayMetadata:
             kimage_data=None,
             metadata=self._metadata(),
         )
-        assert "ab" * 32 not in capsys.readouterr().out
+        out = capsys.readouterr().out
+        assert "ab" * 32 not in out
+        assert "cd" * 32 not in out
 
         display_instance_info(
             {"name": "web-server", "id": "1", "status": "loaded"},
@@ -178,7 +245,9 @@ class TestDisplayMetadata:
             metadata=self._metadata(),
             verbose=True,
         )
-        assert "ab" * 32 in capsys.readouterr().out
+        out = capsys.readouterr().out
+        assert "ab" * 32 in out
+        assert "cd" * 32 in out
 
     def test_plain_vmlinux_format_line(self, capsys):
         from kerf.show.main import display_instance_info
