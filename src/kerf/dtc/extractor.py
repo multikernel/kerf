@@ -103,6 +103,9 @@ class InstanceExtractor:
         self._add_cpu_properties_sw(fdt_sw, tree.hardware.cpus)
         self._add_memory_properties_sw(fdt_sw, tree.hardware.memory)
 
+        if tree.hardware.topology and tree.hardware.topology.numa_nodes:
+            self._add_topology_section_sw(fdt_sw, tree.hardware.topology)
+
         if tree.hardware.devices:
             self._add_devices_section_sw(fdt_sw, tree.hardware.devices)
 
@@ -129,6 +132,44 @@ class InstanceExtractor:
         fdt_sw.property_u64("memory-base", memory.memory_pool_base)
         fdt_sw.property_u64("memory-bytes", memory.memory_pool_bytes)
 
+        if memory.pools:
+            fdt_sw.begin_node("memory-pools")
+            for index, pool in enumerate(memory.pools):
+                fdt_sw.begin_node(f"pool@{index}")
+                fdt_sw.property_u64("base", pool.base)
+                fdt_sw.property_u64("size", pool.size)
+                if pool.numa_node is not None:
+                    fdt_sw.property_u32("numa-node", pool.numa_node)
+                fdt_sw.end_node()
+            fdt_sw.end_node()
+
+    def _add_topology_section_sw(self, fdt_sw, topology):
+        """Add topology section (NUMA nodes) using FdtSw."""
+        import struct
+
+        fdt_sw.begin_node("topology")
+        fdt_sw.begin_node("numa-nodes")
+
+        for node_id in sorted(topology.numa_nodes):
+            node = topology.numa_nodes[node_id]
+            fdt_sw.begin_node(f"node@{node_id}")
+            fdt_sw.property_u32("node-id", node_id)
+            fdt_sw.property_u64("memory-base", node.memory_base)
+            fdt_sw.property_u64("memory-size", node.memory_size)
+            if node.cpus:
+                fdt_sw.property("cpus", pack_cpu_ids(node.cpus))
+            if node.distance_matrix:
+                pairs = []
+                for target in sorted(node.distance_matrix):
+                    pairs.extend([target, node.distance_matrix[target]])
+                fdt_sw.property("distance-matrix", struct.pack(">" + "I" * len(pairs), *pairs))
+            if node.memory_type:
+                fdt_sw.property_string("memory-type", node.memory_type)
+            fdt_sw.end_node()
+
+        fdt_sw.end_node()  # End numa-nodes
+        fdt_sw.end_node()  # End topology
+
     def _add_devices_section_sw(self, fdt_sw, devices):
         """Add devices section using FdtSw."""
         fdt_sw.begin_node("devices")
@@ -153,6 +194,9 @@ class InstanceExtractor:
 
             if device_info.device_id is not None:
                 fdt_sw.property_u32("device-id", device_info.device_id)
+
+            if device_info.numa_node is not None and device_info.numa_node >= 0:
+                fdt_sw.property_u32("numa-node", device_info.numa_node)
 
             if device_info.sriov_vfs is not None:
                 fdt_sw.property_u32("sriov-vfs", device_info.sriov_vfs)
@@ -206,6 +250,20 @@ class InstanceExtractor:
             if instance.resources.devices:
                 stringlist_data = b'\0'.join(d.encode('utf-8') for d in instance.resources.devices) + b'\0'
                 fdt_sw.property("device-names", stringlist_data)
+
+            if instance.resources.numa_nodes:
+                import struct
+
+                numa_data = struct.pack(
+                    ">" + "I" * len(instance.resources.numa_nodes), *instance.resources.numa_nodes
+                )
+                fdt_sw.property("numa-nodes", numa_data)
+
+            if instance.resources.cpu_affinity:
+                fdt_sw.property_string("cpu-affinity", instance.resources.cpu_affinity)
+
+            if instance.resources.memory_policy:
+                fdt_sw.property_string("memory-policy", instance.resources.memory_policy)
 
             if instance.resources.uring:
                 fdt_sw.begin_node("uring")
@@ -342,6 +400,20 @@ class InstanceExtractor:
         if instance.resources.devices:
             stringlist_data = b'\0'.join(d.encode('utf-8') for d in instance.resources.devices) + b'\0'
             self.fdt.setprop(resources_offset, "device-names", stringlist_data)
+
+        if instance.resources.numa_nodes:
+            import struct
+
+            numa_data = struct.pack(
+                ">" + "I" * len(instance.resources.numa_nodes), *instance.resources.numa_nodes
+            )
+            self.fdt.setprop(resources_offset, "numa-nodes", numa_data)
+
+        if instance.resources.cpu_affinity:
+            self.fdt.setprop_str(resources_offset, "cpu-affinity", instance.resources.cpu_affinity)
+
+        if instance.resources.memory_policy:
+            self.fdt.setprop_str(resources_offset, "memory-policy", instance.resources.memory_policy)
 
     def _add_device_references(self, parent_offset: int, tree: GlobalDeviceTree):
         """Add device reference nodes."""

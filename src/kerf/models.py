@@ -102,18 +102,46 @@ class CPUAllocation:
 
 
 @dataclass
+class MemoryPool:
+    """A contiguous memory pool, optionally tied to a NUMA node."""
+
+    base: int
+    size: int
+    numa_node: Optional[int] = None
+
+    @property
+    def end(self) -> int:
+        """End address of the pool (exclusive)."""
+        return self.base + self.size
+
+
+@dataclass
 class MemoryAllocation:
-    """Memory allocation information."""
+    """Memory allocation information.
+
+    memory_pool_base/memory_pool_bytes describe the single-pool envelope
+    kept for kernel compatibility and display; allocation logic must use
+    get_pools(), which supports multiple per-NUMA-node pools.
+    """
 
     total_bytes: int
     host_reserved_bytes: int
     memory_pool_base: int
     memory_pool_bytes: int
+    pools: Optional[List[MemoryPool]] = None
 
     @property
     def memory_pool_end(self) -> int:
         """End address of memory pool."""
+        if self.pools:
+            return max(pool.end for pool in self.pools)
         return self.memory_pool_base + self.memory_pool_bytes
+
+    def get_pools(self) -> List[MemoryPool]:
+        """Memory pools to allocate from; synthesized for legacy single-pool trees."""
+        if self.pools:
+            return self.pools
+        return [MemoryPool(base=self.memory_pool_base, size=self.memory_pool_bytes)]
 
 
 @dataclass
@@ -127,6 +155,7 @@ class DeviceInfo:
     pci_id: Optional[str] = None
     vendor_id: Optional[int] = None
     device_id: Optional[int] = None
+    numa_node: Optional[int] = None
     sriov_vfs: Optional[int] = None
     host_reserved_vf: Optional[int] = None
     available_vfs: Optional[List[int]] = None

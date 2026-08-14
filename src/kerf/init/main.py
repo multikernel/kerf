@@ -25,7 +25,7 @@ import os
 import re
 import sys
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import List, Optional, Tuple
 
 import click
 import libfdt
@@ -48,7 +48,9 @@ from ..models import (
     GlobalDeviceTree,
     HardwareInventory,
     MemoryAllocation,
+    MemoryPool,
 )
+from ..topology import discover_numa_topology, read_pci_numa_node
 
 
 MULTIKERNEL_MOUNT_POINT = "/sys/fs/multikernel"
@@ -121,15 +123,16 @@ def mount_multikernel_fs(verbose: bool = False) -> None:
         click.echo("✓ Successfully mounted multikernel filesystem")
 
 
-def get_multikernel_memory_pool_from_iomem() -> Optional[Tuple[int, int]]:
+def get_multikernel_memory_pools_from_iomem() -> List[Tuple[int, int]]:
     """
-    Get multikernel memory pool region from /proc/iomem.
-    Returns (base_address, size_bytes) or None if not found.
+    Get all multikernel memory pool regions from /proc/iomem.
+    Returns a list of (base_address, size_bytes) tuples, sorted by base.
     """
+    pools = []
     try:
         iomem_path = Path('/proc/iomem')
         if not iomem_path.exists():
-            return None
+            return pools
         with open(iomem_path, 'r', encoding='utf-8') as f:
             for line in f:
                 if 'Multikernel Memory Pool' in line:
@@ -137,11 +140,63 @@ def get_multikernel_memory_pool_from_iomem() -> Optional[Tuple[int, int]]:
                     if match:
                         base = int(match.group(1), 16)
                         end = int(match.group(2), 16)
-                        size = end - base + 1
-                        return (base, size)
+                        pools.append((base, end - base + 1))
     except (OSError, IOError, ValueError):
         pass
 
+    return sorted(pools)
+
+
+def parse_memory_pool_spec(spec: str) -> List[Tuple[int, Optional[int]]]:
+    """
+    Parse a memory pool specification into (size_bytes, numa_node) entries.
+
+    Formats:
+    - "1GB": one pool, any NUMA node
+    - "8GB@0,4GB@1": one pool per NUMA node
+
+    Raises:
+        ValueError: If the spec is empty, mixes anonymous and per-node
+                    entries, or repeats a NUMA node
+    """
+    entries = []
+    for part in spec.split(','):
+        part = part.strip()
+        if not part:
+            continue
+        if '@' in part:
+            size_str, _, node_str = part.rpartition('@')
+            try:
+                node = int(node_str)
+            except ValueError as e:
+                raise ValueError(f"Invalid NUMA node in memory spec '{part}'") from e
+            entries.append((parse_memory_spec(size_str), node))
+        else:
+            entries.append((parse_memory_spec(part), None))
+
+    if not entries:
+        raise ValueError("Memory specification must contain at least one pool size")
+
+    if len(entries) > 1 and any(node is None for _, node in entries):
+        raise ValueError(
+            "Multiple memory pools require a NUMA node on every entry "
+            "(e.g. --memory=8GB@0,8GB@1)"
+        )
+
+    nodes = [node for _, node in entries if node is not None]
+    if len(nodes) != len(set(nodes)):
+        raise ValueError("Duplicate NUMA node in memory specification")
+
+    return entries
+
+
+def _infer_pool_numa_node(base: int, size: int, topology) -> Optional[int]:
+    """Determine which NUMA node a memory pool belongs to, if any."""
+    if not topology or not topology.numa_nodes:
+        return None
+    for node_id, node in topology.numa_nodes.items():
+        if node.memory_base <= base and base + size <= node.memory_base + node.memory_size:
+            return node_id
     return None
 
 
@@ -262,7 +317,8 @@ def detect_pci_device(device_name: str) -> Optional[DeviceInfo]:
             device_type="pci",
             pci_id=pci_slot,
             vendor_id=vendor_id,
-            device_id=device_id
+            device_id=device_id,
+            numa_node=read_pci_numa_node(pci_device_path)
         )
     except (OSError, IOError, ValueError, AttributeError, pyudev.DeviceNotFoundError):
         return None
@@ -387,9 +443,10 @@ def build_baseline_from_cmdline(
 
     Args:
         cpus: CPU specification string (e.g., "4-7" or "4,5,6,7")
-        memory: Optional pool size to allocate at runtime via /dev/lazy_cma
-                (e.g., "1GB"); when omitted an existing pool must already
-                be registered in /proc/iomem
+        memory: Optional pool size(s) to allocate at runtime via
+                /dev/lazy_cma: "1GB" for a single pool, or
+                "8GB@0,8GB@1" for one pool per NUMA node; when omitted
+                existing pools must already be registered in /proc/iomem
         devices: Optional device names (comma-separated, e.g., "enp9s0_dev,nvme0")
         verbose: Whether to print verbose output
 
@@ -433,45 +490,75 @@ def build_baseline_from_cmdline(
         host_reserved_cpus = [0]
         cpu_list = sorted(list(available_cpus))
 
-    memory_pool = get_multikernel_memory_pool_from_iomem()
-    if memory_pool is None:
+    topology = discover_numa_topology()
+    if verbose and topology and topology.numa_nodes:
+        click.echo(f"Discovered NUMA topology: {len(topology.numa_nodes)} node(s)")
+        for node_id, node in sorted(topology.numa_nodes.items()):
+            click.echo(
+                f"  Node {node_id}: APIC IDs {node.cpus}, "
+                f"memory {hex(node.memory_base)}-{hex(node.memory_base + node.memory_size)}"
+            )
+
+    existing_pools = get_multikernel_memory_pools_from_iomem()
+    pool_list = []
+    if not existing_pools:
         if not memory:
             raise KernelInterfaceError(
                 "Could not find multikernel memory pool in /proc/iomem. "
-                "Pass --memory=SIZE (e.g. --memory=1GB) to allocate the pool "
-                f"at runtime via {LAZY_CMA_DEVICE}."
+                "Pass --memory=SIZE (e.g. --memory=1GB) or per-node sizes "
+                "(e.g. --memory=8GB@0,8GB@1) to allocate pools at runtime "
+                f"via {LAZY_CMA_DEVICE}."
             )
 
-        pool_bytes = parse_memory_spec(memory)
-        pool_base = allocate_multikernel_pool(pool_bytes)
-        if verbose:
-            click.echo(f"Allocated multikernel memory pool via {LAZY_CMA_DEVICE}:")
-            click.echo(f"  Base: {hex(pool_base)}")
-            click.echo(f"  Size: {pool_bytes} bytes ({pool_bytes / (1024**3):.2f} GB)")
+        for pool_bytes, node in parse_memory_pool_spec(memory):
+            pool_base = allocate_multikernel_pool(pool_bytes, node if node is not None else -1)
+            pool_list.append(MemoryPool(base=pool_base, size=pool_bytes, numa_node=node))
+            if verbose:
+                node_str = f" on NUMA node {node}" if node is not None else ""
+                click.echo(f"Allocated multikernel memory pool via {LAZY_CMA_DEVICE}{node_str}:")
+                click.echo(f"  Base: {hex(pool_base)}")
+                click.echo(f"  Size: {pool_bytes} bytes ({pool_bytes / (1024**3):.2f} GB)")
 
         # Re-read /proc/iomem so the baseline reflects exactly what the
-        # kernel registered for the allocation.
-        memory_pool = get_multikernel_memory_pool_from_iomem() or (pool_base, pool_bytes)
-    elif memory:
-        click.echo(
-            "Note: multikernel memory pool already exists in /proc/iomem; "
-            "ignoring --memory",
-            err=True,
-        )
-    memory_pool_base, memory_pool_bytes = memory_pool
+        # kernel registered for each allocation.
+        registered = dict(get_multikernel_memory_pools_from_iomem())
+        for pool in pool_list:
+            if pool.base in registered:
+                pool.size = registered[pool.base]
+    else:
+        if memory:
+            click.echo(
+                "Note: multikernel memory pool already exists in /proc/iomem; "
+                "ignoring --memory",
+                err=True,
+            )
+        for pool_base, pool_bytes in existing_pools:
+            pool_list.append(
+                MemoryPool(
+                    base=pool_base,
+                    size=pool_bytes,
+                    numa_node=_infer_pool_numa_node(pool_base, pool_bytes, topology),
+                )
+            )
 
-    total_bytes = memory_pool_base + memory_pool_bytes
+    pool_list.sort(key=lambda pool: pool.base)
+    memory_pool_base = pool_list[0].base
+    memory_pool_bytes = sum(pool.size for pool in pool_list)
+    total_bytes = max(pool.end for pool in pool_list)
     host_reserved_bytes = memory_pool_base
+
     if verbose:
         click.echo(f"Parsed APIC ID specification: {cpus}")
         click.echo(f"  Valid APIC IDs on system: {sorted(valid_apic_ids)}")
         click.echo(f"  Host-reserved APIC IDs: {host_reserved_cpus}")
         click.echo(f"  Available APIC IDs: {cpu_list}")
-        click.echo("Memory pool from /proc/iomem:")
-        click.echo(f"  Base: {hex(memory_pool_base)}")
-        click.echo(f"  Size: {memory_pool_bytes} bytes ({memory_pool_bytes / (1024**3):.2f} GB)")
-        click.echo(f"  Total bytes: {total_bytes} bytes ({total_bytes / (1024**3):.2f} GB)")
-        click.echo(f"  Host-reserved: {host_reserved_bytes} bytes ({host_reserved_bytes / (1024**3):.2f} GB)")
+        click.echo("Memory pools:")
+        for pool in pool_list:
+            node_str = f" (NUMA node {pool.numa_node})" if pool.numa_node is not None else ""
+            click.echo(
+                f"  {hex(pool.base)}-{hex(pool.end)}: {pool.size} bytes "
+                f"({pool.size / (1024**3):.2f} GB){node_str}"
+            )
 
     cpu_allocation = CPUAllocation(
         total=total_cpus,
@@ -479,11 +566,14 @@ def build_baseline_from_cmdline(
         available=cpu_list
     )
 
+    # A single anonymous pool keeps the legacy single-pool DTB layout
+    keep_pools = len(pool_list) > 1 or pool_list[0].numa_node is not None
     memory_allocation = MemoryAllocation(
         total_bytes=total_bytes,
         host_reserved_bytes=host_reserved_bytes,
         memory_pool_base=memory_pool_base,
-        memory_pool_bytes=memory_pool_bytes
+        memory_pool_bytes=memory_pool_bytes,
+        pools=pool_list if keep_pools else None
     )
 
     device_dict = {}
@@ -514,6 +604,7 @@ def build_baseline_from_cmdline(
     hardware = HardwareInventory(
         cpus=cpu_allocation,
         memory=memory_allocation,
+        topology=topology,
         devices=device_dict
     )
 
@@ -530,7 +621,7 @@ def build_baseline_from_cmdline(
 @click.pass_context
 @click.option('--input', '-i', help='Input DTS or DTB file containing all resources. Mutually exclusive with --cpus, --memory and --devices. When used, all resources must come from the file.')
 @click.option('--cpus', '-c', help='APIC ID specification for baseline (e.g., "128-134" or "128,130,132"). Use physical APIC IDs, not logical CPU numbers. Mutually exclusive with --input. Memory comes from --memory or an existing pool in /proc/iomem.')
-@click.option('--memory', '-m', help='Memory pool size to allocate at runtime via /dev/lazy_cma (e.g., "1GB", "512MB"). If omitted, an existing pool is discovered from /proc/iomem. Mutually exclusive with --input.')
+@click.option('--memory', '-m', help='Memory pool size(s) to allocate at runtime via /dev/lazy_cma. Either one size for a single pool (e.g., "1GB"), or per-NUMA-node sizes (e.g., "8GB@0,8GB@1") for one pool per node. If omitted, existing pools are discovered from /proc/iomem. Mutually exclusive with --input.')
 @click.option('--devices', '-d', help='Device names (comma-separated, e.g., "enp9s0_dev,nvme0"). Mutually exclusive with --input. Creates minimal device entries in baseline.')
 @click.option('--dry-run', is_flag=True, help='Validate without applying')
 @click.option('--report', is_flag=True, help='Generate detailed validation report')

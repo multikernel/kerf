@@ -18,8 +18,9 @@ Validation layer for multikernel device tree configurations.
 
 import re
 from pathlib import Path
-from typing import List, Dict, Tuple, Optional
+from typing import List, Tuple, Optional
 from ..models import GlobalDeviceTree, ValidationResult, ResourceUsage
+from ..topology import read_logical_to_physical_cpu_map
 
 
 class MultikernelValidator:
@@ -100,67 +101,10 @@ class MultikernelValidator:
         )
 
     def _get_system_cpu_ids(self) -> Optional[set[int]]:
-        """
-        Get the set of physical CPU IDs from /proc/cpuinfo.
-        Maps logical processor IDs to physical IDs and returns the set of physical IDs.
-        """
-        try:
-            cpuinfo_path = Path("/proc/cpuinfo")
-            if cpuinfo_path.exists():
-                with open(cpuinfo_path, "r", encoding="utf-8") as f:
-                    content = f.read()
-                    physical_ids = set()
-                    current_physical_id = None
-
-                    for line in content.split("\n"):
-                        if line.startswith("processor"):
-                            # Extract logical processor ID
-                            current_physical_id = None
-                        elif line.startswith("physical id"):
-                            # Extract physical ID for current processor
-                            match = re.search(r"physical id\s*:\s*(\d+)", line)
-                            if match:
-                                current_physical_id = int(match.group(1))
-                                physical_ids.add(current_physical_id)
-
-                    if physical_ids:
-                        return physical_ids
-        except (OSError, IOError, ValueError):
-            pass
-
-        return None
-
-    def _get_processor_to_physical_id_map(self) -> Optional[Dict[int, int]]:
-        """
-        Get mapping from logical processor ID to physical ID from /proc/cpuinfo.
-        Returns dict mapping processor ID -> physical ID.
-        """
-        try:
-            cpuinfo_path = Path("/proc/cpuinfo")
-            if cpuinfo_path.exists():
-                with open(cpuinfo_path, "r", encoding="utf-8") as f:
-                    content = f.read()
-                    processor_to_physical = {}
-                    current_processor = None
-
-                    for line in content.split("\n"):
-                        if line.startswith("processor"):
-                            # Extract logical processor ID
-                            match = re.search(r"processor\s*:\s*(\d+)", line)
-                            if match:
-                                current_processor = int(match.group(1))
-                        elif line.startswith("physical id") and current_processor is not None:
-                            # Extract physical ID for current processor
-                            match = re.search(r"physical id\s*:\s*(\d+)", line)
-                            if match:
-                                physical_id = int(match.group(1))
-                                processor_to_physical[current_processor] = physical_id
-
-                    if processor_to_physical:
-                        return processor_to_physical
-        except (OSError, IOError, ValueError):
-            pass
-
+        """Get the set of physical CPU IDs (APIC IDs) on this system."""
+        cpu_map = read_logical_to_physical_cpu_map()
+        if cpu_map:
+            return set(cpu_map.values())
         return None
 
     def _get_system_cpu_count(self) -> Optional[int]:
@@ -188,17 +132,18 @@ class MultikernelValidator:
 
         return None
 
-    def _get_multikernel_memory_pool_from_iomem(self) -> Optional[Tuple[int, int]]:
+    def _get_multikernel_memory_pools_from_iomem(self) -> List[Tuple[int, int]]:
         """
-        Get multikernel memory pool region from /proc/iomem.
-        Returns (base_address, size_bytes) or None if not found.
+        Get all multikernel memory pool regions from /proc/iomem.
+        Returns a list of (base_address, size_bytes) tuples.
 
         Expected format: "40000000-7fefffff : Multikernel Memory Pool"
         """
+        regions = []
         try:
             iomem_path = Path("/proc/iomem")
             if not iomem_path.exists():
-                return None
+                return regions
             with open(iomem_path, "r", encoding="utf-8") as f:
                 for line in f:
                     if "multikernel" in line.lower():
@@ -207,12 +152,11 @@ class MultikernelValidator:
                             base = int(match.group(1), 16)
                             end = int(match.group(2), 16)
                             # Size is end - start + 1 (inclusive range)
-                            size = end - base + 1
-                            return (base, size)
+                            regions.append((base, end - base + 1))
         except (OSError, IOError, ValueError):
             pass
 
-        return None
+        return regions
 
     def _validate_hardware_inventory(self, tree: GlobalDeviceTree):
         """Validate hardware inventory consistency and against running system."""
@@ -231,51 +175,28 @@ class MultikernelValidator:
                 f"Hardware inventory: CPU overlap between host and available: {sorted(overlap)}"
             )
 
-        processor_to_physical = self._get_processor_to_physical_id_map()
-        if processor_to_physical is not None:
-            system_physical_ids = set(processor_to_physical.values())
-            system_cpu_count = len(system_physical_ids)
-
-            if cpus.total > system_cpu_count:
+        system_physical_ids = self._get_system_cpu_ids()
+        if system_physical_ids is not None:
+            # total is sized as max physical CPU ID + 1, so compare against
+            # the system's highest ID rather than the CPU count
+            if cpus.total > max(system_physical_ids) + 1:
                 self.warnings.append(
-                    f"Hardware inventory: Total CPU count ({cpus.total}) exceeds system physical CPU count ({system_cpu_count}). "
+                    f"Hardware inventory: Total CPU count ({cpus.total}) exceeds the highest "
+                    f"system physical CPU ID ({max(system_physical_ids)}) + 1. "
                     f"This may indicate CPUs were hot-unplugged after baseline was created."
                 )
 
-            all_cpu_ids = set()
-            if cpus.host_reserved:
-                all_cpu_ids.update(cpus.host_reserved)
-            if cpus.available:
-                all_cpu_ids.update(cpus.available)
-
-            if all_cpu_ids:
-                invalid_processors = []
-                physical_ids_used = set()
-
-                for cpu_id in all_cpu_ids:
-                    if cpu_id not in processor_to_physical:
-                        invalid_processors.append(cpu_id)
-                    else:
-                        physical_ids_used.add(processor_to_physical[cpu_id])
-
-                if invalid_processors:
-                    valid_processors = sorted(processor_to_physical.keys())
-                    self.warnings.append(
-                        f"Hardware inventory: CPU IDs (logical processors) {sorted(invalid_processors)} do not exist in system. "
-                        f"Available logical processors: {valid_processors}. "
-                        f"This may indicate CPUs were hot-unplugged after baseline was created."
-                    )
-
-                invalid_physical_ids = physical_ids_used - system_physical_ids
-                if invalid_physical_ids:
-                    self.warnings.append(
-                        f"Hardware inventory: Physical CPU IDs {sorted(invalid_physical_ids)} do not exist in system. "
-                        f"Available physical CPU IDs: {sorted(system_physical_ids)}. "
-                        f"This may indicate CPUs were hot-unplugged after baseline was created."
-                    )
+            all_cpu_ids = set(cpus.host_reserved) | set(cpus.available)
+            invalid_physical_ids = all_cpu_ids - system_physical_ids
+            if invalid_physical_ids:
+                self.warnings.append(
+                    f"Hardware inventory: Physical CPU IDs {sorted(invalid_physical_ids)} do not exist in system. "
+                    f"Available physical CPU IDs: {sorted(system_physical_ids)}. "
+                    f"This may indicate CPUs were hot-unplugged after baseline was created."
+                )
         else:
             self.warnings.append(
-                "Could not determine CPU to physical ID mapping from /proc/cpuinfo - skipping CPU validation"
+                "Could not determine physical CPU IDs from /proc/cpuinfo - skipping CPU validation"
             )
 
         memory = tree.hardware.memory
@@ -285,40 +206,28 @@ class MultikernelValidator:
         if memory.memory_pool_bytes <= 0:
             self.errors.append("Hardware inventory: Spawn pool size must be positive")
 
-        iomem_pool = self._get_multikernel_memory_pool_from_iomem()
-        if iomem_pool is None or (
-            memory.memory_pool_base != iomem_pool[0] or memory.memory_pool_bytes != iomem_pool[1]
-        ):
-            # Pool doesn't match kernel-provided pool, validate against total_bytes
-            if memory.memory_pool_base + memory.memory_pool_bytes > memory.total_bytes:
-                self.errors.append("Hardware inventory: Spawn pool extends beyond total memory")
-        if iomem_pool is not None:
-            iomem_base, iomem_size = iomem_pool
-            iomem_end = iomem_base + iomem_size
-
-            if memory.memory_pool_base != iomem_base:
-                self.errors.append(
-                    f"Hardware inventory: Memory pool base ({hex(memory.memory_pool_base)}) "
-                    f"does not match multikernel pool in /proc/iomem ({hex(iomem_base)})"
+        pools = memory.get_pools()
+        iomem_regions = self._get_multikernel_memory_pools_from_iomem()
+        if iomem_regions:
+            # Every configured pool must lie within a reserved multikernel region
+            for pool in pools:
+                contained = any(
+                    iomem_base <= pool.base and pool.end <= iomem_base + iomem_size
+                    for iomem_base, iomem_size in iomem_regions
                 )
-
-            pool_end = memory.memory_pool_base + memory.memory_pool_bytes
-            if pool_end > iomem_end:
-                exceeds_by = pool_end - iomem_end
-                self.errors.append(
-                    f"Hardware inventory: Memory pool extends beyond multikernel reserved pool in /proc/iomem "
-                    f"by {exceeds_by} bytes ({exceeds_by / (1024**3):.2f} GB). "
-                    f"Configured pool: {hex(memory.memory_pool_base)}-{hex(pool_end-1)}, "
-                    f"Reserved pool: {hex(iomem_base)}-{hex(iomem_end-1)}"
-                )
-
-            if memory.memory_pool_bytes > iomem_size:
-                self.errors.append(
-                    f"Hardware inventory: Memory pool size ({memory.memory_pool_bytes} bytes = "
-                    f"{memory.memory_pool_bytes / (1024**3):.2f} GB) exceeds multikernel reserved pool "
-                    f"({iomem_size} bytes = {iomem_size / (1024**3):.2f} GB) in /proc/iomem"
-                )
+                if not contained:
+                    region_list = ", ".join(
+                        f"{hex(base)}-{hex(base + size - 1)}" for base, size in iomem_regions
+                    )
+                    node_hint = f" (node {pool.numa_node})" if pool.numa_node is not None else ""
+                    self.errors.append(
+                        f"Hardware inventory: Memory pool {hex(pool.base)}-{hex(pool.end - 1)}"
+                        f"{node_hint} is not within any multikernel reserved pool in /proc/iomem. "
+                        f"Reserved pools: {region_list}"
+                    )
         else:
+            if max(pool.end for pool in pools) > memory.total_bytes:
+                self.errors.append("Hardware inventory: Spawn pool extends beyond total memory")
             self.warnings.append("Could not find multikernel memory pool in /proc/iomem")
 
     def _validate_instances(self, tree: GlobalDeviceTree):
@@ -354,14 +263,15 @@ class MultikernelValidator:
         cpus = tree.hardware.cpus
         instance_cpus = set(instance.resources.cpus)
 
+        known_cpus = set(cpus.available) | set(cpus.host_reserved)
         for cpu in instance_cpus:
-            if cpu < 0 or cpu >= cpus.total:
+            if cpu < 0 or cpu not in known_cpus:
                 error_msg = self._format_error_with_context(
                     error_type="CPU allocation error",
                     instance_name=instance.name,
                     problem=f"CPU {cpu} does not exist in hardware inventory",
-                    current_state=f"Hardware has CPUs 0-{cpus.total-1}",
-                    suggestion=f"Use CPUs in range 0-{cpus.total-1}",
+                    current_state=f"Hardware physical CPU IDs: {sorted(known_cpus)}",
+                    suggestion=f"Use available physical CPU IDs: {sorted(cpus.available)}",
                     alternative="Check hardware inventory configuration",
                     pattern=f"cpus = <{','.join(map(str, sorted(instance_cpus)))}>",
                 )
@@ -414,29 +324,21 @@ class MultikernelValidator:
         memory_start = instance_memory.memory_base
         memory_end = memory_start + instance_memory.memory_bytes
 
-        if memory_start < memory.memory_pool_base:
-            error_msg = self._format_error_with_context(
-                error_type="Memory allocation error",
-                instance_name=instance.name,
-                problem=f"Memory base {hex(memory_start)} is before memory pool start",
-                current_state=f"Spawn pool starts at {hex(memory.memory_pool_base)}",
-                suggestion=f"Use memory base >= {hex(memory.memory_pool_base)}",
-                alternative="Adjust memory pool configuration",
-                pattern=f"memory-base = <{hex(memory_start)}>",
+        pools = memory.get_pools()
+        if not any(pool.base <= memory_start and memory_end <= pool.end for pool in pools):
+            pool_list = ", ".join(
+                f"{hex(pool.base)}-{hex(pool.end)}"
+                + (f" (node {pool.numa_node})" if pool.numa_node is not None else "")
+                for pool in pools
             )
-            self.errors.append(error_msg)
-
-        if memory_end > memory.memory_pool_base + memory.memory_pool_bytes:
-            pool_end = memory.memory_pool_base + memory.memory_pool_bytes
-            exceeds_by = memory_end - pool_end
             error_msg = self._format_error_with_context(
                 error_type="Memory allocation error",
                 instance_name=instance.name,
-                problem="Memory region extends beyond memory pool",
-                current_state=f"Instance memory: {hex(memory_start)}-{hex(memory_end)}, Pool: {hex(memory.memory_pool_base)}-{hex(pool_end)}",
-                suggestion=f"Reduce memory size by {hex(exceeds_by)} or use different base address",
+                problem="Memory region is not within any memory pool",
+                current_state=f"Instance memory: {hex(memory_start)}-{hex(memory_end)}, Pools: {pool_list}",
+                suggestion="Use a base address inside a single memory pool",
                 alternative="Increase memory pool size or adjust memory allocation",
-                pattern=f"memory-size = <{hex(instance_memory.memory_bytes)}>",
+                pattern=f"memory-base = <{hex(memory_start)}>",
             )
             self.errors.append(error_msg)
 
@@ -540,10 +442,11 @@ class MultikernelValidator:
                 f"Total CPU allocation ({total_cpus_allocated}) exceeds available CPUs ({available_cpus})"
             )
 
-        if total_memory_allocated > tree.hardware.memory.memory_pool_bytes:
+        total_pool_bytes = sum(pool.size for pool in tree.hardware.memory.get_pools())
+        if total_memory_allocated > total_pool_bytes:
             self.errors.append(
                 f"Total memory allocation ({total_memory_allocated} bytes) "
-                f"exceeds memory pool ({tree.hardware.memory.memory_pool_bytes} bytes)"
+                f"exceeds memory pools ({total_pool_bytes} bytes)"
             )
 
     def _validate_device_references(self, tree: GlobalDeviceTree):
