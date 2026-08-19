@@ -1,0 +1,68 @@
+name: Release to PyPI
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.11"
+
+    - name: Install Poetry
+      uses: snok/install-poetry@v1
+      with:
+        version: 1.8.5
+
+    - name: Check tag matches package version
+      run: |
+        TAG_VERSION="${GITHUB_REF_NAME#v}"
+        PKG_VERSION="$(poetry version --short)"
+        if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
+          echo "Tag v$TAG_VERSION does not match pyproject.toml version $PKG_VERSION" >&2
+          exit 1
+        fi
+
+    - name: Install musl-tools
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y musl-tools
+
+    - name: Build init binary
+      run: |
+        make
+
+    - name: Build sdist and wheel
+      run: |
+        poetry build
+
+    - name: Upload distributions
+      uses: actions/upload-artifact@v4
+      with:
+        name: dist
+        path: dist/
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/kerf-multikernel
+    permissions:
+      id-token: write
+    steps:
+    - name: Download distributions
+      uses: actions/download-artifact@v4
+      with:
+        name: dist
+        path: dist/
+
+    - name: Publish to PyPI
+      uses: pypa/gh-action-pypi-publish@release/v1
