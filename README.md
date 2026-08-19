@@ -297,6 +297,13 @@ pylibfdt = "^1.7.0"      # Device tree parsing (from dtc project)
 ### Installation
 
 ```bash
+# From PyPI (the distribution is named kerf-multikernel;
+# the installed command is still 'kerf')
+pip install kerf-multikernel
+
+# Or isolated with pipx, avoiding conflicts with other packages
+pipx install kerf-multikernel
+
 # From source (recommended for development)
 git clone https://github.com/multikernel/kerf.git
 cd kerf
