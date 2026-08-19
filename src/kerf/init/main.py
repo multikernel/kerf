@@ -25,7 +25,7 @@ import os
 import re
 import sys
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Optional
 
 import click
 import libfdt
@@ -39,6 +39,7 @@ from ..baseline import BaselineManager
 from ..create.main import parse_cpu_spec, parse_device_list, parse_memory_spec
 from ..dtc.parser import DeviceTreeParser
 from ..lazy_cma import LAZY_CMA_DEVICE, allocate_multikernel_pool
+from ..resources import get_memory_pool_from_iomem
 from ..dtc.reporter import ValidationReporter
 from ..dtc.validator import MultikernelValidator
 from ..exceptions import KernelInterfaceError, ParseError, ValidationError
@@ -119,30 +120,6 @@ def mount_multikernel_fs(verbose: bool = False) -> None:
 
     if verbose:
         click.echo("✓ Successfully mounted multikernel filesystem")
-
-
-def get_multikernel_memory_pool_from_iomem() -> Optional[Tuple[int, int]]:
-    """
-    Get multikernel memory pool region from /proc/iomem.
-    Returns (base_address, size_bytes) or None if not found.
-    """
-    try:
-        iomem_path = Path('/proc/iomem')
-        if not iomem_path.exists():
-            return None
-        with open(iomem_path, 'r', encoding='utf-8') as f:
-            for line in f:
-                if 'Multikernel Memory Pool' in line:
-                    match = re.search(r'([0-9a-fA-F]+)-([0-9a-fA-F]+)', line)
-                    if match:
-                        base = int(match.group(1), 16)
-                        end = int(match.group(2), 16)
-                        size = end - base + 1
-                        return (base, size)
-    except (OSError, IOError, ValueError):
-        pass
-
-    return None
 
 
 def get_total_memory_from_system() -> Optional[int]:
@@ -433,7 +410,7 @@ def build_baseline_from_cmdline(
         host_reserved_cpus = [0]
         cpu_list = sorted(list(available_cpus))
 
-    memory_pool = get_multikernel_memory_pool_from_iomem()
+    memory_pool = get_memory_pool_from_iomem()
     if memory_pool is None:
         if not memory:
             raise KernelInterfaceError(
@@ -451,7 +428,7 @@ def build_baseline_from_cmdline(
 
         # Re-read /proc/iomem so the baseline reflects exactly what the
         # kernel registered for the allocation.
-        memory_pool = get_multikernel_memory_pool_from_iomem() or (pool_base, pool_bytes)
+        memory_pool = get_memory_pool_from_iomem() or (pool_base, pool_bytes)
     elif memory:
         click.echo(
             "Note: multikernel memory pool already exists in /proc/iomem; "

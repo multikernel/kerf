@@ -33,6 +33,7 @@ from ..dtc.parser import DeviceTreeParser
 from ..exceptions import KernelInterfaceError, ParseError
 from ..metadata import load_instance_metadata
 from ..models import GlobalDeviceTree
+from ..resources import get_pool_allocated_bytes
 from ..utils import get_instance_id_from_name, get_instance_status
 
 
@@ -295,14 +296,32 @@ def display_baseline_info(tree: GlobalDeviceTree, verbose: bool = False):
     click.echo("\n  Memory:")
     total_gb = hardware.memory.total_bytes / (1024**3)
     reserved_gb = hardware.memory.host_reserved_bytes / (1024**3)
-    pool_gb = hardware.memory.memory_pool_bytes / (1024**3)
     click.echo(f"    Total:           {total_gb:.2f} GB ({hardware.memory.total_bytes} bytes)")
     click.echo(
         f"    Host Reserved:   {reserved_gb:.2f} GB ({hardware.memory.host_reserved_bytes} bytes)"
     )
-    click.echo(f"    Pool Base:       0x{hardware.memory.memory_pool_base:x}")
-    click.echo(f"    Pool Size:       {pool_gb:.2f} GB ({hardware.memory.memory_pool_bytes} bytes)")
-    click.echo(f"    Pool End:        0x{hardware.memory.memory_pool_end:x}")
+
+    # /proc/iomem is the source of truth for the lazy_cma pool and the
+    # instance allocations carved out of it; the baseline tree only
+    # snapshots the pool at init time.
+    usage = get_pool_allocated_bytes()
+    if usage is not None:
+        pool_base, pool_bytes, allocated_bytes = usage
+    else:
+        pool_base = hardware.memory.memory_pool_base
+        pool_bytes = hardware.memory.memory_pool_bytes
+        allocated_bytes = None
+
+    pool_gb = pool_bytes / (1024**3)
+    click.echo(f"    Pool Base:       0x{pool_base:x}")
+    click.echo(f"    Pool Size:       {pool_gb:.2f} GB ({pool_bytes} bytes)")
+    click.echo(f"    Pool End:        0x{pool_base + pool_bytes:x}")
+    if allocated_bytes is not None:
+        available_bytes = pool_bytes - allocated_bytes
+        allocated_gb = allocated_bytes / (1024**3)
+        available_gb = available_bytes / (1024**3)
+        click.echo(f"    Pool Allocated:  {allocated_gb:.2f} GB ({allocated_bytes} bytes)")
+        click.echo(f"    Pool Available:  {available_gb:.2f} GB ({available_bytes} bytes)")
 
     # NUMA Topology
     if hardware.topology and hardware.topology.numa_nodes:

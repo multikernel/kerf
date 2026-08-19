@@ -20,9 +20,90 @@ These utilities assist with allocating CPUs, memory, and devices when
 creating or updating kernel instances.
 """
 
-from typing import List, Set, Optional
+import re
+from pathlib import Path
+from typing import List, Set, Optional, Tuple
+
+from .lazy_cma import MULTIKERNEL_POOL_NAME
 from .models import GlobalDeviceTree
 from .exceptions import ResourceError
+
+IOMEM_PATH = "/proc/iomem"
+
+_IOMEM_RANGE_RE = re.compile(r"([0-9a-fA-F]+)-([0-9a-fA-F]+)\s*:\s*(.*)")
+
+
+def _parse_iomem_regions(iomem_path: str) -> List[Tuple[int, int, str]]:
+    """Return (base, end, name) tuples for every range line in /proc/iomem."""
+    regions = []
+    try:
+        path = Path(iomem_path)
+        if not path.exists():
+            return regions
+        with open(path, "r", encoding="utf-8") as f:
+            for line in f:
+                match = _IOMEM_RANGE_RE.search(line)
+                if match:
+                    base = int(match.group(1), 16)
+                    end = int(match.group(2), 16)
+                    regions.append((base, end, match.group(3).strip()))
+    except (OSError, IOError, ValueError):
+        pass
+    return regions
+
+
+def get_memory_pool_from_iomem(iomem_path: str = IOMEM_PATH) -> Optional[Tuple[int, int]]:
+    """
+    Get the multikernel memory pool region from /proc/iomem.
+
+    Returns:
+        (base_address, size_bytes) or None if the pool is not registered
+    """
+    for base, end, name in _parse_iomem_regions(iomem_path):
+        if MULTIKERNEL_POOL_NAME in name:
+            return (base, end - base + 1)
+    return None
+
+
+def get_pool_allocated_bytes(iomem_path: str = IOMEM_PATH) -> Optional[Tuple[int, int, int]]:
+    """
+    Compute pool usage from /proc/iomem, the single source of truth.
+
+    Every region nested inside the pool range (instance memory, daxfs
+    heaps, ...) counts as allocated. Overlapping and nested child regions
+    are merged so nothing is double counted.
+
+    Returns:
+        (pool_base, pool_bytes, allocated_bytes), or None if the pool is
+        not registered in /proc/iomem
+    """
+    pool = get_memory_pool_from_iomem(iomem_path)
+    if pool is None:
+        return None
+    pool_base, pool_bytes = pool
+    pool_end = pool_base + pool_bytes - 1
+
+    children = []
+    for base, end, name in _parse_iomem_regions(iomem_path):
+        if MULTIKERNEL_POOL_NAME in name:
+            continue
+        if base >= pool_base and end <= pool_end:
+            children.append((base, end))
+
+    allocated = 0
+    current_base = current_end = None
+    for base, end in sorted(children):
+        if current_base is None:
+            current_base, current_end = base, end
+        elif base <= current_end + 1:
+            current_end = max(current_end, end)
+        else:
+            allocated += current_end - current_base + 1
+            current_base, current_end = base, end
+    if current_base is not None:
+        allocated += current_end - current_base + 1
+
+    return (pool_base, pool_bytes, allocated)
 
 
 def get_available_cpus(tree: GlobalDeviceTree) -> Set[int]:
@@ -62,7 +143,9 @@ def get_allocated_cpus(tree: GlobalDeviceTree) -> Set[int]:
     return allocated
 
 
-def get_allocated_memory_regions_from_iomem() -> List[tuple[int, int]]:
+def get_allocated_memory_regions_from_iomem(
+    iomem_path: str = IOMEM_PATH,
+) -> List[tuple[int, int]]:
     """
     Get list of allocated memory regions from /proc/iomem.
 
@@ -72,28 +155,11 @@ def get_allocated_memory_regions_from_iomem() -> List[tuple[int, int]]:
     Returns:
         List of (base_address, size_bytes) tuples
     """
-    regions = []
-    try:
-        from pathlib import Path
-        import re
-
-        iomem_path = Path("/proc/iomem")
-        if not iomem_path.exists():
-            return regions
-
-        with open(iomem_path, "r", encoding="utf-8") as f:
-            for line in f:
-                if "mk-instance-" in line:
-                    match = re.search(r"([0-9a-fA-F]+)-([0-9a-fA-F]+)", line)
-                    if match:
-                        base = int(match.group(1), 16)
-                        end = int(match.group(2), 16)
-                        size = end - base + 1  # Inclusive range
-                        regions.append((base, size))
-    except (OSError, IOError, ValueError):
-        pass
-
-    return regions
+    return [
+        (base, end - base + 1)
+        for base, end, name in _parse_iomem_regions(iomem_path)
+        if "mk-instance-" in name
+    ]
 
 
 def get_allocated_memory_regions(tree: GlobalDeviceTree) -> List[tuple[int, int]]:

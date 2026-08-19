@@ -21,6 +21,9 @@ from kerf.resources import (
     get_available_cpus,
     get_allocated_cpus,
     get_allocated_memory_regions,
+    get_allocated_memory_regions_from_iomem,
+    get_memory_pool_from_iomem,
+    get_pool_allocated_bytes,
     find_available_memory_base,
     validate_cpu_allocation,
     validate_memory_allocation,
@@ -228,3 +231,75 @@ class TestInstanceID:
 
         with pytest.raises(ResourceError, match="No available instance IDs"):
             find_next_instance_id(tree)
+
+
+class TestIomemPoolAccounting:
+    """Test /proc/iomem based pool accounting."""
+
+    SAMPLE_IOMEM = "\n".join(
+        [
+            "00001000-0009ffff : System RAM",
+            "40000000-7fffffff : Multikernel Memory Pool",
+            "  40000000-43ffffff : mk-instance-1-web-server-region-0",
+            "  44000000-4bffffff : mk-instance-2-database-region-0",
+            "  4c000000-4fffffff : daxfs",
+            "80000000-8fffffff : PCI Bus 0000:00",
+        ]
+    )
+
+    @pytest.fixture
+    def iomem_file(self, tmp_path):
+        path = tmp_path / "iomem"
+        path.write_text(self.SAMPLE_IOMEM + "\n", encoding="utf-8")
+        return str(path)
+
+    def test_get_memory_pool_from_iomem(self, iomem_file):
+        pool = get_memory_pool_from_iomem(iomem_file)
+        assert pool == (0x40000000, 0x40000000)
+
+    def test_get_memory_pool_from_iomem_missing(self, tmp_path):
+        path = tmp_path / "iomem"
+        path.write_text("00001000-0009ffff : System RAM\n", encoding="utf-8")
+        assert get_memory_pool_from_iomem(str(path)) is None
+        assert get_memory_pool_from_iomem(str(tmp_path / "absent")) is None
+
+    def test_get_allocated_memory_regions_from_iomem(self, iomem_file):
+        regions = get_allocated_memory_regions_from_iomem(iomem_file)
+        assert regions == [
+            (0x40000000, 0x4000000),
+            (0x44000000, 0x8000000),
+        ]
+
+    def test_get_pool_allocated_bytes(self, iomem_file):
+        usage = get_pool_allocated_bytes(iomem_file)
+        # Instance regions plus the daxfs region nested in the pool
+        assert usage == (0x40000000, 0x40000000, 0x10000000)
+
+    def test_get_pool_allocated_bytes_empty_pool(self, tmp_path):
+        path = tmp_path / "iomem"
+        path.write_text(
+            "40000000-7fffffff : Multikernel Memory Pool\n", encoding="utf-8"
+        )
+        assert get_pool_allocated_bytes(str(path)) == (0x40000000, 0x40000000, 0)
+
+    def test_get_pool_allocated_bytes_no_pool(self, tmp_path):
+        path = tmp_path / "iomem"
+        path.write_text("00001000-0009ffff : System RAM\n", encoding="utf-8")
+        assert get_pool_allocated_bytes(str(path)) is None
+
+    def test_get_pool_allocated_bytes_merges_nested_regions(self, tmp_path):
+        path = tmp_path / "iomem"
+        path.write_text(
+            "\n".join(
+                [
+                    "40000000-7fffffff : Multikernel Memory Pool",
+                    "  40000000-43ffffff : mk-instance-1-a-region-0",
+                    "    40000000-40ffffff : mk-instance-1-a-subregion",
+                    "  44000000-47ffffff : mk-instance-2-b-region-0",
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        usage = get_pool_allocated_bytes(str(path))
+        assert usage == (0x40000000, 0x40000000, 0x8000000)

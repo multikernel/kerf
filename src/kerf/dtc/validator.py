@@ -18,8 +18,9 @@ Validation layer for multikernel device tree configurations.
 
 import re
 from pathlib import Path
-from typing import List, Dict, Tuple, Optional
+from typing import List, Dict, Optional
 from ..models import GlobalDeviceTree, ValidationResult, ResourceUsage
+from ..resources import get_memory_pool_from_iomem
 
 
 class MultikernelValidator:
@@ -188,32 +189,6 @@ class MultikernelValidator:
 
         return None
 
-    def _get_multikernel_memory_pool_from_iomem(self) -> Optional[Tuple[int, int]]:
-        """
-        Get multikernel memory pool region from /proc/iomem.
-        Returns (base_address, size_bytes) or None if not found.
-
-        Expected format: "40000000-7fefffff : Multikernel Memory Pool"
-        """
-        try:
-            iomem_path = Path("/proc/iomem")
-            if not iomem_path.exists():
-                return None
-            with open(iomem_path, "r", encoding="utf-8") as f:
-                for line in f:
-                    if "multikernel" in line.lower():
-                        match = re.search(r"([0-9a-fA-F]+)-([0-9a-fA-F]+)", line)
-                        if match:
-                            base = int(match.group(1), 16)
-                            end = int(match.group(2), 16)
-                            # Size is end - start + 1 (inclusive range)
-                            size = end - base + 1
-                            return (base, size)
-        except (OSError, IOError, ValueError):
-            pass
-
-        return None
-
     def _validate_hardware_inventory(self, tree: GlobalDeviceTree):
         """Validate hardware inventory consistency and against running system."""
         cpus = tree.hardware.cpus
@@ -285,7 +260,7 @@ class MultikernelValidator:
         if memory.memory_pool_bytes <= 0:
             self.errors.append("Hardware inventory: Spawn pool size must be positive")
 
-        iomem_pool = self._get_multikernel_memory_pool_from_iomem()
+        iomem_pool = get_memory_pool_from_iomem()
         if iomem_pool is None or (
             memory.memory_pool_base != iomem_pool[0] or memory.memory_pool_bytes != iomem_pool[1]
         ):
