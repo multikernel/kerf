@@ -108,6 +108,94 @@ class TestDeviceTreeParser:
         assert device.compatible == "intel,i40e"
         assert device.sriov_vfs == 8
 
+    @pytest.mark.parametrize(
+        ("declaration", "expected"),
+        [
+            ("<2 3>", [2, 3]),
+            ("<0x2 3>", [2, 3]),
+            ("/bits/ 32 <0x2 0x3>", [2, 3]),
+            ("/bits/ 64 <0x2 0x3>", [2, 3]),
+        ],
+    )
+    def test_parse_cpu_ids_from_dts(self, declaration, expected):
+        """Test legacy and explicit-width CPU cells in DTS sources."""
+        dts = f"/dts-v1/; / {{ resources {{ cpus = {declaration}; }}; }};"
+        cpus = DeviceTreeParser()._parse_cpus_from_dts(dts)
+
+        assert cpus.available == expected
+
+    @pytest.mark.parametrize(
+        ("declaration", "expected"),
+        [
+            ("<4 5>", [4, 5]),
+            ("/bits/ 32 <0x4 0x5>", [4, 5]),
+            ("/bits/ 64 <0x4 0x5>", [4, 5]),
+        ],
+    )
+    def test_parse_instance_resource_cpu_ids_from_dts(self, declaration, expected):
+        """Test instance resource CPU cells in DTS sources."""
+        dts = f"""
+        resources {{
+            cpus = {declaration};
+            memory-base = <0x100000000>;
+            memory-bytes = <0x40000000>;
+        }};
+        """
+        resources = DeviceTreeParser()._parse_instance_resources_from_dts(dts)
+
+        assert resources.cpus == expected
+
+    @pytest.mark.parametrize(
+        ("declaration", "expected"),
+        [
+            ("<6 7>", [6, 7]),
+            ("/bits/ 32 <0x6 0x7>", [6, 7]),
+            ("/bits/ 64 <0x6 0x7>", [6, 7]),
+        ],
+    )
+    def test_parse_numa_membership_cpu_ids_from_dts(self, declaration, expected):
+        """Test NUMA node CPU membership cells in DTS sources."""
+        topology = f"""
+        topology {{
+            numa-nodes {{
+                node@0 {{
+                    memory-base = <0x0>;
+                    memory-size = <0x40000000>;
+                    cpus = {declaration};
+                }};
+            }};
+        }};
+        """
+        parsed = DeviceTreeParser()._parse_topology_from_dts(topology)
+
+        assert parsed is not None
+        assert parsed.numa_nodes is not None
+        assert parsed.numa_nodes[0].cpus == expected
+
+    @pytest.mark.parametrize(
+        ("declaration", "expected"),
+        [
+            ("<8 9>", [8, 9]),
+            ("/bits/ 32 <0x8 0x9>", [8, 9]),
+            ("/bits/ 64 <0x8 0x9>", [8, 9]),
+        ],
+    )
+    def test_parse_core_topology_cpu_ids_from_dts(self, declaration, expected):
+        """Test core topology CPU cells in DTS sources."""
+        dts = f"""
+        /dts-v1/;
+        / {{
+            cores {{
+                core@4 {{ cpus = {declaration}; }};
+            }};
+        }};
+        """
+        topology = DeviceTreeParser()._parse_cpu_topology_from_dts(dts)
+
+        assert topology is not None
+        assert sorted(topology) == expected
+        assert [topology[cpu_id].core_id for cpu_id in expected] == [4, 4]
+
 
 class TestInstanceExtractor:
     """Test instance extraction."""
