@@ -368,46 +368,7 @@ def update(
                 current = manager.read_baseline()
                 dtbo_data = apply_update_operation(current)
 
-                try:
-                    if not manager.overlays_new.exists():
-                        raise KernelInterfaceError(
-                            f"Overlay interface not found: {manager.overlays_new}"
-                        )
-
-                    with open(manager.overlays_new, 'wb') as f:
-                        f.write(dtbo_data)
-
-                    tx_id = manager._find_latest_transaction()  # pylint: disable=protected-access
-                    if not tx_id:
-                        raise KernelInterfaceError(
-                            "Overlay written but kernel did not create transaction directory"
-                        )
-
-                    tx_dir = manager.overlays_dir / f"tx_{tx_id}"
-                    status_file = tx_dir / "status"
-
-                    if status_file.exists():
-                        try:
-                            with open(status_file, 'r', encoding='utf-8') as f:
-                                status = f.read().strip()
-                            if status not in ("applied", "success", "ok"):
-                                error_msg = f"Overlay transaction {tx_id} failed with status: '{status}'"
-                                instance_file = tx_dir / "instance"
-                                if instance_file.exists():
-                                    try:
-                                        with open(instance_file, 'r', encoding='utf-8') as f:
-                                            instance_name_from_tx = f.read().strip()
-                                        error_msg += f" (instance: {instance_name_from_tx})"
-                                    except OSError:
-                                        pass
-                                raise KernelInterfaceError(error_msg)
-                        except OSError:
-                            pass
-
-                except OSError as e:
-                    raise KernelInterfaceError(
-                        f"Failed to write overlay to {manager.overlays_new}: {e}"
-                    ) from e
+                tx_id = manager.apply_dtbo(dtbo_data)
 
             click.echo(f"✓ Updated instance '{name}' (transaction {tx_id})")
             if verbose:

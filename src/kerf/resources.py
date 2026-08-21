@@ -24,11 +24,13 @@ import re
 from pathlib import Path
 from typing import List, Set, Optional, Tuple
 
-from .lazy_cma import MULTIKERNEL_POOL_NAME
 from .models import GlobalDeviceTree
 from .exceptions import ResourceError
 
 IOMEM_PATH = "/proc/iomem"
+
+#: iomem resource name the kernel registers every pool chunk under.
+MULTIKERNEL_POOL_NAME = "Multikernel Memory Pool"
 
 _IOMEM_RANGE_RE = re.compile(r"([0-9a-fA-F]+)-([0-9a-fA-F]+)\s*:\s*(.*)")
 
@@ -52,43 +54,76 @@ def _parse_iomem_regions(iomem_path: str) -> List[Tuple[int, int, str]]:
     return regions
 
 
+def get_pool_chunks_from_iomem(iomem_path: str = IOMEM_PATH) -> List[Tuple[int, int]]:
+    """
+    List every multikernel pool chunk registered in /proc/iomem.
+
+    Returns:
+        (base_address, size_bytes) tuples in /proc/iomem order
+    """
+    return [
+        (base, end - base + 1)
+        for base, end, name in _parse_iomem_regions(iomem_path)
+        if MULTIKERNEL_POOL_NAME in name
+    ]
+
+
+def get_busy_chunks_from_iomem(iomem_path: str = IOMEM_PATH) -> Set[int]:
+    """
+    Find the pool chunks that still hold an allocation.
+
+    A chunk with any nested region cannot be returned to the host, so the
+    pool diff avoids picking it when it has a choice.
+
+    Returns:
+        Base addresses of the chunks with at least one child region
+    """
+    chunks = get_pool_chunks_from_iomem(iomem_path)
+    busy = set()
+    for base, end, name in _parse_iomem_regions(iomem_path):
+        if MULTIKERNEL_POOL_NAME in name:
+            continue
+        for chunk_base, chunk_size in chunks:
+            if chunk_base <= base and end <= chunk_base + chunk_size - 1:
+                busy.add(chunk_base)
+    return busy
+
+
 def get_memory_pool_from_iomem(iomem_path: str = IOMEM_PATH) -> Optional[Tuple[int, int]]:
     """
-    Get the multikernel memory pool region from /proc/iomem.
+    Get the first multikernel memory pool chunk from /proc/iomem.
 
     Returns:
         (base_address, size_bytes) or None if the pool is not registered
     """
-    for base, end, name in _parse_iomem_regions(iomem_path):
-        if MULTIKERNEL_POOL_NAME in name:
-            return (base, end - base + 1)
-    return None
+    chunks = get_pool_chunks_from_iomem(iomem_path)
+    return chunks[0] if chunks else None
 
 
 def get_pool_allocated_bytes(iomem_path: str = IOMEM_PATH) -> Optional[Tuple[int, int, int]]:
     """
     Compute pool usage from /proc/iomem, the single source of truth.
 
-    Every region nested inside the pool range (instance memory, daxfs
+    Every region nested inside a pool chunk (instance memory, daxfs
     heaps, ...) counts as allocated. Overlapping and nested child regions
     are merged so nothing is double counted.
 
     Returns:
-        (pool_base, pool_bytes, allocated_bytes), or None if the pool is
-        not registered in /proc/iomem
+        (first_chunk_base, pool_bytes, allocated_bytes), or None if the
+        pool is not registered in /proc/iomem
     """
-    pool = get_memory_pool_from_iomem(iomem_path)
-    if pool is None:
+    chunks = get_pool_chunks_from_iomem(iomem_path)
+    if not chunks:
         return None
-    pool_base, pool_bytes = pool
-    pool_end = pool_base + pool_bytes - 1
 
     children = []
     for base, end, name in _parse_iomem_regions(iomem_path):
         if MULTIKERNEL_POOL_NAME in name:
             continue
-        if base >= pool_base and end <= pool_end:
-            children.append((base, end))
+        for chunk_base, chunk_size in chunks:
+            if base >= chunk_base and end <= chunk_base + chunk_size - 1:
+                children.append((base, end))
+                break
 
     allocated = 0
     current_base = current_end = None
@@ -103,7 +138,7 @@ def get_pool_allocated_bytes(iomem_path: str = IOMEM_PATH) -> Optional[Tuple[int
     if current_base is not None:
         allocated += current_end - current_base + 1
 
-    return (pool_base, pool_bytes, allocated)
+    return (chunks[0][0], sum(size for _, size in chunks), allocated)
 
 
 def get_available_cpus(tree: GlobalDeviceTree) -> Set[int]:
