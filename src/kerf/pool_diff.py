@@ -66,8 +66,10 @@ def _memory_diff(regions: List[PoolMemoryRegion], requested: Dict[int, int],
 
 def _release(remaining: List[PoolMemoryRegion], pred, surplus: int,
              busy: Set[int], diff: PoolDiff) -> None:
-    candidates = sorted((r for r in remaining if pred(r)),
-                         key=lambda r: (r.base in busy, -r.size))
+    # A chunk that still holds an allocation cannot go back to the host, and
+    # asking anyway fails the whole transaction.
+    candidates = sorted((r for r in remaining if pred(r) and r.base not in busy),
+                         key=lambda r: -r.size)
     for r in candidates:
         if surplus <= 0:
             break
