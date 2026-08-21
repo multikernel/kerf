@@ -90,3 +90,15 @@ def test_shrink_prefers_larger_idle_chunks():
     d = compute_pool_diff(cur, req)
     assert d.memory_to_host == [big]
     assert d.memory_to_pool == []
+
+
+def test_surplus_smaller_than_every_chunk_stays_in_the_pool():
+    # Only whole chunks go back to the host, so a 1GB pool asked to shrink to
+    # 512MB keeps its chunk and the caller has to be told.
+    chunk = PoolMemoryRegion(0x1_0000_0000, GB, 0)
+    cur = _tree([4], regions=[chunk])
+    req = _tree([4], requested={0: GB // 2})
+    d = compute_pool_diff(cur, req)
+    assert d.memory_to_host == []
+    assert d.memory_to_pool == []
+    assert d.is_empty()

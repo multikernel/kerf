@@ -208,6 +208,30 @@ def test_teardown_refuses_while_instances_exist(monkeypatch):
     assert not manager.applied
 
 
+def test_unshrinkable_surplus_is_reported(capsys):
+    manager, baseline_mgr = FakeManager(), FakeBaselineManager()
+    current = _tree([4, 5], [PoolMemoryRegion(0x1_0000_0000, 2 * GB, 0)], {})
+    requested = _tree([4, 5], [], {0: GB})
+
+    diff = reconcile_pool(current, requested, set(), False, manager, baseline_mgr)
+
+    assert diff.is_empty()
+    assert not manager.applied
+    err = capsys.readouterr().err
+    assert "node 0 still holds 1024 MB more than requested" in err
+    assert "only whole idle chunks can be returned" in err
+
+
+def test_dry_run_reports_the_surplus_too(capsys):
+    manager, baseline_mgr = FakeManager(), FakeBaselineManager()
+    current = _tree([4], [PoolMemoryRegion(0x1_0000_0000, 2 * GB, 0)], {})
+    requested = _tree([4, 5], [], {0: GB})
+
+    reconcile_pool(current, requested, set(), True, manager, baseline_mgr)
+
+    assert "still holds 1024 MB more than requested" in capsys.readouterr().err
+
+
 def test_cpu_only_pool_grows_memory():
     # A pool that kept its CPUs but gave back every chunk is live, and the
     # request only has to add the memory back.
@@ -259,7 +283,7 @@ def test_teardown_tree_reserves_pool_cpus(monkeypatch):
     tree = main.build_teardown_tree(pool_cpus={1, 2, 3})
 
     assert tree.hardware.cpus.host_reserved == [0, 1, 2, 3]
-    assert tree.hardware.cpus.available == []
+    assert not tree.hardware.cpus.available
     assert tree.hardware.cpus.total == 4
 
 

@@ -16,7 +16,7 @@
 
 import pytest
 
-from kerf.init.main import parse_memory_request
+from kerf.init.main import parse_memory_request, validate_memory_request
 
 GB = 1 << 30
 
@@ -39,3 +39,14 @@ def test_invalid_specs(spec):
 def test_sizes_must_be_positive_and_page_aligned(spec):
     with pytest.raises(ValueError):
         parse_memory_request(spec)
+
+
+@pytest.mark.parametrize("requested", [{-1: 0}, {0: -4096}, {0: 4097}, {1: 5000}])
+def test_input_file_sizes_get_the_same_check(requested):
+    # A DTS/DTB request reaches the kernel without going through --memory.
+    with pytest.raises(ValueError):
+        validate_memory_request(requested)
+
+
+def test_valid_input_file_sizes_pass():
+    validate_memory_request({0: GB, 1: 512 << 20})

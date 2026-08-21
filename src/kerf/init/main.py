@@ -48,7 +48,7 @@ from ..models import (
     HardwareInventory,
     MemoryAllocation,
 )
-from ..pool_diff import PoolDiff, compute_pool_diff
+from ..pool_diff import ANY_NODE, PoolDiff, compute_pool_diff
 from ..resources import get_busy_chunks_from_iomem
 from ..runtime import DeviceTreeManager
 
@@ -359,6 +359,26 @@ _NODE_SPEC = re.compile(r"^node(\d+):(.+)$")
 PAGE_SIZE = 4096
 
 
+def validate_memory_request(requested: Dict[int, int]) -> None:
+    """
+    Reject pool sizes the kernel cannot honour, however they were asked for.
+
+    Args:
+        requested: Mapping of NUMA node id (ANY_NODE for any node) to size
+
+    Raises:
+        ValueError: If a size is zero, negative or not page aligned
+    """
+    for node, size in sorted(requested.items()):
+        where = "any node" if node == ANY_NODE else f"node {node}"
+        if size <= 0:
+            raise ValueError(f"memory size for {where} must be greater than zero")
+        if size % PAGE_SIZE:
+            raise ValueError(
+                f"memory size for {where} must be a multiple of {PAGE_SIZE} bytes"
+            )
+
+
 def parse_memory_request(spec: str) -> Dict[int, int]:
     """
     Parse a pool memory request into per-NUMA-node sizes.
@@ -388,19 +408,14 @@ def parse_memory_request(spec: str) -> Dict[int, int]:
         elif part.lower().startswith("node"):
             raise ValueError(f"invalid NUMA node spec '{part}' (expected nodeN:SIZE)")
         else:
-            node, size = -1, parse_memory_spec(part)
-        if size <= 0:
-            raise ValueError(f"memory size in '{part}' must be greater than zero")
-        if size % PAGE_SIZE:
-            raise ValueError(
-                f"memory size in '{part}' must be a multiple of {PAGE_SIZE} bytes"
-            )
+            node, size = ANY_NODE, parse_memory_spec(part)
         if node in requested:
             raise ValueError(f"node {node} specified twice")
         requested[node] = size
 
-    if -1 in requested and len(requested) > 1:
+    if ANY_NODE in requested and len(requested) > 1:
         raise ValueError("cannot mix a plain size with nodeN: sizes")
+    validate_memory_request(requested)
     return requested
 
 
@@ -623,7 +638,7 @@ def _print_diff(diff: PoolDiff) -> None:
     line("CPUs to pool", diff.cpus_to_pool)
     line("CPUs to host", diff.cpus_to_host)
     line("Memory to pool", [
-        f"{size >> 20} MB" + (f" on node {node}" if node >= 0 else "")
+        f"{size >> 20} MB" + ("" if node == ANY_NODE else f" on node {node}")
         for node, size in diff.memory_to_pool
     ])
     line("Memory to host", [f"{hex(r.base)} ({r.size >> 20} MB)" for r in diff.memory_to_host])
@@ -634,12 +649,12 @@ def _print_diff(diff: PoolDiff) -> None:
 def _report_shortfall(live: GlobalDeviceTree, requested: GlobalDeviceTree) -> None:
     """Warn when the kernel could not shrink the pool all the way down."""
     for node, want in requested.hardware.memory.requested.items():
-        if node < 0:
+        if node == ANY_NODE:
             have = live.hardware.memory.memory_pool_bytes
         else:
             have = live.hardware.memory.bytes_on_node(node)
         if have > want:
-            where = node if node >= 0 else "any"
+            where = "any" if node == ANY_NODE else node
             click.echo(
                 f"Note: node {where} still holds {(have - want) >> 20} MB more than "
                 "requested; only whole idle chunks can be returned",
@@ -694,9 +709,11 @@ def reconcile_pool(
     _print_diff(diff)
     if diff.is_empty():
         click.echo("✓ Pool already matches the request; nothing to do")
+        _report_shortfall(current, requested)
         return diff
     if dry_run:
         click.echo("Would apply the changes above (dry-run)")
+        _report_shortfall(current, requested)
         return diff
 
     if request_is_empty(requested):
@@ -852,6 +869,12 @@ def init(ctx: click.Context, input: Optional[str], cpus: Optional[str], memory: 
             else:
                 click.echo(f"Error: Unsupported input format: {input_path.suffix}", err=True)
                 click.echo("Supported formats: .dts, .dtb", err=True)
+                sys.exit(2)
+
+            try:
+                validate_memory_request(tree.hardware.memory.requested)
+            except ValueError as e:
+                click.echo(f"Error: {input}: {e}", err=True)
                 sys.exit(2)
         else:
             # Build from command line arguments
