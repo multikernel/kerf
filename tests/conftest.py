@@ -31,6 +31,7 @@ from kerf.models import (
     HardwareInventory,
     CPUAllocation,
     MemoryAllocation,
+    PoolMemoryRegion,
     DeviceInfo,
     Instance,
     InstanceResources,
@@ -47,8 +48,7 @@ def sample_hardware():
     memory = MemoryAllocation(
         total_bytes=16 * 1024**3,  # 16GB
         host_reserved_bytes=2 * 1024**3,  # 2GB
-        memory_pool_base=0x80000000,
-        memory_pool_bytes=14 * 1024**3,  # 14GB
+        regions=[PoolMemoryRegion(base=0x80000000, size=14 * 1024**3, node=0)],  # 14GB
     )
 
     devices = {
