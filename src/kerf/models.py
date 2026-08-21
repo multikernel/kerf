@@ -93,8 +93,9 @@ class CPUAllocation:
 
     total: int
     host_reserved: List[int]
-    available: List[int]
+    available: List[int]  # Pool membership: every CPU in the pool, lent or free
     topology: Optional[Dict[int, CPUTopology]] = None  # CPU ID -> topology info
+    available_free: Optional[List[int]] = None  # Pool members not lent to an instance
 
     def get_allocated_cpus(self) -> Set[int]:
         """Get set of CPUs allocated to instances."""

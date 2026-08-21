@@ -125,9 +125,14 @@ class InstanceExtractor:
         fdt_sw.property("cpus", pack_cpu_ids(cpus.available))
 
     def _add_memory_properties_sw(self, fdt_sw, memory):
-        """Add memory properties directly to resources node."""
-        fdt_sw.property_u64("memory-base", memory.memory_pool_base)
-        fdt_sw.property_u64("memory-bytes", memory.memory_pool_bytes)
+        """Add one memory@<idx> request node per requested size (or live chunk)."""
+        entries = list(memory.requested.items()) or [(r.node, r.size) for r in memory.regions]
+        for idx, (node, size) in enumerate(entries):
+            fdt_sw.begin_node(f"memory@{idx}")
+            fdt_sw.property_u64("size", size)
+            if node >= 0:
+                fdt_sw.property_u32("numa-node-id", node)
+            fdt_sw.end_node()
 
     def _add_devices_section_sw(self, fdt_sw, devices):
         """Add devices section using FdtSw."""
