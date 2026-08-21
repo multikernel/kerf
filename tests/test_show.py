@@ -136,3 +136,14 @@ def test_cpu_available_line_kept_when_free_subset_unknown(capsys, monkeypatch):
     assert "Available:       28 cpus" in out
     assert "Pool CPUs" not in out
     assert "Available CPUs" not in out
+
+
+def test_pool_without_chunks_says_so(capsys, monkeypatch):
+    memory = MemoryAllocation(total_bytes=0, host_reserved_bytes=0, regions=[])
+    monkeypatch.setattr("kerf.show.main.get_pool_allocated_bytes", lambda: None)
+
+    display_baseline_info(_tree(_cpus(), memory))
+    out = capsys.readouterr().out
+
+    assert "No memory pool configured" in out
+    assert "Chunk:" not in out

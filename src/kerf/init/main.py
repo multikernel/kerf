@@ -724,7 +724,7 @@ def reconcile_pool(
                 f"delete instances {', '.join(held)} first"
             )
 
-    with manager._acquire_lock():  # pylint: disable=protected-access
+    with manager.lock():
         tx_id = manager.apply_dtbo(manager.overlay_gen.generate_pool_overlay(diff))
     click.echo(f"✓ Pool updated (transaction {tx_id})")
 

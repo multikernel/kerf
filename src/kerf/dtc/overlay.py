@@ -25,7 +25,7 @@ from typing import Optional, Set, Tuple
 import libfdt
 
 from ..models import GlobalDeviceTree
-from ..pool_diff import PoolDiff
+from ..pool_diff import ANY_NODE, PoolDiff
 from .cells import pack_cpu_id, pack_cpu_ids
 
 Range = Optional[Tuple[int, int]]
@@ -202,7 +202,7 @@ class OverlayGenerator:
             for idx, (node, size) in enumerate(diff.memory_to_pool):
                 fdt_sw.begin_node(f"memory@{idx}")
                 fdt_sw.property_u64("size", size)
-                if node >= 0:
+                if node != ANY_NODE:
                     fdt_sw.property_u32("numa-node-id", node)
                 fdt_sw.end_node()
             fdt_sw.end_node()

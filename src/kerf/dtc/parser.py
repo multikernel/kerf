@@ -23,6 +23,7 @@ from typing import Dict, List, Optional, Tuple
 import libfdt
 
 from ..exceptions import ParseError
+from ..pool_diff import ANY_NODE
 from .cells import unpack_cpu_ids
 from ..models import (
     CPUAllocation,
@@ -269,13 +270,6 @@ class DeviceTreeParser:
             return default
         return prop.as_uint32()
 
-    def _optional_u64(self, node: int, name: str) -> Optional[int]:
-        """Return a u64 property, or None when the node does not carry it."""
-        prop = self._optional_prop(node, name)
-        if prop is None:
-            return None
-        return prop.as_uint64()
-
     def _parse_memory_allocation(self, resources_node: int) -> MemoryAllocation:
         """Parse pool chunks and per-node memory requests from resources node."""
         regions = []
@@ -285,7 +279,7 @@ class DeviceTreeParser:
             name = self.fdt.get_name(node)
             if not name.startswith('memory@'):
                 continue
-            node_id = self._optional_u32(node, 'numa-node-id', -1)
+            node_id = self._optional_u32(node, 'numa-node-id', ANY_NODE)
             reg = self._optional_prop(node, 'reg')
             size_prop = self._optional_prop(node, 'size')
             if reg is not None:
@@ -897,7 +891,7 @@ class DeviceTreeParser:
         for name, body in children:
             if not name.startswith('memory@'):
                 continue
-            node_id = -1
+            node_id = ANY_NODE
             node_match = re.search(r'numa-node-id\s*=\s*<\s*([^>\s]+)\s*>', body)
             if node_match:
                 node_id = int(node_match.group(1), 0)
