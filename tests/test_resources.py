@@ -24,6 +24,8 @@ from kerf.resources import (
     get_allocated_memory_regions_from_iomem,
     get_memory_pool_from_iomem,
     get_pool_allocated_bytes,
+    get_pool_chunks_from_iomem,
+    get_busy_chunks_from_iomem,
     find_available_memory_base,
     validate_cpu_allocation,
     validate_memory_allocation,
@@ -303,3 +305,38 @@ class TestIomemPoolAccounting:
         )
         usage = get_pool_allocated_bytes(str(path))
         assert usage == (0x40000000, 0x40000000, 0x8000000)
+
+    TWO_CHUNKS = "\n".join(
+        [
+            "100000000-13fffffff : Multikernel Memory Pool",
+            "  100000000-10fffffff : mk-instance-1-web-region-0",
+            "200000000-21fffffff : Multikernel Memory Pool",
+        ]
+    )
+
+    @pytest.fixture
+    def two_chunk_iomem(self, tmp_path):
+        path = tmp_path / "iomem"
+        path.write_text(self.TWO_CHUNKS + "\n", encoding="utf-8")
+        return str(path)
+
+    def test_pool_chunks_and_busy(self, two_chunk_iomem):
+        assert get_pool_chunks_from_iomem(two_chunk_iomem) == [
+            (0x100000000, 1 << 30),
+            (0x200000000, 1 << 29),
+        ]
+        assert get_busy_chunks_from_iomem(two_chunk_iomem) == {0x100000000}
+
+    def test_first_chunk_and_allocation_across_chunks(self, two_chunk_iomem):
+        assert get_memory_pool_from_iomem(two_chunk_iomem) == (0x100000000, 1 << 30)
+        assert get_pool_allocated_bytes(two_chunk_iomem) == (
+            0x100000000,
+            (1 << 30) + (1 << 29),
+            1 << 28,
+        )
+
+    def test_no_chunks(self, tmp_path):
+        path = tmp_path / "iomem"
+        path.write_text("00001000-0009ffff : System RAM\n", encoding="utf-8")
+        assert get_pool_chunks_from_iomem(str(path)) == []
+        assert get_busy_chunks_from_iomem(str(path)) == set()

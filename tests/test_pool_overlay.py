@@ -67,6 +67,9 @@ def test_pool_overlay_layout():
     m1 = fdt.subnode_offset(grow, "memory@1")
     assert fdt.getprop(m1, "size").as_uint64() == GB // 2
     assert fdt.getprop(m1, "numa-node-id", quiet=[libfdt.FDT_ERR_NOTFOUND]) == MISSING
+    # The kernel picks the chunk, so a grow item never names an address.
+    assert fdt.getprop(m0, "reg", quiet=[libfdt.FDT_ERR_NOTFOUND]) == MISSING
+    assert fdt.getprop(m1, "reg", quiet=[libfdt.FDT_ERR_NOTFOUND]) == MISSING
 
     shrink = fdt.subnode_offset(ov, "memory-remove")
     reg = bytes(fdt.getprop(fdt.subnode_offset(shrink, "memory@0"), "reg"))

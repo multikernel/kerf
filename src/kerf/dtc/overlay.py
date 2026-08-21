@@ -280,7 +280,7 @@ class OverlayGenerator:
 
         all_instances = {**instances_to_add, **instances_to_update}
         for name, instance in all_instances.items():
-            fdt_sw.begin_node(f"fragment@{fragment_id}")
+            fdt_sw.begin_node(f"fragment@{fragment_id:x}")
             fdt_sw.property_string("target-path", self.INSTANCES_PATH)
             fdt_sw.begin_node("__overlay__")
             fdt_sw.begin_node("instance-create")
@@ -343,7 +343,7 @@ class OverlayGenerator:
             fragment_id += 1
 
         for name in instances_to_remove:
-            fdt_sw.begin_node(f"fragment@{fragment_id}")
+            fdt_sw.begin_node(f"fragment@{fragment_id:x}")
             fdt_sw.property_string("target-path", self.INSTANCES_PATH)
             fdt_sw.begin_node("__overlay__")
             fdt_sw.begin_node("instance-remove")
