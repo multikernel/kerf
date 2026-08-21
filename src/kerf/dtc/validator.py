@@ -260,15 +260,18 @@ class MultikernelValidator:
         if memory.memory_pool_bytes <= 0:
             self.errors.append("Hardware inventory: Spawn pool size must be positive")
 
-        # total_bytes is 0 when the tree only carries pool sizes, not a system total.
+        # Only bites a caller-built tree: a parsed one derives total_bytes from
+        # the pool itself, and 0 means the caller knows no system total.
         if memory.total_bytes and memory.memory_pool_bytes > memory.total_bytes:
             self.errors.append("Hardware inventory: Spawn pool extends beyond total memory")
 
-        if not memory.regions:
-            # A request names sizes only; the kernel picks the chunks, so there
-            # is nothing to line up with /proc/iomem yet.
-            return
+        # A request names sizes only; the kernel picks the chunks, so there is
+        # nothing to line up with /proc/iomem until they are read back.
+        if memory.regions:
+            self._validate_pool_against_iomem(memory)
 
+    def _validate_pool_against_iomem(self, memory):
+        """Compare the pool chunks read back from the kernel with /proc/iomem."""
         iomem_pool = get_memory_pool_from_iomem()
         if iomem_pool is not None:
             iomem_base, iomem_size = iomem_pool

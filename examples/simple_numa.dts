@@ -32,8 +32,15 @@
             };
         };
         
-        memory-base = <0x0 0x400000000>;
-        memory-bytes = <0x0 0xC00000000>;  // 48GB
+        memory@0 {
+            size = <0x0 0x600000000>;  // 24GB
+            numa-node-id = <0>;
+        };
+
+        memory@1 {
+            size = <0x0 0x600000000>;  // 24GB
+            numa-node-id = <1>;
+        };
         
         devices {
             eth0: ethernet@0 {

@@ -15,6 +15,7 @@
 """Tests for parsing pool chunks and per-node memory requests."""
 
 import struct
+from pathlib import Path
 
 import libfdt
 import pytest
@@ -173,3 +174,85 @@ def test_parse_dts_readback_regions():
 def test_parse_dts_legacy_memory_base_bytes_rejected():
     with pytest.raises(ParseError):
         DeviceTreeParser().parse_dts(_DTS_LEGACY)
+
+
+_DTS_TOPOLOGY = """
+/multikernel-v1/;
+
+/ {
+    resources {
+        cpus = <4 5>;
+
+        topology {
+            numa-nodes {
+                node@0 {
+                    node-id = <0>;
+                    memory-base = <0x0 0x0>;
+                    memory-size = <0x0 0x800000000>;
+                    cpus = <4>;
+                };
+
+                node@1 {
+                    node-id = <1>;
+                    memory-base = <0x0 0x800000000>;
+                    memory-size = <0x0 0x800000000>;
+                    cpus = <5>;
+                };
+            };
+        };
+
+        memory@0 {
+            size = <0x0 0x40000000>;
+            numa-node-id = <1>;
+        };
+    };
+};
+"""
+
+_DTS_NO_MEMORY = """
+/multikernel-v1/;
+
+/ {
+    resources {
+        cpus = <4 5>;
+    };
+};
+"""
+
+
+def test_parse_dts_topology_memory_base_is_not_the_pool():
+    tree = DeviceTreeParser().parse_dts(_DTS_TOPOLOGY)
+    assert tree.hardware.memory.requested == {1: 1 << 30}
+    assert tree.hardware.memory.regions == []
+
+
+def test_parse_dts_without_memory_rejected():
+    with pytest.raises(ParseError, match="No memory description"):
+        DeviceTreeParser().parse_dts(_DTS_NO_MEMORY)
+
+
+def test_parse_dtb_without_memory_rejected():
+    def build(sw):
+        sw.property_u32("placeholder", 0)
+
+    with pytest.raises(ParseError, match="No memory description"):
+        DeviceTreeParser().parse_dtb_from_bytes(_dtb(build))
+
+
+def test_parse_dtb_legacy_memory_base_alone_rejected():
+    def build(sw):
+        sw.property_u64("memory-base", 0x80000000)
+        sw.begin_node("memory@0")
+        sw.property_u64("size", 1 << 30)
+        sw.end_node()
+
+    with pytest.raises(ParseError, match="not supported"):
+        DeviceTreeParser().parse_dtb_from_bytes(_dtb(build))
+
+
+@pytest.mark.parametrize(
+    "path", sorted(str(p) for p in Path(__file__).parent.parent.glob("examples/*.dts"))
+)
+def test_parse_example_dts(path):
+    tree = DeviceTreeParser().parse_dts(Path(path).read_text(encoding="utf-8"))
+    assert tree.hardware.memory.memory_pool_bytes > 0
