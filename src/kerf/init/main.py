@@ -408,7 +408,8 @@ def build_baseline_from_cmdline(
     cpus: str,
     memory: Optional[str] = None,
     devices: Optional[str] = None,
-    verbose: bool = False
+    verbose: bool = False,
+    pool_cpus: Optional[set] = None
 ) -> GlobalDeviceTree:
     """
     Build a GlobalDeviceTree from command line arguments.
@@ -419,6 +420,7 @@ def build_baseline_from_cmdline(
                 "node0:8GB,node1:8GB" for specific nodes
         devices: Optional device names (comma-separated, e.g., "enp9s0_dev,nvme0")
         verbose: Whether to print verbose output
+        pool_cpus: APIC IDs the pool already holds
 
     Returns:
         GlobalDeviceTree with resources only (no instances)
@@ -443,6 +445,10 @@ def build_baseline_from_cmdline(
             "Could not read APIC IDs from /proc/cpuinfo. "
             "Ensure the system exposes CPU topology information."
         )
+
+    # The host stops listing a CPU in /proc/cpuinfo once the pool takes it,
+    # so a re-init has to count the pool's own CPUs as valid.
+    valid_apic_ids = valid_apic_ids | set(pool_cpus or ())
 
     invalid_cpus = set(cpu_list) - valid_apic_ids
     if invalid_cpus:
@@ -527,9 +533,9 @@ def build_baseline_from_cmdline(
     return tree
 
 
-def build_teardown_tree() -> GlobalDeviceTree:
+def build_teardown_tree(pool_cpus: Optional[set] = None) -> GlobalDeviceTree:
     """Build the empty requested state: every pool resource goes back to the host."""
-    apic_ids = get_valid_apic_ids_from_system() or set()
+    apic_ids = (get_valid_apic_ids_from_system() or set()) | set(pool_cpus or ())
     cpu_allocation = CPUAllocation(
         total=(max(apic_ids) + 1) if apic_ids else 0,
         host_reserved=sorted(apic_ids),
@@ -573,6 +579,13 @@ def pool_is_live(current: Optional[GlobalDeviceTree]) -> bool:
     return bool(hardware.cpus.available_free is not None
                 or hardware.memory.regions
                 or hardware.devices)
+
+
+def pool_apic_ids(current: Optional[GlobalDeviceTree]) -> set:
+    """APIC IDs the live pool holds, which the host no longer reports."""
+    if not pool_is_live(current):
+        return set()
+    return set(current.hardware.cpus.available or [])
 
 
 def read_current_pool(baseline_mgr) -> Optional[GlobalDeviceTree]:
@@ -698,6 +711,11 @@ def reconcile_pool(
         tx_id = manager.apply_dtbo(manager.overlay_gen.generate_pool_overlay(diff))
     click.echo(f"✓ Pool updated (transaction {tx_id})")
 
+    if request_is_empty(requested):
+        # /resources carries no memory@N once the pool is gone, so there is
+        # nothing left to read back or compare against.
+        return diff
+
     try:
         live = baseline_mgr.read_baseline()
     except (ParseError, KernelInterfaceError) as e:
@@ -809,8 +827,14 @@ def init(ctx: click.Context, input: Optional[str], cpus: Optional[str], memory: 
         parser = DeviceTreeParser()
         dts_content = None
 
+        baseline_mgr = BaselineManager()
+        manager = DeviceTreeManager()
+        mount_multikernel_fs(verbose=verbose)
+        current = read_current_pool(baseline_mgr)
+        live_cpus = pool_apic_ids(current)
+
         if teardown:
-            tree = build_teardown_tree()
+            tree = build_teardown_tree(pool_cpus=live_cpus)
         elif input:
             # Parse from input file
             input_path = Path(input)
@@ -832,15 +856,14 @@ def init(ctx: click.Context, input: Optional[str], cpus: Optional[str], memory: 
         else:
             # Build from command line arguments
             try:
-                tree = build_baseline_from_cmdline(cpus, memory=memory, devices=devices, verbose=verbose)
+                tree = build_baseline_from_cmdline(cpus, memory=memory, devices=devices,
+                                                   verbose=verbose, pool_cpus=live_cpus)
             except ValueError as e:
                 click.echo(f"Error: {e}", err=True)
                 sys.exit(2)
             except KernelInterfaceError as e:
                 click.echo(f"Error: {e}", err=True)
                 sys.exit(1)
-
-        baseline_mgr = BaselineManager()
 
         try:
             baseline_mgr.validate_baseline(tree)
@@ -888,11 +911,6 @@ def init(ctx: click.Context, input: Optional[str], cpus: Optional[str], memory: 
                         click.echo(f"  ⚠ {warning}")
 
         debug = ctx.obj.get('debug', False) if ctx and ctx.obj else False
-
-        manager = DeviceTreeManager()
-        mount_multikernel_fs(verbose=verbose)
-
-        current = read_current_pool(baseline_mgr)
 
         if debug and not pool_is_live(current):
             _dump_baseline_dts(baseline_mgr, tree)
