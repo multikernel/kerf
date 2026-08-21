@@ -18,7 +18,7 @@ Device tree parsing and model building.
 
 import re
 import struct
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 import libfdt
 
@@ -36,6 +36,17 @@ from ..models import (
     OverlayInstanceData,
     PoolMemoryRegion,
     TopologySection,
+)
+
+
+_LEGACY_MEMORY_ERROR = (
+    "memory-base/memory-bytes are not supported; "
+    "use memory@N { size; numa-node-id; }"
+)
+
+_NO_MEMORY_ERROR = (
+    "No memory description in /resources; "
+    "expected memory@N { size; numa-node-id; }"
 )
 
 
@@ -286,11 +297,12 @@ class DeviceTreeParser:
             else:
                 raise ParseError(f"{name}: expected 'reg' (existing chunk) or 'size' (request)")
 
-        if self._optional_u64(resources_node, 'memory-bytes') is not None:
-            raise ParseError(
-                "memory-base/memory-bytes are not supported; "
-                "use memory@N { size; numa-node-id; }"
-            )
+        for legacy in ('memory-base', 'memory-bytes'):
+            if self._optional_prop(resources_node, legacy) is not None:
+                raise ParseError(_LEGACY_MEMORY_ERROR)
+
+        if not regions and not requested:
+            raise ParseError(_NO_MEMORY_ERROR)
 
         total_bytes = sum(r.size for r in regions) or sum(requested.values())
 
@@ -825,6 +837,38 @@ class DeviceTreeParser:
             topology=topology
         )
 
+    def _split_node_body(self, body: str) -> Tuple[str, List[Tuple[str, str]]]:
+        """Split a DTS node body into its own property text and its direct children.
+
+        Nested nodes carry properties of their own (a NUMA node@N describes itself
+        with memory-base/memory-size), so callers must not confuse them with the
+        properties of the node they are inspecting.
+        """
+        properties = []
+        children = []
+        depth = 0
+        chunk_start = 0
+        body_start = 0
+        name = ""
+
+        for i, char in enumerate(body):
+            if char == '{':
+                depth += 1
+                if depth == 1:
+                    head = body[chunk_start:i]
+                    tokens = head.replace(';', ' ').split()
+                    name = tokens[-1] if tokens else ""
+                    properties.append(head[:head.rfind(name)] if name else head)
+                    body_start = i + 1
+            elif char == '}':
+                depth -= 1
+                if depth == 0:
+                    children.append((name, body[body_start:i]))
+                    chunk_start = i + 1
+
+        properties.append(body[chunk_start:])
+        return '\n'.join(properties), children
+
     def _parse_memory_from_dts(self, dts_content: str) -> MemoryAllocation:
         """Parse pool chunks and per-node memory requests from DTS content."""
 
@@ -832,17 +876,16 @@ class DeviceTreeParser:
         if not resources_text:
             raise ParseError("Missing /resources section in DTS")
 
-        if re.search(r'memory-(?:base|bytes)\s*=', resources_text):
-            raise ParseError(
-                "memory-base/memory-bytes are not supported; "
-                "use memory@N { size; numa-node-id; }"
-            )
+        own_properties, children = self._split_node_body(resources_text)
+        if re.search(r'memory-(?:base|bytes)\s*=', own_properties):
+            raise ParseError(_LEGACY_MEMORY_ERROR)
 
         regions = []
         requested = {}
 
-        for match in re.finditer(r'(memory@\w+)\s*\{([^}]*)\}', resources_text):
-            name, body = match.group(1), match.group(2)
+        for name, body in children:
+            if not name.startswith('memory@'):
+                continue
             node_id = -1
             node_match = re.search(r'numa-node-id\s*=\s*<\s*([^>\s]+)\s*>', body)
             if node_match:
@@ -862,6 +905,9 @@ class DeviceTreeParser:
                 requested[node_id] = requested.get(node_id, 0) + size
             else:
                 raise ParseError(f"{name}: expected 'reg' (existing chunk) or 'size' (request)")
+
+        if not regions and not requested:
+            raise ParseError(_NO_MEMORY_ERROR)
 
         total_bytes = sum(r.size for r in regions) or sum(requested.values())
 
