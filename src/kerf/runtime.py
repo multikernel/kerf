@@ -69,18 +69,13 @@ def create(name: str, cpus: List[int], memory: int):
         # Validate resources (against baseline)
         validate_cpu_allocation(modified, cpus)
 
-        # Find memory base
-        memory_base = find_available_memory_base(modified, memory)
-        if not memory_base:
-            raise ResourceError("No memory available")
-
-        # Create instance
+        # Create instance; the kernel places its memory in the pool
         instance = Instance(
             name=name,
             id=find_next_instance_id(modified),
             resources=InstanceResources(
                 cpus=cpus,
-                memory_base=memory_base,
+                memory_base=0,
                 memory_bytes=memory,
                 devices=[]
             )

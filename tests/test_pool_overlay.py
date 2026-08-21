@@ -142,6 +142,11 @@ def test_create_overlay_targets_the_instance_namespace(sample_hardware, sample_i
     assert fdt.getprop(fdt.path_offset("/fragment@0"), "target-path").as_str() == "/instances"
     create = fdt.subnode_offset(ov, "instance-create")
     assert fdt.getprop(create, "instance-name").as_str() == "database"
+    # The kernel places instance memory itself, so the request names no base.
+    resources = fdt.subnode_offset(create, "resources")
+    assert fdt.getprop(resources, "memory-base", quiet=[libfdt.FDT_ERR_NOTFOUND]) == MISSING
+    assert fdt.getprop(resources, "memory-bytes").as_uint64() == \
+        sample_instances["database"].resources.memory_bytes
     for offset in _walk(fdt):
         assert fdt.getprop(offset, "mk,instance", quiet=[libfdt.FDT_ERR_NOTFOUND]) == MISSING
 

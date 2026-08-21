@@ -294,7 +294,6 @@ class OverlayGenerator:
 
             fdt_sw.property("cpus", pack_cpu_ids(instance.resources.cpus))
 
-            fdt_sw.property_u64("memory-base", instance.resources.memory_base)
             fdt_sw.property_u64("memory-bytes", instance.resources.memory_bytes)
 
             if instance.resources.devices:

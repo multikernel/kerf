@@ -16,6 +16,7 @@
 Tests for kerf validator.
 """
 
+from kerf.dtc import validator as validator_module
 from kerf.dtc.validator import MultikernelValidator
 
 
@@ -386,3 +387,90 @@ class TestNUMAValidation:
         assert any(
             "Spread" in warning and "single NUMA node" in warning for warning in result.warnings
         )
+
+
+class TestPoolChunks:
+    """Test the pool read-back against /proc/iomem."""
+
+    @staticmethod
+    def _two_chunk_tree(sample_hardware):
+        from kerf.models import GlobalDeviceTree, PoolMemoryRegion
+
+        sample_hardware.memory.regions = [
+            PoolMemoryRegion(base=0x100000000, size=1024**3, node=0),
+            PoolMemoryRegion(base=0x200000000, size=512 * 1024**2, node=1),
+        ]
+        return GlobalDeviceTree(hardware=sample_hardware, instances={}, device_references={})
+
+    def test_every_chunk_registered_in_iomem_passes(self, sample_hardware, monkeypatch):
+        """A pool of several non-contiguous chunks is valid."""
+        tree = self._two_chunk_tree(sample_hardware)
+        monkeypatch.setattr(
+            validator_module, "get_pool_chunks_from_iomem",
+            lambda: [(0x100000000, 1024**3), (0x200000000, 512 * 1024**2)],
+        )
+
+        result = MultikernelValidator().validate(tree)
+
+        assert result.is_valid, result.errors
+
+    def test_chunk_missing_from_iomem_fails(self, sample_hardware, monkeypatch):
+        """A chunk the kernel reports but /proc/iomem does not is an error."""
+        tree = self._two_chunk_tree(sample_hardware)
+        monkeypatch.setattr(
+            validator_module, "get_pool_chunks_from_iomem",
+            lambda: [(0x100000000, 1024**3)],
+        )
+
+        result = MultikernelValidator().validate(tree)
+
+        assert not result.is_valid
+        assert any("0x200000000" in error and "not registered in /proc/iomem" in error
+                   for error in result.errors)
+
+    def test_instance_inside_the_second_chunk_is_valid(self, sample_hardware, monkeypatch):
+        """An instance placed in a later chunk is not out of pool."""
+        from kerf.models import Instance, InstanceResources
+
+        tree = self._two_chunk_tree(sample_hardware)
+        tree.instances = {
+            "app1": Instance(
+                name="app1",
+                id=1,
+                resources=InstanceResources(
+                    cpus=[4], memory_base=0x200000000, memory_bytes=128 * 1024**2, devices=[]
+                ),
+            )
+        }
+        monkeypatch.setattr(
+            validator_module, "get_pool_chunks_from_iomem",
+            lambda: [(0x100000000, 1024**3), (0x200000000, 512 * 1024**2)],
+        )
+
+        result = MultikernelValidator().validate(tree)
+
+        assert result.is_valid, result.errors
+
+    def test_instance_spanning_two_chunks_fails(self, sample_hardware, monkeypatch):
+        """A region crossing the gap between chunks covers host memory."""
+        from kerf.models import Instance, InstanceResources
+
+        tree = self._two_chunk_tree(sample_hardware)
+        tree.instances = {
+            "app1": Instance(
+                name="app1",
+                id=1,
+                resources=InstanceResources(
+                    cpus=[4], memory_base=0x1C0000000, memory_bytes=2 * 1024**3, devices=[]
+                ),
+            )
+        }
+        monkeypatch.setattr(
+            validator_module, "get_pool_chunks_from_iomem",
+            lambda: [(0x100000000, 1024**3), (0x200000000, 512 * 1024**2)],
+        )
+
+        result = MultikernelValidator().validate(tree)
+
+        assert not result.is_valid
+        assert any("does not fit in any pool chunk" in error for error in result.errors)
