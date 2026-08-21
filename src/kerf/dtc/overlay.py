@@ -19,16 +19,34 @@ This module provides the OverlayGenerator class for generating device tree
 overlays (DTBO) that represent incremental changes to the device tree state.
 """
 
-from typing import Set
+import struct
+from typing import Optional, Set, Tuple
 
 import libfdt
 
 from ..models import GlobalDeviceTree
+from ..pool_diff import PoolDiff
 from .cells import pack_cpu_id, pack_cpu_ids
+
+Range = Optional[Tuple[int, int]]
+
+
+def _memory_ranges(old_base: int, old_size: int, new_base: int, new_size: int) -> Tuple[Range, Range]:
+    """Ranges to take back from and to hand to an instance whose memory changed."""
+    if old_base != new_base:
+        return (old_base, old_size), (new_base, new_size)
+    if new_size > old_size:
+        return None, (old_base + old_size, new_size - old_size)
+    if new_size < old_size:
+        return (old_base + new_size, old_size - new_size), None
+    return None, None
 
 
 class OverlayGenerator:
     """Generates device tree overlay blobs (DTBO) from device tree model deltas."""
+
+    POOL_PATH = "/resources"
+    INSTANCES_PATH = "/instances"
 
     def generate_overlay(self, current: GlobalDeviceTree, modified: GlobalDeviceTree) -> bytes:
         """
@@ -92,8 +110,6 @@ class OverlayGenerator:
         Returns:
             DTBO blob as bytes containing resource update operations
         """
-        import struct
-
         fdt_sw = libfdt.FdtSw()
         fdt_sw.finish_reservemap()
 
@@ -105,11 +121,16 @@ class OverlayGenerator:
         cpus_to_remove = sorted(old_cpus - new_cpus)
         cpus_to_add = sorted(new_cpus - old_cpus)
 
-        old_mem_base = old_instance.resources.memory_base
-        old_mem_size = old_instance.resources.memory_bytes
-        new_mem_base = new_instance.resources.memory_base
-        new_mem_size = new_instance.resources.memory_bytes
-        memory_changed = (old_mem_base != new_mem_base) or (old_mem_size != new_mem_size)
+        memory_to_remove, memory_to_add = _memory_ranges(
+            old_instance.resources.memory_base,
+            old_instance.resources.memory_bytes,
+            new_instance.resources.memory_base,
+            new_instance.resources.memory_bytes,
+        )
+
+        numa_node = None
+        if new_instance.resources.numa_nodes:
+            numa_node = new_instance.resources.numa_nodes[0]
 
         old_devices = set(old_instance.resources.devices)
         new_devices = set(new_instance.resources.devices)
@@ -118,107 +139,23 @@ class OverlayGenerator:
 
         # Single fragment with all operations
         fdt_sw.begin_node("fragment@0")
+        fdt_sw.property_string("target-path", f"{self.INSTANCES_PATH}/{instance_name}")
         fdt_sw.begin_node("__overlay__")
 
-        # 1. memory-remove (if memory shrunk or base changed)
-        if memory_changed:
-            if old_mem_base == new_mem_base:
-                # Same base: only remove the excess if shrinking
-                if old_mem_size > new_mem_size:
-                    remove_base = old_mem_base + new_mem_size
-                    remove_size = old_mem_size - new_mem_size
-                    fdt_sw.begin_node("memory-remove")
-                    fdt_sw.property_string("mk,instance", instance_name)
-                    fdt_sw.begin_node("region@0")
-                    reg_data = struct.pack(">QQ", remove_base, remove_size)
-                    fdt_sw.property("reg", reg_data)
-                    fdt_sw.end_node()
-                    fdt_sw.end_node()
-            else:
-                # Different base: remove entire old region
-                fdt_sw.begin_node("memory-remove")
-                fdt_sw.property_string("mk,instance", instance_name)
-                fdt_sw.begin_node("region@0")
-                reg_data = struct.pack(">QQ", old_mem_base, old_mem_size)
-                fdt_sw.property("reg", reg_data)
-                fdt_sw.end_node()
-                fdt_sw.end_node()
-
-        # 2. memory-add (if memory grew or base changed)
-        if memory_changed:
-            if old_mem_base == new_mem_base:
-                # Same base: only add the extension if growing
-                if new_mem_size > old_mem_size:
-                    add_base = old_mem_base + old_mem_size
-                    add_size = new_mem_size - old_mem_size
-                    fdt_sw.begin_node("memory-add")
-                    fdt_sw.property_string("mk,instance", instance_name)
-                    fdt_sw.begin_node("region@0")
-                    reg_data = struct.pack(">QQ", add_base, add_size)
-                    fdt_sw.property("reg", reg_data)
-                    fdt_sw.end_node()
-                    fdt_sw.end_node()
-            else:
-                # Different base: add entire new region
-                fdt_sw.begin_node("memory-add")
-                fdt_sw.property_string("mk,instance", instance_name)
-                fdt_sw.begin_node("region@0")
-                reg_data = struct.pack(">QQ", new_mem_base, new_mem_size)
-                fdt_sw.property("reg", reg_data)
-                fdt_sw.end_node()
-                fdt_sw.end_node()
-
-        # 3. cpu-remove (if CPUs removed)
-        if cpus_to_remove:
-            fdt_sw.begin_node("cpu-remove")
-            fdt_sw.property_string("mk,instance", instance_name)
-
-            for cpu_id in cpus_to_remove:
-                fdt_sw.begin_node(f"cpu@{cpu_id}")
-                fdt_sw.property("reg", pack_cpu_id(cpu_id))
-                fdt_sw.end_node()
-
+        if memory_to_remove:
+            fdt_sw.begin_node("memory-remove")
+            self._memory_item(fdt_sw, memory_to_remove)
             fdt_sw.end_node()
 
-        # 4. cpu-add (if CPUs added)
-        if cpus_to_add:
-            fdt_sw.begin_node("cpu-add")
-            fdt_sw.property_string("mk,instance", instance_name)
-
-            for cpu_id in cpus_to_add:
-                fdt_sw.begin_node(f"cpu@{cpu_id}")
-                fdt_sw.property("reg", pack_cpu_id(cpu_id))
-
-                if new_instance.resources.numa_nodes:
-                    fdt_sw.property_u32("numa-node", new_instance.resources.numa_nodes[0])
-
-                fdt_sw.end_node()
-
+        if memory_to_add:
+            fdt_sw.begin_node("memory-add")
+            self._memory_item(fdt_sw, memory_to_add, numa_node)
             fdt_sw.end_node()
 
-        # 5. device-remove (if devices removed)
-        if devices_to_remove:
-            fdt_sw.begin_node("device-remove")
-            fdt_sw.property_string("mk,instance", instance_name)
-
-            for idx, pci_id in enumerate(devices_to_remove):
-                fdt_sw.begin_node(f"pci@{idx}")
-                fdt_sw.property_string("pci-id", pci_id)
-                fdt_sw.end_node()
-
-            fdt_sw.end_node()
-
-        # 6. device-add (if devices added)
-        if devices_to_add:
-            fdt_sw.begin_node("device-add")
-            fdt_sw.property_string("mk,instance", instance_name)
-
-            for idx, pci_id in enumerate(devices_to_add):
-                fdt_sw.begin_node(f"pci@{idx}")
-                fdt_sw.property_string("pci-id", pci_id)
-                fdt_sw.end_node()
-
-            fdt_sw.end_node()
+        self._cpu_op(fdt_sw, "cpu-remove", cpus_to_remove)
+        self._cpu_op(fdt_sw, "cpu-add", cpus_to_add, numa_node)
+        self._device_op(fdt_sw, "device-remove", devices_to_remove)
+        self._device_op(fdt_sw, "device-add", devices_to_add)
 
         fdt_sw.end_node()  # End __overlay__
         fdt_sw.end_node()  # End fragment@0
@@ -229,49 +166,94 @@ class OverlayGenerator:
         dtb.pack()
         return dtb.as_bytearray()
 
-    def _add_memory_operation(self, fdt_sw, fragment_id, operation, instance_name, base, size):
-        """Helper to add memory operation fragment."""
-        import struct
+    def generate_pool_overlay(self, diff: PoolDiff) -> bytes:
+        """
+        Generate an overlay moving resources between the host and the pool.
 
-        fdt_sw.begin_node(f"fragment@{fragment_id}")
+        Operation names read from the pool's point of view: memory-add grows the
+        pool, cpu-remove returns a pool CPU to the host, and so on.
+
+        Args:
+            diff: Resources to move, as computed against the requested baseline
+
+        Returns:
+            DTBO blob as bytes containing a single fragment targeting /resources
+        """
+        fdt_sw = libfdt.FdtSw()
+        fdt_sw.finish_reservemap()
+
+        fdt_sw.begin_node("")
+        fdt_sw.property_string("compatible", "linux,multikernel-overlay")
+
+        fdt_sw.begin_node("fragment@0")
+        fdt_sw.property_string("target-path", self.POOL_PATH)
         fdt_sw.begin_node("__overlay__")
+
+        if diff.memory_to_host:
+            fdt_sw.begin_node("memory-remove")
+            for idx, region in enumerate(diff.memory_to_host):
+                fdt_sw.begin_node(f"memory@{idx}")
+                fdt_sw.property("reg", struct.pack(">QQ", region.base, region.size))
+                fdt_sw.end_node()
+            fdt_sw.end_node()
+
+        if diff.memory_to_pool:
+            fdt_sw.begin_node("memory-add")
+            for idx, (node, size) in enumerate(diff.memory_to_pool):
+                fdt_sw.begin_node(f"memory@{idx}")
+                fdt_sw.property_u64("size", size)
+                if node >= 0:
+                    fdt_sw.property_u32("numa-node-id", node)
+                fdt_sw.end_node()
+            fdt_sw.end_node()
+
+        self._cpu_op(fdt_sw, "cpu-remove", diff.cpus_to_host)
+        self._cpu_op(fdt_sw, "cpu-add", diff.cpus_to_pool)
+        self._device_op(fdt_sw, "device-remove", diff.devices_to_host)
+        self._device_op(fdt_sw, "device-add", diff.devices_to_pool)
+
+        fdt_sw.end_node()  # End __overlay__
+        fdt_sw.end_node()  # End fragment@0
+        fdt_sw.end_node()  # End root
+
+        dtb = fdt_sw.as_fdt()
+        dtb.pack()
+        return dtb.as_bytearray()
+
+    def _memory_item(self, fdt_sw, region, numa_node=None):
+        """Write a memory@0 item naming an existing range."""
+        base, size = region
+        fdt_sw.begin_node("memory@0")
+        fdt_sw.property("reg", struct.pack(">QQ", base, size))
+        if numa_node is not None:
+            fdt_sw.property_u32("numa-node-id", numa_node)
+        fdt_sw.end_node()
+
+    def _cpu_op(self, fdt_sw, operation, cpu_ids, numa_node=None):
+        """Write a CPU operation node, or nothing when there are no CPUs."""
+        if not cpu_ids:
+            return
+
         fdt_sw.begin_node(operation)
-        fdt_sw.property_string("mk,instance", instance_name)
-
-        fdt_sw.begin_node("region@0")
-        reg_data = struct.pack(">QQ", base, size)
-        fdt_sw.property("reg", reg_data)
-        fdt_sw.end_node()
-
-        fdt_sw.end_node()
-        fdt_sw.end_node()
-        fdt_sw.end_node()
-
-        return fragment_id + 1
-
-    def _add_cpu_operation(
-        self, fdt_sw, fragment_id, operation, instance_name, cpu_ids, numa_nodes
-    ):
-        """Helper to add CPU operation fragment."""
-        fdt_sw.begin_node(f"fragment@{fragment_id}")
-        fdt_sw.begin_node("__overlay__")
-        fdt_sw.begin_node(operation)
-        fdt_sw.property_string("mk,instance", instance_name)
-
         for cpu_id in cpu_ids:
             fdt_sw.begin_node(f"cpu@{cpu_id}")
             fdt_sw.property("reg", pack_cpu_id(cpu_id))
-
-            if operation == "cpu-add" and numa_nodes:
-                fdt_sw.property_u32("numa-node", numa_nodes[0])
-
+            if numa_node is not None:
+                fdt_sw.property_u32("numa-node-id", numa_node)
             fdt_sw.end_node()
-
-        fdt_sw.end_node()
-        fdt_sw.end_node()
         fdt_sw.end_node()
 
-        return fragment_id + 1
+    def _device_op(self, fdt_sw, operation, pci_ids):
+        """Write a device operation node, or nothing when there are no devices."""
+        if not pci_ids:
+            return
+
+        fdt_sw.begin_node(operation)
+        for idx, pci_id in enumerate(pci_ids):
+            fdt_sw.begin_node(f"pci@{idx}")
+            fdt_sw.property_string("pci-id", pci_id)
+            fdt_sw.end_node()
+        fdt_sw.end_node()
 
     def _create_overlay_dtb(
         self, instances_to_add: dict, instances_to_update: dict, instances_to_remove: Set[str]
@@ -299,6 +281,7 @@ class OverlayGenerator:
         all_instances = {**instances_to_add, **instances_to_update}
         for name, instance in all_instances.items():
             fdt_sw.begin_node(f"fragment@{fragment_id}")
+            fdt_sw.property_string("target-path", self.INSTANCES_PATH)
             fdt_sw.begin_node("__overlay__")
             fdt_sw.begin_node("instance-create")
 
@@ -319,8 +302,6 @@ class OverlayGenerator:
                 fdt_sw.property("device-names", stringlist_data)
 
             if instance.resources.numa_nodes:
-                import struct
-
                 numa_data = struct.pack(
                     ">" + "I" * len(instance.resources.numa_nodes), *instance.resources.numa_nodes
                 )
@@ -363,6 +344,7 @@ class OverlayGenerator:
 
         for name in instances_to_remove:
             fdt_sw.begin_node(f"fragment@{fragment_id}")
+            fdt_sw.property_string("target-path", self.INSTANCES_PATH)
             fdt_sw.begin_node("__overlay__")
             fdt_sw.begin_node("instance-remove")
             fdt_sw.property_string("instance-name", name)
