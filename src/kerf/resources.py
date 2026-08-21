@@ -149,21 +149,23 @@ def get_available_cpus(tree: GlobalDeviceTree) -> Set[int]:
     """
     Get set of CPUs available for allocation (not allocated to any instance).
 
+    The kernel's own free list wins when the tree carries one: the root
+    read-back has no instances section, so deriving free CPUs from pool
+    membership alone would hand out CPUs that are already lent out.
+
     Args:
         tree: GlobalDeviceTree to analyze
 
     Returns:
         Set of available CPU IDs
     """
-    # Get all CPUs in the available pool
-    available = set(tree.hardware.cpus.available)
+    allocated = get_allocated_cpus(tree)
 
-    # Subtract CPUs allocated to instances
-    allocated = set()
-    for instance in tree.instances.values():
-        allocated.update(instance.resources.cpus)
+    free = tree.hardware.cpus.available_free
+    if free is not None:
+        return set(free) - allocated
 
-    return available - allocated
+    return set(tree.hardware.cpus.available) - allocated
 
 
 def get_allocated_cpus(tree: GlobalDeviceTree) -> Set[int]:

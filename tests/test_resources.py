@@ -46,6 +46,19 @@ class TestCPUAllocation:
         # So 16-31 should be available
         assert available == set(range(16, 32))
 
+    def test_get_available_cpus_trusts_the_kernel_free_list(self, sample_tree):
+        """A read-back lists no instances, so its free list is the only truth."""
+        sample_tree.hardware.cpus.available_free = [20, 21, 22]
+        sample_tree.instances = {}
+
+        assert get_available_cpus(sample_tree) == {20, 21, 22}
+
+    def test_get_available_cpus_free_list_minus_tree_instances(self, sample_tree):
+        """When the tree does list instances, their CPUs are not free."""
+        sample_tree.hardware.cpus.available_free = [4, 5, 20]
+
+        assert get_available_cpus(sample_tree) == {20}
+
     def test_get_allocated_cpus(self, sample_tree):
         """Test getting allocated CPUs."""
         allocated = get_allocated_cpus(sample_tree)
