@@ -134,3 +134,26 @@ class TestBaselineManager:
         finally:
             if os.path.exists(baseline_path):
                 os.unlink(baseline_path)
+
+    def test_baseline_emits_memory_requests(self):
+        import libfdt
+        from kerf.models import GlobalDeviceTree, HardwareInventory, CPUAllocation, MemoryAllocation
+        from kerf.dtc.extractor import InstanceExtractor
+
+        hw = HardwareInventory(
+            cpus=CPUAllocation(total=8, host_reserved=[0, 1], available=[4, 5]),
+            memory=MemoryAllocation(total_bytes=0, host_reserved_bytes=0, requested={0: 1 << 30, -1: 1 << 29}),
+            devices={},
+        )
+        dtb = InstanceExtractor().generate_global_dtb(GlobalDeviceTree(hardware=hw, instances={}, device_references={}))
+        fdt = libfdt.Fdt(dtb)
+        res = fdt.path_offset("/resources")
+        m0 = fdt.subnode_offset(res, "memory@0")
+        assert fdt.getprop(m0, "size").as_uint64() == 1 << 30
+        assert fdt.getprop(m0, "numa-node-id").as_uint32() == 0
+        m1 = fdt.subnode_offset(res, "memory@1")
+        assert fdt.getprop(m1, "size").as_uint64() == 1 << 29
+        with pytest.raises(libfdt.FdtException):
+            fdt.getprop(m1, "numa-node-id")
+        with pytest.raises(libfdt.FdtException):
+            fdt.getprop(res, "memory-base")
