@@ -101,9 +101,12 @@ class TestBaselineManager:
             # Verify
             assert read_tree.hardware.cpus.available == sample_hardware.cpus.available
             assert (
-                read_tree.hardware.memory.memory_pool_base
-                == sample_hardware.memory.memory_pool_base
+                read_tree.hardware.memory.memory_pool_bytes
+                == sample_hardware.memory.memory_pool_bytes
             )
+            assert read_tree.hardware.memory.requested == {
+                0: sample_hardware.memory.memory_pool_bytes
+            }
             assert len(read_tree.instances) == 0
         finally:
             # Cleanup
