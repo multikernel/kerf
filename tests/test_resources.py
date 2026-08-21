@@ -26,7 +26,7 @@ from kerf.resources import (
     get_pool_allocated_bytes,
     get_pool_chunks_from_iomem,
     get_busy_chunks_from_iomem,
-    find_available_memory_base,
+    chunk_containing,
     validate_cpu_allocation,
     validate_memory_allocation,
     find_next_instance_id,
@@ -102,38 +102,25 @@ class TestMemoryAllocation:
         assert 0x80000000 in bases  # web-server
         assert 0x100000000 in bases  # database
 
-    def test_find_available_memory_base_empty_pool(self, sample_hardware):
-        """Test finding memory base in empty pool."""
-        from kerf.models import GlobalDeviceTree
+    def test_chunk_containing_finds_the_holding_chunk(self, sample_tree):
+        """A region inside a chunk resolves to that chunk."""
+        chunk = chunk_containing(sample_tree, 0x100000000, 1024**3)
 
-        # Create tree with no instances
+        assert chunk is sample_tree.hardware.memory.regions[0]
+
+    def test_chunk_containing_rejects_a_region_spanning_two_chunks(self, sample_hardware):
+        """Host memory between two chunks is not part of the pool."""
+        from kerf.models import GlobalDeviceTree, PoolMemoryRegion
+
+        sample_hardware.memory.regions = [
+            PoolMemoryRegion(base=0x100000000, size=1024**3, node=0),
+            PoolMemoryRegion(base=0x200000000, size=1024**3, node=1),
+        ]
         tree = GlobalDeviceTree(hardware=sample_hardware, instances={}, device_references={})
 
-        # Request 1GB
-        size = 1024**3
-        base = find_available_memory_base(tree, size, use_iomem=False)
-
-        # Should get start of pool (aligned)
-        assert base == sample_hardware.memory.memory_pool_base
-
-    def test_find_available_memory_base_with_allocations(self, sample_tree):
-        """Test finding memory base with existing allocations."""
-        # Request 1GB after existing allocations
-        size = 1024**3
-        base = find_available_memory_base(sample_tree, size, use_iomem=False)
-
-        # Should find a gap or append at end
-        assert base is not None
-        assert base >= sample_tree.hardware.memory.memory_pool_base
-
-    def test_find_available_memory_base_no_space(self, sample_tree):
-        """Test finding memory base when no space available."""
-        # Request more memory than available in pool
-        size = 100 * 1024**3  # 100GB - way more than pool size
-        base = find_available_memory_base(sample_tree, size, use_iomem=False)
-
-        # Should return None
-        assert base is None
+        assert chunk_containing(tree, 0x100000000, 1024**3) is not None
+        assert chunk_containing(tree, 0x200000000, 1024**3) is not None
+        assert chunk_containing(tree, 0x1C0000000, 1024**3) is None
 
     def test_validate_memory_allocation_success(self, sample_tree):
         """Test successful memory allocation validation."""
@@ -155,12 +142,12 @@ class TestMemoryAllocation:
             validate_memory_allocation(sample_tree, memory_base, memory_bytes)
 
     def test_validate_memory_allocation_out_of_pool(self, sample_tree):
-        """Test memory allocation outside pool."""
-        # Use base before pool
-        memory_base = 0x10000000  # Below pool base
+        """Test memory allocation outside every pool chunk."""
+        # Use base before the only chunk
+        memory_base = 0x10000000
         memory_bytes = 1024**3
 
-        with pytest.raises(ResourceError, match="below pool base"):
+        with pytest.raises(ResourceError, match="does not fit in any pool chunk"):
             validate_memory_allocation(sample_tree, memory_base, memory_bytes)
 
     def test_validate_memory_allocation_misaligned(self, sample_tree):

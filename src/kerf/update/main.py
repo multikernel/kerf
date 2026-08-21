@@ -32,7 +32,7 @@ import click
 from ..create.main import parse_cpu_spec, parse_memory_base, parse_memory_spec
 from ..exceptions import KernelInterfaceError, ParseError, ResourceError, ValidationError
 from ..resources import (
-    find_available_memory_base,
+    chunk_containing,
     validate_cpu_allocation,
     validate_memory_allocation,
 )
@@ -281,35 +281,23 @@ def update(
 
             if memory_bytes is not None:
                 if memory_base_addr is None:
-                    # Keep the same base address and extend/shrink in place
                     old_base = existing_instance.resources.memory_base
                     old_size = existing_instance.resources.memory_bytes
 
+                    # The overlay names an existing range, so an instance can
+                    # only grow into the chunk it already sits in.
                     if memory_bytes > old_size:
-                        # Growing: validate the extension region doesn't overlap
-                        extension_base = old_base + old_size
-                        extension_size = memory_bytes - old_size
-                        try:
-                            validate_memory_allocation(
-                                modified, extension_base, extension_size,
-                                exclude_instance=instance_node_name
+                        if chunk_containing(modified, old_base, memory_bytes) is None:
+                            raise ResourceError(
+                                f"Cannot grow instance '{name}' to {memory_bytes} bytes: "
+                                f"the extension leaves the pool chunk holding "
+                                f"{hex(old_base)}-{hex(old_base + old_size - 1)}"
                             )
-                            memory_base_addr = old_base
-                        except (ResourceError,) as exc:
-                            # Extension conflicts, find a completely new region
-                            found_base = find_available_memory_base(modified, memory_bytes)
-                            if found_base is None:
-                                raise ResourceError(
-                                    f"No available memory region found for {memory_bytes} bytes. "
-                                    "Try specifying --memory-base or reduce memory size."
-                                ) from exc
-                            memory_base_addr = found_base
-                    elif memory_bytes < old_size:
-                        # Shrinking: always keep the same base
-                        memory_base_addr = old_base
-                    else:
-                        # Same size, no change
-                        memory_base_addr = old_base
+                        validate_memory_allocation(
+                            modified, old_base + old_size, memory_bytes - old_size,
+                            exclude_instance=instance_node_name
+                        )
+                    memory_base_addr = old_base
                 else:
                     validate_memory_allocation(
                         modified, memory_base_addr, memory_bytes, exclude_instance=instance_node_name

@@ -24,7 +24,7 @@ import re
 from pathlib import Path
 from typing import List, Set, Optional, Tuple
 
-from .models import GlobalDeviceTree
+from .models import GlobalDeviceTree, PoolMemoryRegion
 from .exceptions import ResourceError
 
 IOMEM_PATH = "/proc/iomem"
@@ -222,63 +222,23 @@ def get_allocated_memory_regions(tree: GlobalDeviceTree) -> List[tuple[int, int]
     return regions
 
 
-def find_available_memory_base(
-    tree: GlobalDeviceTree, size_bytes: int, alignment: int = 0x1000, use_iomem: bool = True
-) -> Optional[int]:
+def chunk_containing(
+    tree: GlobalDeviceTree, base: int, size: int
+) -> Optional[PoolMemoryRegion]:
     """
-    Find available memory region for allocation.
+    Find the pool chunk that holds a whole memory region.
 
     Args:
-        tree: GlobalDeviceTree to analyze (for pool boundaries)
-        size_bytes: Size of memory region needed
-        alignment: Required alignment (default 4KB)
-        use_iomem: If True, read actual allocations from /proc/iomem (kernel source of truth).
-                   If False, use allocations from tree (for validation/dry-run).
+        tree: GlobalDeviceTree carrying the live pool chunks
+        base: Base address of the region
+        size: Size of the region in bytes
 
     Returns:
-        Base address for allocation, or None if no space available
+        The chunk containing the region, or None if no single chunk holds it
     """
-    pool_base = tree.hardware.memory.memory_pool_base
-    pool_end = tree.hardware.memory.memory_pool_end
-
-    if use_iomem:
-        allocated_regions = get_allocated_memory_regions_from_iomem()
-    else:
-        allocated_regions = get_allocated_memory_regions(tree)
-    # Sort by base address
-    allocated_regions.sort()
-
-    # Try to find gap between allocations or at start/end
-    if not allocated_regions:
-        # No allocations yet, use start of pool (aligned)
-        aligned_base = (pool_base + alignment - 1) // alignment * alignment
-        if aligned_base + size_bytes <= pool_end:
-            return aligned_base
-        return None
-
-    # Check gap at start
-    first_base = allocated_regions[0][0]
-    aligned_base = (pool_base + alignment - 1) // alignment * alignment
-    if aligned_base + size_bytes <= first_base:
-        return aligned_base
-
-    # Check gaps between allocations
-    for i in range(len(allocated_regions) - 1):
-        current_end = allocated_regions[i][0] + allocated_regions[i][1]
-        next_base = allocated_regions[i + 1][0]
-
-        # Align current_end
-        aligned_base = (current_end + alignment - 1) // alignment * alignment
-
-        if aligned_base + size_bytes <= next_base:
-            return aligned_base
-
-    # Check gap at end
-    last_end = allocated_regions[-1][0] + allocated_regions[-1][1]
-    aligned_base = (last_end + alignment - 1) // alignment * alignment
-    if aligned_base + size_bytes <= pool_end:
-        return aligned_base
-
+    for chunk in tree.hardware.memory.regions:
+        if chunk.base <= base and base + size <= chunk.base + chunk.size:
+            return chunk
     return None
 
 
@@ -348,35 +308,33 @@ def validate_memory_allocation(
                          (for update operations)
 
     Raises:
-        ResourceError: If memory region is invalid or conflicts
+        ResourceError: If the region is misaligned, leaves the pool chunk that
+                       holds it, or conflicts with another instance
     """
-    pool_base = tree.hardware.memory.memory_pool_base
-    pool_end = tree.hardware.memory.memory_pool_end
-    memory_end = memory_base + memory_bytes
-
-    # Check memory is within pool
-    if memory_base < pool_base:
-        raise ResourceError(f"Memory base {hex(memory_base)} is below pool base {hex(pool_base)}")
-
-    if memory_end > pool_end:
-        raise ResourceError(
-            f"Memory region extends beyond pool: "
-            f"{hex(memory_base)}-{hex(memory_end)} vs pool end {hex(pool_end)}"
-        )
-
-    # Check alignment (4KB)
     if memory_base % 0x1000 != 0:
         raise ResourceError(f"Memory base {hex(memory_base)} is not 4KB-aligned")
 
-    # Check for overlaps with other instances
+    memory_end = memory_base + memory_bytes
+
+    # The pool is a list of chunks, so a region has to sit inside one of them;
+    # spanning two chunks means spanning the host memory between them.
+    chunks = tree.hardware.memory.regions
+    if chunks and chunk_containing(tree, memory_base, memory_bytes) is None:
+        listed = ", ".join(f"{hex(c.base)}-{hex(c.base + c.size - 1)}" for c in chunks)
+        raise ResourceError(
+            f"Memory region {hex(memory_base)}-{hex(memory_end)} does not fit in "
+            f"any pool chunk ({listed})"
+        )
+
     for instance in tree.instances.values():
         if instance.name == exclude_instance:
             continue
 
         inst_base = instance.resources.memory_base
+        if not inst_base:
+            continue
         inst_end = inst_base + instance.resources.memory_bytes
 
-        # Check for overlap
         if not (memory_end <= inst_base or memory_base >= inst_end):
             raise ResourceError(
                 f"Memory region {hex(memory_base)}-{hex(memory_end)} "

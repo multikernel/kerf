@@ -31,7 +31,6 @@ from ..models import Instance, InstanceResources
 from ..resources import (
     validate_cpu_allocation,
     validate_memory_allocation,
-    find_available_memory_base,
     get_available_cpus,
 )
 from ..exceptions import ValidationError, KernelInterfaceError, ResourceError, ParseError
@@ -302,6 +301,12 @@ def parse_memory_spec(memory_spec: str) -> int:
         ) from exc
 
 
+def _placement(instance) -> str:
+    """Name the base only when one was asked for; the kernel picks otherwise."""
+    base = instance.resources.memory_base
+    return f" at {hex(base)}" if base else ""
+
+
 def parse_memory_base(base_spec: str) -> int:
     """
     Parse memory base address specification.
@@ -432,7 +437,8 @@ def dump_overlay_for_debug(
 )
 @click.option(
     "--memory-base",
-    help="Memory base address (hex: 0x80000000 or decimal, auto-assigned if not specified)",
+    help="Memory base address to request (hex: 0x80000000 or decimal). "
+    "Only checked against the pool; the kernel places instance memory itself.",
 )
 @click.option(
     "--devices",
@@ -641,17 +647,11 @@ def create(  # pylint: disable=too-many-arguments,too-many-positional-arguments
             # Validate CPU allocation (against baseline and existing instances)
             validate_cpu_allocation(modified, cpu_list)
 
-            # Find memory base if not specified
+            # The kernel places instance memory itself; a base is only ever
+            # a caller's request, so it is all there is to validate.
             if memory_base_addr is None:
-                found_base = find_available_memory_base(modified, memory_bytes)
-                if found_base is None:
-                    raise ResourceError(
-                        f"No available memory region found for {memory_bytes} bytes. "
-                        "Try specifying --memory-base or reduce memory size."
-                    )
-                memory_base_addr = found_base
+                memory_base_addr = 0
             else:
-                # Validate specified memory base
                 validate_memory_allocation(modified, memory_base_addr, memory_bytes)
 
             # Create instance resources with topology settings
@@ -705,7 +705,7 @@ def create(  # pylint: disable=too-many-arguments,too-many-positional-arguments
                     click.echo(
                         f"  NUMA Nodes: {', '.join(map(str, instance.resources.numa_nodes))}"
                     )
-                click.echo(f"  Memory: {memory} at {hex(instance.resources.memory_base)}")
+                click.echo(f"  Memory: {memory}{_placement(instance)}")
                 if instance.resources.memory_policy:
                     click.echo(f"  Memory Policy: {instance.resources.memory_policy}")
                 if instance.resources.devices:
@@ -745,7 +745,7 @@ def create(  # pylint: disable=too-many-arguments,too-many-positional-arguments
                 if instance.resources.numa_nodes:
                     numa_str = ", ".join(map(str, instance.resources.numa_nodes))
                     click.echo(f"  NUMA Nodes: {numa_str}")
-                click.echo(f"  Memory: {memory} at {hex(instance.resources.memory_base)}")
+                click.echo(f"  Memory: {memory}{_placement(instance)}")
                 if instance.resources.memory_policy:
                     click.echo(f"  Memory Policy: {instance.resources.memory_policy}")
                 if instance.resources.devices:
