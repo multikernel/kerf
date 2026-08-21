@@ -25,7 +25,7 @@ import os
 import re
 import sys
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 
 import click
 import libfdt
@@ -38,7 +38,6 @@ except ImportError:
 from ..baseline import BaselineManager
 from ..create.main import parse_cpu_spec, parse_device_list, parse_memory_spec
 from ..dtc.parser import DeviceTreeParser
-from ..resources import get_busy_chunks_from_iomem
 from ..dtc.reporter import ValidationReporter
 from ..dtc.validator import MultikernelValidator
 from ..exceptions import KernelInterfaceError, ParseError, ValidationError
@@ -50,6 +49,7 @@ from ..models import (
     MemoryAllocation,
 )
 from ..pool_diff import PoolDiff, compute_pool_diff
+from ..resources import get_busy_chunks_from_iomem
 from ..runtime import DeviceTreeManager
 
 
@@ -545,12 +545,60 @@ def build_teardown_tree() -> GlobalDeviceTree:
     return GlobalDeviceTree(hardware=hardware, instances={}, device_references={})
 
 
+INSTANCES_DIR = "/sys/fs/multikernel/instances"
+
+
+def list_instance_names(instances_dir: str = INSTANCES_DIR) -> List[str]:
+    """Names of the instances the kernel currently holds."""
+    path = Path(instances_dir)
+    if not path.exists():
+        return []
+    try:
+        return sorted(child.name for child in path.iterdir() if child.is_dir())
+    except OSError:
+        return []
+
+
 def pool_is_live(current: Optional[GlobalDeviceTree]) -> bool:
-    """Whether the kernel already holds pool resources we have to diff against."""
+    """
+    Whether the kernel already holds pool resources we have to diff against.
+
+    A non-empty cpus list is not evidence: before a pool exists the root
+    read-back lists the host's own online CPUs there. Only the pool branch
+    of the kernel's device tree emits cpus-available, memory@N or devices.
+    """
     if current is None:
         return False
     hardware = current.hardware
-    return bool(hardware.cpus.available or hardware.memory.regions or hardware.devices)
+    return bool(hardware.cpus.available_free is not None
+                or hardware.memory.regions
+                or hardware.devices)
+
+
+def read_current_pool(baseline_mgr) -> Optional[GlobalDeviceTree]:
+    """
+    Read the live pool back from the kernel.
+
+    Before any pool exists the kernel still publishes a root device tree,
+    but one that describes the host rather than a pool and that carries no
+    memory node, so a failed read means "no pool yet", not an error.
+
+    Args:
+        baseline_mgr: BaselineManager to read through
+
+    Returns:
+        The baseline the kernel reports, or None if there is no pool yet
+    """
+    try:
+        return baseline_mgr.read_baseline()
+    except (ParseError, KernelInterfaceError):
+        return None
+
+
+def request_is_empty(requested: GlobalDeviceTree) -> bool:
+    """Whether the request asks for nothing at all, as --teardown does."""
+    hardware = requested.hardware
+    return not (hardware.cpus.available or hardware.memory.requested or hardware.devices)
 
 
 def _print_diff(diff: PoolDiff) -> None:
@@ -614,8 +662,14 @@ def reconcile_pool(
 
     Raises:
         KernelInterfaceError: If the kernel rejects the write or the overlay
+        ValidationError: If a teardown would strand running instances
     """
     if not pool_is_live(current):
+        # The kernel rejects a baseline with no memory@N node, and there is
+        # nothing to hand back anyway.
+        if request_is_empty(requested):
+            click.echo("Pool is already empty; nothing to do")
+            return None
         if dry_run:
             click.echo("Baseline validation passed; would write the initial baseline (dry-run)")
             return None
@@ -632,10 +686,26 @@ def reconcile_pool(
         click.echo("Would apply the changes above (dry-run)")
         return diff
 
+    if request_is_empty(requested):
+        held = list_instance_names()
+        if held:
+            raise ValidationError(
+                f"The pool still runs {len(held)} instance(s): "
+                f"delete instances {', '.join(held)} first"
+            )
+
     with manager._acquire_lock():  # pylint: disable=protected-access
         tx_id = manager.apply_dtbo(manager.overlay_gen.generate_pool_overlay(diff))
     click.echo(f"✓ Pool updated (transaction {tx_id})")
-    _report_shortfall(baseline_mgr.read_baseline(), requested)
+
+    try:
+        live = baseline_mgr.read_baseline()
+    except (ParseError, KernelInterfaceError) as e:
+        # The transaction already landed; a failed read-back is worth a word,
+        # not a failure.
+        click.echo(f"Note: could not read the pool back after the transaction: {e}", err=True)
+    else:
+        _report_shortfall(live, requested)
     return diff
 
 
@@ -663,8 +733,8 @@ def _dump_baseline_dts(baseline_mgr: BaselineManager, tree: GlobalDeviceTree) ->
 @click.option('--memory', '-m', help='Pool memory: SIZE for any node (e.g. "2GB") or per-node "node0:8GB,node1:8GB". Required with --cpus, mutually exclusive with --input.')
 @click.option('--devices', '-d', help='Device names (comma-separated, e.g., "enp9s0_dev,nvme0"). Mutually exclusive with --input. Creates minimal device entries in baseline.')
 @click.option('--teardown', is_flag=True, help='Return every pool resource to the host. Mutually exclusive with --input, --cpus, --memory and --devices.')
-@click.option('--dry-run', is_flag=True, help='Validate without applying')
-@click.option('--report', is_flag=True, help='Generate detailed validation report')
+@click.option('--dry-run', is_flag=True, help='Report the plan without applying it. Still reads the pool from the kernel, so it needs root.')
+@click.option('--report', is_flag=True, help='Generate detailed validation report. Ignored with --teardown.')
 @click.option('--format', type=click.Choice(['text', 'json', 'yaml']),
               default='text', help='Report format (default: text)')
 @click.option('--verbose', '-v', is_flag=True, help='Verbose output')
@@ -680,7 +750,8 @@ def init(ctx: click.Context, input: Optional[str], cpus: Optional[str], memory: 
     pool the kernel reports, and only the difference is applied. An empty
     pool takes the baseline write; a live pool is reconciled with a
     /resources overlay transaction. Use --teardown to return everything to
-    the host, and --dry-run to see the plan without applying it.
+    the host, and --dry-run to see the plan without applying it. Even
+    --dry-run reads the pool from the kernel, so every form needs root.
 
     You can either provide a DTS/DTB file via --input, or construct the
     request from command line arguments using --cpus and --memory. These
@@ -821,9 +892,7 @@ def init(ctx: click.Context, input: Optional[str], cpus: Optional[str], memory: 
         manager = DeviceTreeManager()
         mount_multikernel_fs(verbose=verbose)
 
-        current = None
-        if baseline_mgr.baseline_path.exists() and baseline_mgr.baseline_path.stat().st_size:
-            current = baseline_mgr.read_baseline()
+        current = read_current_pool(baseline_mgr)
 
         if debug and not pool_is_live(current):
             _dump_baseline_dts(baseline_mgr, tree)
@@ -831,6 +900,9 @@ def init(ctx: click.Context, input: Optional[str], cpus: Optional[str], memory: 
         try:
             reconcile_pool(current, tree, get_busy_chunks_from_iomem(), dry_run,
                            manager, baseline_mgr)
+        except ValidationError as e:
+            click.echo(f"Error: {e}", err=True)
+            sys.exit(1)
         except KernelInterfaceError as e:
             click.echo(f"Error: {e}", err=True)
             click.echo("Run 'dmesg | tail' for the kernel's reason (it names the busy CPU or chunk).", err=True)

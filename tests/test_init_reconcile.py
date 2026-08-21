@@ -17,8 +17,10 @@
 import contextlib
 
 import libfdt
+import pytest
 
 from kerf.dtc.overlay import OverlayGenerator
+from kerf.exceptions import ParseError, ValidationError
 from kerf.init import main
 from kerf.init.main import reconcile_pool
 from kerf.models import (
@@ -49,21 +51,27 @@ class FakeManager:
 
 
 class FakeBaselineManager:
-    def __init__(self, live=None):
+    """Stands in for BaselineManager: records writes, replays one read-back."""
+
+    def __init__(self, live=None, read_error=None):
         self.written = []
         self.live = live
+        self.read_error = read_error
 
     def write_baseline(self, tree):
         self.written.append(tree)
 
     def read_baseline(self):
+        if self.read_error is not None:
+            raise self.read_error
         return self.live
 
 
-def _tree(cpus, regions, requested):
+def _tree(cpus, regions, requested, available_free=None):
     return GlobalDeviceTree(
         hardware=HardwareInventory(
-            cpus=CPUAllocation(total=16, host_reserved=[0], available=cpus),
+            cpus=CPUAllocation(total=16, host_reserved=[0], available=cpus,
+                               available_free=available_free),
             memory=MemoryAllocation(
                 total_bytes=8 * GB,
                 host_reserved_bytes=0,
@@ -109,7 +117,7 @@ def test_matching_pool_is_a_no_op():
 
 def test_dry_run_reports_without_applying():
     manager, baseline_mgr = FakeManager(), FakeBaselineManager()
-    current = _tree([4, 5], [], {})
+    current = _tree([4, 5], [], {}, available_free=[4, 5])
     requested = _tree([4, 5, 6], [], {0: GB})
 
     diff = reconcile_pool(current, requested, set(), True, manager, baseline_mgr)
@@ -140,6 +148,7 @@ def test_apply_writes_a_pool_overlay():
 
 def test_teardown_returns_everything(monkeypatch):
     monkeypatch.setattr(main, "get_valid_apic_ids_from_system", lambda: {0, 1, 4, 5})
+    monkeypatch.setattr(main, "list_instance_names", lambda: [])
     manager, baseline_mgr = FakeManager(), FakeBaselineManager(live=_tree([], [], {}))
     current = _tree([4, 5], [PoolMemoryRegion(0x1_0000_0000, GB, 0)], {})
 
@@ -150,3 +159,50 @@ def test_teardown_returns_everything(monkeypatch):
     assert [r.base for r in diff.memory_to_host] == [0x1_0000_0000]
     assert diff.memory_to_pool == []
     assert len(manager.applied) == 1
+
+
+def test_unparseable_read_back_is_a_first_init():
+    manager = FakeManager()
+    baseline_mgr = FakeBaselineManager(
+        read_error=ParseError("No memory description in /resources"))
+    requested = _tree([4, 5], [], {-1: GB})
+
+    current = main.read_current_pool(baseline_mgr)
+
+    assert current is None
+    assert reconcile_pool(current, requested, set(), False, manager, baseline_mgr) is None
+    assert baseline_mgr.written == [requested]
+    assert not manager.applied
+
+
+def test_host_cpu_list_alone_is_not_a_live_pool():
+    manager, baseline_mgr = FakeManager(), FakeBaselineManager()
+    # What the kernel publishes before a pool exists: its own online CPUs,
+    # no cpus-available, no memory@N.
+    current = _tree([0, 1, 2, 3], [], {})
+    requested = _tree([4, 5], [], {-1: GB})
+
+    assert not main.pool_is_live(current)
+    assert reconcile_pool(current, requested, set(), False, manager, baseline_mgr) is None
+    assert baseline_mgr.written == [requested]
+    assert not manager.applied
+
+
+def test_teardown_of_an_empty_pool_writes_nothing():
+    manager, baseline_mgr = FakeManager(), FakeBaselineManager()
+
+    assert reconcile_pool(_tree([0, 1], [], {}), main.build_teardown_tree(), set(), False,
+                          manager, baseline_mgr) is None
+    assert not baseline_mgr.written
+    assert not manager.applied
+
+
+def test_teardown_refuses_while_instances_exist(monkeypatch):
+    monkeypatch.setattr(main, "get_valid_apic_ids_from_system", lambda: {0, 4})
+    monkeypatch.setattr(main, "list_instance_names", lambda: ["db", "web"])
+    manager, baseline_mgr = FakeManager(), FakeBaselineManager()
+    current = _tree([4], [PoolMemoryRegion(0x1_0000_0000, GB, 0)], {})
+
+    with pytest.raises(ValidationError, match="delete instances db, web first"):
+        reconcile_pool(current, main.build_teardown_tree(), set(), False, manager, baseline_mgr)
+    assert not manager.applied

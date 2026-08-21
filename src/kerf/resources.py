@@ -54,6 +54,29 @@ def _parse_iomem_regions(iomem_path: str) -> List[Tuple[int, int, str]]:
     return regions
 
 
+def _pool_chunks(regions: List[Tuple[int, int, str]]) -> List[Tuple[int, int]]:
+    """Pick the pool chunks out of already parsed /proc/iomem regions."""
+    return [
+        (base, end - base + 1)
+        for base, end, name in regions
+        if MULTIKERNEL_POOL_NAME in name
+    ]
+
+
+def _chunk_children(regions: List[Tuple[int, int, str]],
+                    chunks: List[Tuple[int, int]]) -> List[Tuple[int, int, int]]:
+    """Map every region nested in a pool chunk to (chunk_base, base, end)."""
+    children = []
+    for base, end, name in regions:
+        if MULTIKERNEL_POOL_NAME in name:
+            continue
+        for chunk_base, chunk_size in chunks:
+            if chunk_base <= base and end <= chunk_base + chunk_size - 1:
+                children.append((chunk_base, base, end))
+                break
+    return children
+
+
 def get_pool_chunks_from_iomem(iomem_path: str = IOMEM_PATH) -> List[Tuple[int, int]]:
     """
     List every multikernel pool chunk registered in /proc/iomem.
@@ -61,11 +84,7 @@ def get_pool_chunks_from_iomem(iomem_path: str = IOMEM_PATH) -> List[Tuple[int, 
     Returns:
         (base_address, size_bytes) tuples in /proc/iomem order
     """
-    return [
-        (base, end - base + 1)
-        for base, end, name in _parse_iomem_regions(iomem_path)
-        if MULTIKERNEL_POOL_NAME in name
-    ]
+    return _pool_chunks(_parse_iomem_regions(iomem_path))
 
 
 def get_busy_chunks_from_iomem(iomem_path: str = IOMEM_PATH) -> Set[int]:
@@ -78,15 +97,8 @@ def get_busy_chunks_from_iomem(iomem_path: str = IOMEM_PATH) -> Set[int]:
     Returns:
         Base addresses of the chunks with at least one child region
     """
-    chunks = get_pool_chunks_from_iomem(iomem_path)
-    busy = set()
-    for base, end, name in _parse_iomem_regions(iomem_path):
-        if MULTIKERNEL_POOL_NAME in name:
-            continue
-        for chunk_base, chunk_size in chunks:
-            if chunk_base <= base and end <= chunk_base + chunk_size - 1:
-                busy.add(chunk_base)
-    return busy
+    regions = _parse_iomem_regions(iomem_path)
+    return {chunk_base for chunk_base, _, _ in _chunk_children(regions, _pool_chunks(regions))}
 
 
 def get_memory_pool_from_iomem(iomem_path: str = IOMEM_PATH) -> Optional[Tuple[int, int]]:
@@ -112,22 +124,14 @@ def get_pool_allocated_bytes(iomem_path: str = IOMEM_PATH) -> Optional[Tuple[int
         (first_chunk_base, pool_bytes, allocated_bytes), or None if the
         pool is not registered in /proc/iomem
     """
-    chunks = get_pool_chunks_from_iomem(iomem_path)
+    regions = _parse_iomem_regions(iomem_path)
+    chunks = _pool_chunks(regions)
     if not chunks:
         return None
 
-    children = []
-    for base, end, name in _parse_iomem_regions(iomem_path):
-        if MULTIKERNEL_POOL_NAME in name:
-            continue
-        for chunk_base, chunk_size in chunks:
-            if base >= chunk_base and end <= chunk_base + chunk_size - 1:
-                children.append((base, end))
-                break
-
     allocated = 0
     current_base = current_end = None
-    for base, end in sorted(children):
+    for _, base, end in sorted(_chunk_children(regions, chunks), key=lambda c: c[1:]):
         if current_base is None:
             current_base, current_end = base, end
         elif base <= current_end + 1:
