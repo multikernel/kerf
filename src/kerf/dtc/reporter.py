@@ -123,13 +123,18 @@ class ValidationReporter:
         total_gb = memory.total_bytes / (1024**3)
         host_gb = memory.host_reserved_bytes / (1024**3)
         memory_pool_gb = memory.memory_pool_bytes / (1024**3)
-        host_mem_percent = (memory.host_reserved_bytes / memory.total_bytes) * 100
-        memory_pool_mem_percent = (memory.memory_pool_bytes / memory.total_bytes) * 100
+        # total_bytes is 0 when the tree only carries pool chunks read back
+        # from the kernel, not a system-wide total.
+        if memory.total_bytes:
+            host_mem_percent = f"{(memory.host_reserved_bytes / memory.total_bytes) * 100:.0f}%"
+            memory_pool_mem_percent = f"{(memory.memory_pool_bytes / memory.total_bytes) * 100:.0f}%"
+        else:
+            host_mem_percent = memory_pool_mem_percent = "n/a"
 
         lines.append(f"  Memory: {total_gb:.0f}GB total")
-        lines.append(f"    Host reserved: {host_gb:.0f}GB ({host_mem_percent:.0f}%)")
+        lines.append(f"    Host reserved: {host_gb:.0f}GB ({host_mem_percent})")
         lines.append(
-            f"    Memory pool: {memory_pool_gb:.0f}GB at {hex(memory.memory_pool_base)} ({memory_pool_mem_percent:.0f}%)"
+            f"    Memory pool: {memory_pool_gb:.0f}GB at {hex(memory.memory_pool_base)} ({memory_pool_mem_percent})"
         )
 
         # Device information

@@ -281,9 +281,17 @@ def display_baseline_info(tree: GlobalDeviceTree, verbose: bool = False):
     click.echo(
         f"    Host Reserved:   {len(hardware.cpus.host_reserved)} cpus: {hardware.cpus.host_reserved}"
     )
-    click.echo(
-        f"    Available:       {len(hardware.cpus.available)} cpus: {hardware.cpus.available}"
-    )
+    if hardware.cpus.available_free is not None:
+        click.echo(
+            f"    Pool CPUs:       {len(hardware.cpus.available)} cpus: {hardware.cpus.available}"
+        )
+        click.echo(
+            f"    Available CPUs:  {len(hardware.cpus.available_free)} cpus: {hardware.cpus.available_free}"
+        )
+    else:
+        click.echo(
+            f"    Available:       {len(hardware.cpus.available)} cpus: {hardware.cpus.available}"
+        )
 
     if verbose and hardware.cpus.topology:
         click.echo("\n    Topology:")
@@ -294,29 +302,28 @@ def display_baseline_info(tree: GlobalDeviceTree, verbose: bool = False):
 
     # Memory Information
     click.echo("\n  Memory:")
-    total_gb = hardware.memory.total_bytes / (1024**3)
-    reserved_gb = hardware.memory.host_reserved_bytes / (1024**3)
-    click.echo(f"    Total:           {total_gb:.2f} GB ({hardware.memory.total_bytes} bytes)")
-    click.echo(
-        f"    Host Reserved:   {reserved_gb:.2f} GB ({hardware.memory.host_reserved_bytes} bytes)"
-    )
+    # total_bytes/host_reserved_bytes are 0 when the tree only carries pool
+    # sizes read back from the kernel, not a system-wide total.
+    if hardware.memory.total_bytes:
+        total_gb = hardware.memory.total_bytes / (1024**3)
+        click.echo(f"    Total:           {total_gb:.2f} GB ({hardware.memory.total_bytes} bytes)")
+    if hardware.memory.host_reserved_bytes:
+        reserved_gb = hardware.memory.host_reserved_bytes / (1024**3)
+        click.echo(
+            f"    Host Reserved:   {reserved_gb:.2f} GB ({hardware.memory.host_reserved_bytes} bytes)"
+        )
 
     # /proc/iomem is the source of truth for the pool chunks and the
     # instance allocations carved out of them; the baseline tree only
     # snapshots the pool as of the last transaction.
+    click.echo("\n  Memory Pool:")
+    for region in hardware.memory.regions:
+        node = f" node {region.node}" if region.node >= 0 else ""
+        click.echo(f"    Chunk:           {hex(region.base)}  {region.size / (1024**3):.2f} GB{node}")
+
     usage = get_pool_allocated_bytes()
     if usage is not None:
-        pool_base, pool_bytes, allocated_bytes = usage
-    else:
-        pool_base = hardware.memory.memory_pool_base
-        pool_bytes = hardware.memory.memory_pool_bytes
-        allocated_bytes = None
-
-    pool_gb = pool_bytes / (1024**3)
-    click.echo(f"    Pool Base:       0x{pool_base:x}")
-    click.echo(f"    Pool Size:       {pool_gb:.2f} GB ({pool_bytes} bytes)")
-    click.echo(f"    Pool End:        0x{pool_base + pool_bytes:x}")
-    if allocated_bytes is not None:
+        _, pool_bytes, allocated_bytes = usage
         available_bytes = pool_bytes - allocated_bytes
         allocated_gb = allocated_bytes / (1024**3)
         available_gb = available_bytes / (1024**3)
