@@ -42,7 +42,7 @@ class FakeManager:
         self.applied = []
 
     @contextlib.contextmanager
-    def _acquire_lock(self):
+    def lock(self):
         yield
 
     def apply_dtbo(self, dtbo_data):

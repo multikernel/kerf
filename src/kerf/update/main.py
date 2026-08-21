@@ -352,7 +352,7 @@ def update(
                 dtbo_data = manager.overlay_gen.generate_update_overlay(name, old_instance, new_instance)
                 return dtbo_data
 
-            with manager._acquire_lock():  # pylint: disable=protected-access
+            with manager.lock():
                 current = manager.read_baseline()
                 dtbo_data = apply_update_operation(current)
 

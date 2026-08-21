@@ -254,9 +254,6 @@ class MultikernelValidator:
             )
 
         memory = tree.hardware.memory
-        if memory.total_bytes < 0:
-            self.errors.append("Hardware inventory: Total memory must be positive")
-
         if memory.memory_pool_bytes <= 0:
             self.errors.append("Hardware inventory: Spawn pool size must be positive")
 

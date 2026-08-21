@@ -184,7 +184,7 @@ class TestLocking:
             assert not manager.lock_file.exists()
 
             # Acquire lock
-            with manager._acquire_lock():  # pylint: disable=protected-access
+            with manager.lock():
                 # Lock should exist
                 assert manager.lock_file.exists()
 
@@ -203,7 +203,7 @@ class TestLocking:
             try:
                 # Try to acquire lock (should timeout)
                 with pytest.raises(KernelInterfaceError, match="Could not acquire lock"):
-                    with manager._acquire_lock():  # pylint: disable=protected-access
+                    with manager.lock():
                         pass
             finally:
                 # Cleanup

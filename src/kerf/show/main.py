@@ -33,6 +33,7 @@ from ..dtc.parser import DeviceTreeParser
 from ..exceptions import KernelInterfaceError, ParseError
 from ..metadata import load_instance_metadata
 from ..models import GlobalDeviceTree
+from ..pool_diff import ANY_NODE
 from ..resources import get_pool_allocated_bytes
 from ..utils import get_instance_id_from_name, get_instance_status
 
@@ -317,18 +318,24 @@ def display_baseline_info(tree: GlobalDeviceTree, verbose: bool = False):
     # instance allocations carved out of them; the baseline tree only
     # snapshots the pool as of the last transaction.
     click.echo("\n  Memory Pool:")
-    for region in hardware.memory.regions:
-        node = f" node {region.node}" if region.node >= 0 else ""
-        click.echo(f"    Chunk:           {hex(region.base)}  {region.size / (1024**3):.2f} GB{node}")
+    if not hardware.memory.regions:
+        click.echo("    No memory pool configured")
+    else:
+        for region in hardware.memory.regions:
+            node = "" if region.node == ANY_NODE else f" node {region.node}"
+            click.echo(
+                f"    Chunk:           {hex(region.base)}  "
+                f"{region.size / (1024**3):.2f} GB{node}"
+            )
 
-    usage = get_pool_allocated_bytes()
-    if usage is not None:
-        _, pool_bytes, allocated_bytes = usage
-        available_bytes = pool_bytes - allocated_bytes
-        allocated_gb = allocated_bytes / (1024**3)
-        available_gb = available_bytes / (1024**3)
-        click.echo(f"    Pool Allocated:  {allocated_gb:.2f} GB ({allocated_bytes} bytes)")
-        click.echo(f"    Pool Available:  {available_gb:.2f} GB ({available_bytes} bytes)")
+        usage = get_pool_allocated_bytes()
+        if usage is not None:
+            _, pool_bytes, allocated_bytes = usage
+            available_bytes = pool_bytes - allocated_bytes
+            allocated_gb = allocated_bytes / (1024**3)
+            available_gb = available_bytes / (1024**3)
+            click.echo(f"    Pool Allocated:  {allocated_gb:.2f} GB ({allocated_bytes} bytes)")
+            click.echo(f"    Pool Available:  {available_gb:.2f} GB ({available_bytes} bytes)")
 
     # NUMA Topology
     if hardware.topology and hardware.topology.numa_nodes:
@@ -563,10 +570,15 @@ def show(name: Optional[str], verbose: bool):
             baseline_manager = BaselineManager()
             try:
                 tree = baseline_manager.read_baseline()
-                display_baseline_info(tree, verbose)
-            except (KernelInterfaceError, ParseError) as e:
+            except ParseError:
+                # Once the pool is torn down /resources describes the host and
+                # carries no pool branch to parse.
+                click.echo("\nNo memory pool configured")
+            except KernelInterfaceError as e:
                 if verbose:
                     click.echo(f"\nWarning: Could not read baseline: {e}", err=True)
+            else:
+                display_baseline_info(tree, verbose)
 
             if not instance_names:
                 click.echo("\n" + "=" * 80)

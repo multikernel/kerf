@@ -209,8 +209,10 @@ class DeviceTreeManager:
         if status not in ("applied", "success", "ok"):
             error_msg = f"Overlay transaction {tx_id} failed with status: '{status}'"
             try:
-                instance_name = (tx_dir / "instance").read_text(encoding="utf-8").strip()
-                error_msg += f" (instance: {instance_name})"
+                # The file is named 'instance' but holds the target path of
+                # the overlay's first fragment.
+                target = (tx_dir / "instance").read_text(encoding="utf-8").strip()
+                error_msg += f" (target: {target})"
             except OSError:
                 pass
             raise KernelInterfaceError(error_msg)
@@ -279,7 +281,7 @@ class DeviceTreeManager:
         Raises:
             KernelInterfaceError: If overlay application fails
         """
-        with self._acquire_lock():
+        with self.lock():
             try:
                 dtbo_data = self.overlay_gen.generate_removal_overlay(instance_name)
             except Exception as e:
@@ -377,7 +379,7 @@ class DeviceTreeManager:
         return transactions
 
     @contextmanager
-    def _acquire_lock(self):
+    def lock(self):
         """
         Acquire file lock for concurrency safety.
 
@@ -446,7 +448,7 @@ class DeviceTreeManager:
             KernelInterfaceError: If kernel interface operations fail
             Any exceptions raised by the operation function
         """
-        with self._acquire_lock():
+        with self.lock():
             current = self.read_baseline()
 
             # Apply operation (returns modified state)
