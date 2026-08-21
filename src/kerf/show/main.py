@@ -301,9 +301,9 @@ def display_baseline_info(tree: GlobalDeviceTree, verbose: bool = False):
         f"    Host Reserved:   {reserved_gb:.2f} GB ({hardware.memory.host_reserved_bytes} bytes)"
     )
 
-    # /proc/iomem is the source of truth for the lazy_cma pool and the
-    # instance allocations carved out of it; the baseline tree only
-    # snapshots the pool at init time.
+    # /proc/iomem is the source of truth for the pool chunks and the
+    # instance allocations carved out of them; the baseline tree only
+    # snapshots the pool as of the last transaction.
     usage = get_pool_allocated_bytes()
     if usage is not None:
         pool_base, pool_bytes, allocated_bytes = usage

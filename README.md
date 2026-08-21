@@ -127,11 +127,15 @@ Baseline DTB (static)
 
 ### Command Line Interface
 ```bash
-# Initialize resource pool with CPUs (memory parsed from /proc/iomem)
-kerf init --cpus=4-7
+# Initialize resource pool with CPUs and pool memory
+kerf init --cpus=4-7 --memory=2GB
 
-# Initialize with CPUs and devices
-kerf init --cpus=4-31 --devices=enp9s0_dev,nvme0
+# Initialize with CPUs, per-node memory and devices
+kerf init --cpus=4-31 --memory=node0:8GB,node1:8GB --devices=enp9s0_dev,nvme0
+
+# Re-run to reshape the live pool, or hand everything back to the host
+kerf init --cpus=4-15 --memory=4GB
+kerf init --teardown
 
 # Create kernel instance with resource allocation
 kerf create web-server --cpus=4-7 --memory=2GB
