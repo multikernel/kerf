@@ -49,6 +49,7 @@ from ..models import (
     GlobalDeviceTree,
     HardwareInventory,
     MemoryAllocation,
+    PoolMemoryRegion,
 )
 
 
@@ -459,8 +460,7 @@ def build_baseline_from_cmdline(
     memory_allocation = MemoryAllocation(
         total_bytes=total_bytes,
         host_reserved_bytes=host_reserved_bytes,
-        memory_pool_base=memory_pool_base,
-        memory_pool_bytes=memory_pool_bytes
+        regions=[PoolMemoryRegion(base=memory_pool_base, size=memory_pool_bytes)]
     )
 
     device_dict = {}

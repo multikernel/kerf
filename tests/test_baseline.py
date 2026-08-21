@@ -60,7 +60,7 @@ class TestBaselineManager:
 
     def test_validate_baseline_missing_cpus(self):
         """Test baseline validation fails without CPU info."""
-        from kerf.models import GlobalDeviceTree, HardwareInventory, MemoryAllocation
+        from kerf.models import GlobalDeviceTree, HardwareInventory, MemoryAllocation, PoolMemoryRegion
 
         tree = GlobalDeviceTree(
             hardware=HardwareInventory(
@@ -68,8 +68,7 @@ class TestBaselineManager:
                 memory=MemoryAllocation(
                     total_bytes=16 * 1024**3,
                     host_reserved_bytes=2 * 1024**3,
-                    memory_pool_base=0x80000000,
-                    memory_pool_bytes=14 * 1024**3,
+                    regions=[PoolMemoryRegion(base=0x80000000, size=14 * 1024**3, node=0)],
                 ),
                 devices={},
             ),

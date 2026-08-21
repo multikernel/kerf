@@ -22,6 +22,7 @@ from kerf.models import (
     Instance,
     InstanceResources,
     MemoryAllocation,
+    PoolMemoryRegion,
 )
 
 
@@ -53,8 +54,7 @@ class TestMemoryAllocation:
         memory = MemoryAllocation(
             total_bytes=16 * 1024**3,
             host_reserved_bytes=2 * 1024**3,
-            memory_pool_base=0x80000000,
-            memory_pool_bytes=14 * 1024**3,
+            regions=[PoolMemoryRegion(base=0x80000000, size=14 * 1024**3)],
         )
 
         assert memory.total_bytes == 16 * 1024**3
@@ -67,12 +67,34 @@ class TestMemoryAllocation:
         memory = MemoryAllocation(
             total_bytes=16 * 1024**3,
             host_reserved_bytes=2 * 1024**3,
-            memory_pool_base=0x80000000,
-            memory_pool_bytes=14 * 1024**3,
+            regions=[PoolMemoryRegion(base=0x80000000, size=14 * 1024**3)],
         )
 
         expected_end = 0x80000000 + 14 * 1024**3
         assert memory.memory_pool_end == expected_end
+
+
+def test_memory_allocation_derives_pool_from_regions():
+    """Pool base/bytes come from the live chunk list when present."""
+    mem = MemoryAllocation(
+        total_bytes=0,
+        host_reserved_bytes=0,
+        regions=[
+            PoolMemoryRegion(base=0x100000000, size=1 << 30, node=0),
+            PoolMemoryRegion(base=0x300000000, size=1 << 29, node=1),
+        ],
+    )
+    assert mem.memory_pool_base == 0x100000000
+    assert mem.memory_pool_bytes == (1 << 30) + (1 << 29)
+    assert mem.bytes_on_node(1) == 1 << 29
+    assert mem.bytes_on_node(2) == 0
+
+
+def test_memory_allocation_derives_pool_from_requested_when_no_regions():
+    """Falls back to the requested per-node sizes when no chunks were read back yet."""
+    mem = MemoryAllocation(total_bytes=0, host_reserved_bytes=0, requested={-1: 1 << 30})
+    assert mem.memory_pool_base == 0
+    assert mem.memory_pool_bytes == 1 << 30
 
 
 class TestDeviceInfo:

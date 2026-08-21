@@ -33,6 +33,7 @@ from ..models import (
     MemoryAllocation,
     NUMANode,
     OverlayInstanceData,
+    PoolMemoryRegion,
     TopologySection,
 )
 
@@ -138,8 +139,6 @@ class DeviceTreeParser:
                 memory=MemoryAllocation(
                     total_bytes=0,
                     host_reserved_bytes=0,
-                    memory_pool_base=0,
-                    memory_pool_bytes=0
                 ),
                 topology=None,
                 devices={}
@@ -246,8 +245,7 @@ class DeviceTreeParser:
         return MemoryAllocation(
             total_bytes=total_bytes,
             host_reserved_bytes=host_reserved_bytes,
-            memory_pool_base=memory_pool_base,
-            memory_pool_bytes=memory_pool_bytes
+            regions=[PoolMemoryRegion(base=memory_pool_base, size=memory_pool_bytes)]
         )
 
     def _parse_devices(self, resources_node: int) -> Dict[str, DeviceInfo]:
@@ -798,8 +796,7 @@ class DeviceTreeParser:
         return MemoryAllocation(
             total_bytes=total_bytes,
             host_reserved_bytes=host_reserved_bytes,
-            memory_pool_base=memory_pool_base,
-            memory_pool_bytes=memory_pool_bytes
+            regions=[PoolMemoryRegion(base=memory_pool_base, size=memory_pool_bytes)]
         )
 
     def _parse_devices_from_dts(self, dts_content: str) -> Dict[str, DeviceInfo]:

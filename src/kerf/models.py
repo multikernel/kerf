@@ -16,7 +16,7 @@
 Data models for multikernel device tree representation.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import List, Dict, Optional, Set, Tuple
 from enum import Enum
 
@@ -101,19 +101,44 @@ class CPUAllocation:
         return set(self.available) - set(self.host_reserved)
 
 
+@dataclass(frozen=True)
+class PoolMemoryRegion:
+    """One kernel-owned pool chunk as reported by /sys/fs/multikernel/device_tree."""
+
+    base: int
+    size: int
+    node: int = -1
+
+
 @dataclass
 class MemoryAllocation:
-    """Memory allocation information."""
+    """Pool memory: live chunks from the kernel and per-node sizes requested by the user."""
 
     total_bytes: int
     host_reserved_bytes: int
-    memory_pool_base: int
-    memory_pool_bytes: int
+    regions: List[PoolMemoryRegion] = field(default_factory=list)
+    requested: Dict[int, int] = field(default_factory=dict)
+
+    @property
+    def memory_pool_base(self) -> int:
+        """Base address of the first live pool chunk, or 0 before any chunks are read back."""
+        return self.regions[0].base if self.regions else 0
+
+    @property
+    def memory_pool_bytes(self) -> int:
+        """Total pool size: sum of live chunks, or sum of requested sizes if none yet."""
+        if self.regions:
+            return sum(r.size for r in self.regions)
+        return sum(self.requested.values())
 
     @property
     def memory_pool_end(self) -> int:
         """End address of memory pool."""
         return self.memory_pool_base + self.memory_pool_bytes
+
+    def bytes_on_node(self, node: int) -> int:
+        """Total live pool bytes on the given NUMA node."""
+        return sum(r.size for r in self.regions if r.node == node)
 
 
 @dataclass
