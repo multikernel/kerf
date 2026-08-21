@@ -206,3 +206,56 @@ def test_teardown_refuses_while_instances_exist(monkeypatch):
     with pytest.raises(ValidationError, match="delete instances db, web first"):
         reconcile_pool(current, main.build_teardown_tree(), set(), False, manager, baseline_mgr)
     assert not manager.applied
+
+
+def test_pool_cpus_stay_valid_apic_ids(monkeypatch):
+    # A CPU in the pool is gone from /proc/cpuinfo, but re-init must still name it.
+    monkeypatch.setattr(main, "get_valid_apic_ids_from_system", lambda: {0})
+    live = _tree([1, 2, 3], [PoolMemoryRegion(0x1_0000_0000, GB, 0)], {})
+
+    tree = main.build_baseline_from_cmdline(
+        "1-3", memory="512MB", pool_cpus=main.pool_apic_ids(live))
+
+    assert tree.hardware.cpus.available == [1, 2, 3]
+    assert tree.hardware.cpus.host_reserved == [0]
+    assert tree.hardware.cpus.total == 4
+
+
+def test_apic_id_outside_system_and_pool_is_rejected(monkeypatch):
+    monkeypatch.setattr(main, "get_valid_apic_ids_from_system", lambda: {0})
+    live = _tree([1], [PoolMemoryRegion(0x1_0000_0000, GB, 0)], {})
+
+    with pytest.raises(ValueError, match=r"Invalid APIC ID\(s\) specified: \[9\]"):
+        main.build_baseline_from_cmdline("1,9", memory="512MB",
+                                         pool_cpus=main.pool_apic_ids(live))
+
+
+def test_pool_apic_ids_ignores_a_host_only_read_back():
+    assert main.pool_apic_ids(None) == set()
+    assert main.pool_apic_ids(_tree([0, 1, 2, 3], [], {})) == set()
+
+
+def test_teardown_tree_reserves_pool_cpus(monkeypatch):
+    monkeypatch.setattr(main, "get_valid_apic_ids_from_system", lambda: {0})
+
+    tree = main.build_teardown_tree(pool_cpus={1, 2, 3})
+
+    assert tree.hardware.cpus.host_reserved == [0, 1, 2, 3]
+    assert tree.hardware.cpus.available == []
+    assert tree.hardware.cpus.total == 4
+
+
+def test_teardown_does_not_read_the_pool_back(monkeypatch, capsys):
+    # After a teardown /resources has no memory@N, so a read-back always
+    # fails; complaining about it makes a clean teardown look broken.
+    monkeypatch.setattr(main, "get_valid_apic_ids_from_system", lambda: {0, 1})
+    monkeypatch.setattr(main, "list_instance_names", lambda: [])
+    manager = FakeManager()
+    baseline_mgr = FakeBaselineManager(
+        read_error=ParseError("No memory description in /resources"))
+    current = _tree([1], [PoolMemoryRegion(0x1_0000_0000, GB, 0)], {})
+
+    main.reconcile_pool(current, main.build_teardown_tree(pool_cpus={1}), set(), False,
+                        manager, baseline_mgr)
+
+    assert "could not read the pool back" not in capsys.readouterr().err
