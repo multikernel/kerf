@@ -71,3 +71,22 @@ def test_identical_state_is_empty():
     cur = _tree([4, 5], regions=[PoolMemoryRegion(0x1_0000_0000, GB, 0)])
     req = _tree([4, 5], requested={0: GB})
     assert compute_pool_diff(cur, req).is_empty()
+
+
+def test_unrequested_node_memory_is_surplus():
+    a = PoolMemoryRegion(0x1_0000_0000, GB, 0)
+    cur = _tree([4], regions=[a])
+    req = _tree([4], requested={1: GB})
+    d = compute_pool_diff(cur, req)
+    assert d.memory_to_pool == [(1, GB)]
+    assert d.memory_to_host == [a]
+
+
+def test_shrink_prefers_larger_idle_chunks():
+    small = PoolMemoryRegion(0x1_0000_0000, GB // 2, 0)
+    big = PoolMemoryRegion(0x2_0000_0000, GB, 0)
+    cur = _tree([4], regions=[small, big])
+    req = _tree([4], requested={0: GB // 2})
+    d = compute_pool_diff(cur, req)
+    assert d.memory_to_host == [big]
+    assert d.memory_to_pool == []

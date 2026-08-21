@@ -80,6 +80,7 @@ def _release(remaining: List[PoolMemoryRegion], pred, surplus: int,
 
 def compute_pool_diff(current: GlobalDeviceTree, requested: GlobalDeviceTree,
                        busy_chunks: Optional[Set[int]] = None) -> PoolDiff:
+    """The request is the desired state; memory on nodes it omits counts as surplus."""
     diff = PoolDiff()
     cur_cpus = set(current.hardware.cpus.available)
     req_cpus = set(requested.hardware.cpus.available)
