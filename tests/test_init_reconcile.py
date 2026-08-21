@@ -208,6 +208,24 @@ def test_teardown_refuses_while_instances_exist(monkeypatch):
     assert not manager.applied
 
 
+def test_cpu_only_pool_grows_memory():
+    # A pool that kept its CPUs but gave back every chunk is live, and the
+    # request only has to add the memory back.
+    manager = FakeManager()
+    current = _tree([1, 2, 3], [], {}, available_free=[1, 2, 3])
+    requested = _tree([1, 2, 3], [], {-1: GB // 2})
+    baseline_mgr = FakeBaselineManager(
+        live=_tree([1, 2, 3], [PoolMemoryRegion(0x1_0000_0000, GB // 2, 0)], {}))
+
+    diff = reconcile_pool(current, requested, set(), False, manager, baseline_mgr)
+
+    assert diff.memory_to_pool == [(-1, GB // 2)]
+    assert diff.cpus_to_pool == [] and diff.cpus_to_host == []
+    assert diff.memory_to_host == []
+    assert len(manager.applied) == 1
+    assert not baseline_mgr.written
+
+
 def test_pool_cpus_stay_valid_apic_ids(monkeypatch):
     # A CPU in the pool is gone from /proc/cpuinfo, but re-init must still name it.
     monkeypatch.setattr(main, "get_valid_apic_ids_from_system", lambda: {0})

@@ -49,6 +49,9 @@ _NO_MEMORY_ERROR = (
     "expected memory@N { size; numa-node-id; }"
 )
 
+# A live pool always publishes cpus-available, and may legitimately hold no
+# memory at all: a transaction that gave back every chunk but kept the CPUs.
+
 
 class DeviceTreeParser:
     """Parser for multikernel device trees."""
@@ -302,7 +305,8 @@ class DeviceTreeParser:
                 raise ParseError(_LEGACY_MEMORY_ERROR)
 
         if not regions and not requested:
-            raise ParseError(_NO_MEMORY_ERROR)
+            if self._optional_prop(resources_node, 'cpus-available') is None:
+                raise ParseError(_NO_MEMORY_ERROR)
 
         total_bytes = sum(r.size for r in regions) or sum(requested.values())
 
@@ -821,6 +825,12 @@ class DeviceTreeParser:
             raise ParseError("Missing 'cpus' property in /resources")
 
         available = [int(x.strip()) for x in cpus_match.group(1).split()]
+
+        free_match = re.search(r'cpus-available\s*=\s*<([^>]+)>', resources_text)
+        available_free = None
+        if free_match:
+            available_free = [int(x.strip()) for x in free_match.group(1).split()]
+
         if available:
             total = max(available) + 1
         else:
@@ -834,7 +844,8 @@ class DeviceTreeParser:
             total=total,
             host_reserved=host_reserved,
             available=available,
-            topology=topology
+            topology=topology,
+            available_free=available_free
         )
 
     def _split_node_body(self, body: str) -> Tuple[str, List[Tuple[str, str]]]:
@@ -907,7 +918,8 @@ class DeviceTreeParser:
                 raise ParseError(f"{name}: expected 'reg' (existing chunk) or 'size' (request)")
 
         if not regions and not requested:
-            raise ParseError(_NO_MEMORY_ERROR)
+            if not re.search(r'cpus-available\s*=', own_properties):
+                raise ParseError(_NO_MEMORY_ERROR)
 
         total_bytes = sum(r.size for r in regions) or sum(requested.values())
 

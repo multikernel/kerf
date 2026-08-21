@@ -209,6 +209,17 @@ _DTS_TOPOLOGY = """
 };
 """
 
+_DTS_LIVE_NO_MEMORY = """
+/multikernel-v1/;
+
+/ {
+    resources {
+        cpus = <4 5>;
+        cpus-available = <5>;
+    };
+};
+"""
+
 _DTS_NO_MEMORY = """
 /multikernel-v1/;
 
@@ -237,6 +248,25 @@ def test_parse_dtb_without_memory_rejected():
 
     with pytest.raises(ParseError, match="No memory description"):
         DeviceTreeParser().parse_dtb_from_bytes(_dtb(build))
+
+
+def test_parse_dts_live_pool_without_memory_accepted():
+    tree = DeviceTreeParser().parse_dts(_DTS_LIVE_NO_MEMORY)
+    assert tree.hardware.memory.regions == []
+    assert tree.hardware.memory.requested == {}
+    assert tree.hardware.memory.total_bytes == 0
+    assert tree.hardware.cpus.available_free == [5]
+
+
+def test_parse_dtb_live_pool_without_memory_accepted():
+    def build(sw):
+        sw.property("cpus-available", struct.pack(">Q", 5))
+
+    tree = DeviceTreeParser().parse_dtb_from_bytes(_dtb(build))
+    assert tree.hardware.memory.regions == []
+    assert tree.hardware.memory.requested == {}
+    assert tree.hardware.memory.total_bytes == 0
+    assert tree.hardware.cpus.available_free == [5]
 
 
 def test_parse_dtb_legacy_memory_base_alone_rejected():
