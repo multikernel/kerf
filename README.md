@@ -128,6 +128,7 @@ Baseline DTB (static)
 ### Command Line Interface
 ```bash
 # Initialize resource pool with CPUs and pool memory
+# A plain size lands on the NUMA node of the requested CPUs
 kerf init --cpus=4-7 --memory=2GB
 
 # Initialize with CPUs, per-node memory and devices
