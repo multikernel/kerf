@@ -37,6 +37,12 @@ jobs:
 
     - name: Install dependencies
       run: |
+        # pylibfdt builds its SWIG wrapper from source, and swig 4.5 dropped
+        # the PyInt_* macros that wrapper still uses. Poetry builds sdists
+        # with "pip --isolated", which ignores PIP_CONSTRAINT, so build
+        # pylibfdt ourselves with a pinned swig and let poetry find it.
+        poetry run python -m pip install "swig<4.5" setuptools setuptools_scm
+        poetry run python -m pip install --no-build-isolation "pylibfdt>=1.7.0,<2"
         poetry install --no-interaction
 
     - name: Analysing the code with pylint
