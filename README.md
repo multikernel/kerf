@@ -134,9 +134,12 @@ kerf init --cpus=4-7 --memory=2GB
 # Initialize with CPUs, per-node memory and devices
 kerf init --cpus=4-31 --memory=8GB@0,8GB@1 --devices=enp9s0_dev,nvme0
 
-# Re-run to reshape the live pool, or hand everything back to the host
+# Re-run to reshape the live pool; "none" asks for none of a resource
 kerf init --cpus=4-15 --memory=4GB
-kerf init --teardown
+kerf init --cpus=4-15 --memory=none
+
+# Hand everything back to the host
+kerf init --cpus=none --memory=none
 
 # Create kernel instance with resource allocation
 kerf create web-server --cpus=4-7 --memory=2GB
