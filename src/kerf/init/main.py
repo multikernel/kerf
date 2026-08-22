@@ -354,7 +354,7 @@ def get_valid_apic_ids_from_system() -> Optional[set]:
     return None
 
 
-_NODE_SPEC = re.compile(r"^node(\d+):(.+)$")
+_NODE_SPEC = re.compile(r"^(.+)@(.*)$")
 
 PAGE_SIZE = 4096
 
@@ -383,8 +383,9 @@ def parse_memory_request(spec: str) -> Dict[int, int]:
     """
     Parse a pool memory request into per-NUMA-node sizes.
 
-    "2GB" asks for 2GB on any node (node -1), "node0:8GB,node1:8GB" asks
-    for a specific amount per node. The two forms cannot be mixed.
+    "2GB" asks for 2GB on any node (node -1), "8GB@0,8GB@1" asks for a
+    specific amount per node, mirroring the device-tree unit address
+    convention. The two forms cannot be mixed.
 
     Args:
         spec: Memory specification string
@@ -404,9 +405,16 @@ def parse_memory_request(spec: str) -> Dict[int, int]:
     for part in parts:
         match = _NODE_SPEC.match(part)
         if match:
-            node, size = int(match.group(1)), parse_memory_spec(match.group(2))
-        elif part.lower().startswith("node"):
-            raise ValueError(f"invalid NUMA node spec '{part}' (expected nodeN:SIZE)")
+            size_part, node_part = match.group(1), match.group(2)
+            try:
+                node = int(node_part)
+            except ValueError as exc:
+                raise ValueError(
+                    f"invalid NUMA node '{node_part}' in '{part}' (expected SIZE@N)"
+                ) from exc
+            if node < 0:
+                raise ValueError(f"NUMA node in '{part}' must not be negative")
+            size = parse_memory_spec(size_part)
         else:
             node, size = ANY_NODE, parse_memory_spec(part)
         if node in requested:
@@ -414,7 +422,7 @@ def parse_memory_request(spec: str) -> Dict[int, int]:
         requested[node] = size
 
     if ANY_NODE in requested and len(requested) > 1:
-        raise ValueError("cannot mix a plain size with nodeN: sizes")
+        raise ValueError("cannot mix a plain size with SIZE@N entries")
     validate_memory_request(requested)
     return requested
 
@@ -432,7 +440,7 @@ def build_baseline_from_cmdline(
     Args:
         cpus: CPU specification string (e.g., "4-7" or "4,5,6,7")
         memory: Pool memory request, either "2GB" for any node or
-                "node0:8GB,node1:8GB" for specific nodes
+                "8GB@0,8GB@1" for specific nodes
         devices: Optional device names (comma-separated, e.g., "enp9s0_dev,nvme0")
         verbose: Whether to print verbose output
         pool_cpus: APIC IDs the pool already holds
@@ -765,7 +773,7 @@ def _dump_baseline_dts(baseline_mgr: BaselineManager, tree: GlobalDeviceTree) ->
 @click.pass_context
 @click.option('--input', '-i', help='Input DTS or DTB file containing all resources. Mutually exclusive with --cpus, --memory and --devices. When used, all resources must come from the file.')
 @click.option('--cpus', '-c', help='APIC ID specification for baseline (e.g., "128-134" or "128,130,132"). Use physical APIC IDs, not logical CPU numbers. Mutually exclusive with --input.')
-@click.option('--memory', '-m', help='Pool memory: SIZE for any node (e.g. "2GB") or per-node "node0:8GB,node1:8GB". Required with --cpus, mutually exclusive with --input.')
+@click.option('--memory', '-m', help='Pool memory: SIZE for any node (e.g. "2GB") or per-node "8GB@0,8GB@1". Required with --cpus, mutually exclusive with --input.')
 @click.option('--devices', '-d', help='Device names (comma-separated, e.g., "enp9s0_dev,nvme0"). Mutually exclusive with --input. Creates minimal device entries in baseline.')
 @click.option('--teardown', is_flag=True, help='Return every pool resource to the host. Mutually exclusive with --input, --cpus, --memory and --devices.')
 @click.option('--dry-run', is_flag=True, help='Report the plan without applying it. Still reads the pool from the kernel, so it needs root.')
@@ -800,7 +808,7 @@ def init(ctx: click.Context, input: Optional[str], cpus: Optional[str], memory: 
         kerf init --cpus=128-134 --memory=1GB
 
         # Request memory per NUMA node
-        kerf init --cpus=128-134 --memory=node0:8GB,node1:8GB
+        kerf init --cpus=128-134 --memory=8GB@0,8GB@1
 
         # Shrink the pool back to 1GB and 2 CPUs
         kerf init --cpus=128,129 --memory=1GB
@@ -837,7 +845,7 @@ def init(ctx: click.Context, input: Optional[str], cpus: Optional[str], memory: 
             click.echo("\nUsage:", err=True)
             click.echo("  kerf init --input=hardware.dts", err=True)
             click.echo("  kerf init --cpus=4-7 --memory=1GB", err=True)
-            click.echo("  kerf init --cpus=4-7 --memory=node0:1GB --devices=enp9s0_dev", err=True)
+            click.echo("  kerf init --cpus=4-7 --memory=1GB@0 --devices=enp9s0_dev", err=True)
             click.echo("  kerf init --teardown", err=True)
             sys.exit(2)
 
