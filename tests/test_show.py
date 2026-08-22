@@ -92,8 +92,8 @@ def test_memory_total_and_host_reserved_hidden_when_zero(capsys, monkeypatch):
     display_baseline_info(_tree(_cpus(), memory))
     out = capsys.readouterr().out
 
-    # The CPU section always prints its own Total/Host Reserved; only the
-    # memory ones (GB-suffixed) are suppressed when the value is 0.
+    # The CPU section prints its own Total and Host Reserved lines; only
+    # the memory ones (GB-suffixed) are suppressed when the value is 0.
     assert "GB) " not in out
     for line in out.splitlines():
         assert not line.strip().startswith("Total:") or "GB" not in line
@@ -147,3 +147,14 @@ def test_pool_without_chunks_says_so(capsys, monkeypatch):
 
     assert "No memory pool configured" in out
     assert "Chunk:" not in out
+
+
+def test_cpu_host_reserved_hidden_when_the_kernel_reports_none(capsys, monkeypatch):
+    # A read-back describes the pool, not the host, and lists no reserved CPU.
+    cpus = CPUAllocation(total=32, host_reserved=[], available=list(range(4, 32)))
+    memory = MemoryAllocation(total_bytes=0, host_reserved_bytes=0, regions=[])
+    monkeypatch.setattr("kerf.show.main.get_pool_allocated_bytes", lambda: None)
+
+    display_baseline_info(_tree(cpus, memory))
+
+    assert "Host Reserved:" not in capsys.readouterr().out

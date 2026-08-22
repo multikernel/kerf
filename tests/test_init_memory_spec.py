@@ -12,11 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The --memory specification accepted by 'kerf init'."""
+"""The resource specifications accepted by 'kerf init'."""
 
 import pytest
 
-from kerf.init.main import parse_memory_request, validate_memory_request
+from kerf.init.main import (
+    parse_cpu_request,
+    parse_device_request,
+    parse_memory_request,
+    validate_memory_request,
+)
 
 GB = 1 << 30
 
@@ -38,7 +43,7 @@ def test_invalid_specs(spec):
         parse_memory_request(spec)
 
 
-@pytest.mark.parametrize("spec", ["0", "0@0", "4097", "5000@1"])
+@pytest.mark.parametrize("spec", ["0@0", "4097", "5000@1"])
 def test_sizes_must_be_positive_and_page_aligned(spec):
     with pytest.raises(ValueError):
         parse_memory_request(spec)
@@ -53,3 +58,44 @@ def test_input_file_sizes_get_the_same_check(requested):
 
 def test_valid_input_file_sizes_pass():
     validate_memory_request({0: GB, 1: 512 << 20})
+
+
+@pytest.mark.parametrize("spec", ["none", "NONE", " none ", "0"])
+def test_memory_none_asks_for_nothing(spec):
+    assert not parse_memory_request(spec)
+
+
+@pytest.mark.parametrize("spec", ["none,1GB@0", "1GB@0,none", "0,2GB", "none,none"])
+def test_memory_none_cannot_be_mixed(spec):
+    with pytest.raises(ValueError, match="cannot be combined with other entries"):
+        parse_memory_request(spec)
+
+
+@pytest.mark.parametrize("spec", ["none", "NONE", " none "])
+def test_cpus_none_asks_for_nothing(spec):
+    assert parse_cpu_request(spec) == []
+
+
+def test_cpus_are_still_parsed():
+    assert parse_cpu_request("1-3,8") == [1, 2, 3, 8]
+
+
+@pytest.mark.parametrize("spec", ["none,4", "4,none", "none,0"])
+def test_cpus_none_cannot_be_mixed(spec):
+    with pytest.raises(ValueError, match="cannot be combined with other entries"):
+        parse_cpu_request(spec)
+
+
+@pytest.mark.parametrize("spec", ["none", "NONE", None, ""])
+def test_devices_none_asks_for_nothing(spec):
+    assert parse_device_request(spec) == []
+
+
+def test_devices_are_still_parsed():
+    assert parse_device_request("enp9s0_dev, nvme0") == ["enp9s0_dev", "nvme0"]
+
+
+@pytest.mark.parametrize("spec", ["none,nvme0", "nvme0,none"])
+def test_devices_none_cannot_be_mixed(spec):
+    with pytest.raises(ValueError, match="cannot be combined with other entries"):
+        parse_device_request(spec)

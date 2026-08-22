@@ -279,9 +279,12 @@ def display_baseline_info(tree: GlobalDeviceTree, verbose: bool = False):
     # CPU Information
     click.echo("\n  CPUs:")
     click.echo(f"    Total:           {hardware.cpus.total}")
-    click.echo(
-        f"    Host Reserved:   {len(hardware.cpus.host_reserved)} cpus: {hardware.cpus.host_reserved}"
-    )
+    # A tree read back from the kernel describes the pool, not the host, so
+    # it carries no host-reserved list worth a line.
+    if hardware.cpus.host_reserved:
+        click.echo(
+            f"    Host Reserved:   {len(hardware.cpus.host_reserved)} cpus: {hardware.cpus.host_reserved}"
+        )
     if hardware.cpus.available_free is not None:
         click.echo(
             f"    Pool CPUs:       {len(hardware.cpus.available)} cpus: {hardware.cpus.available}"

@@ -146,19 +146,34 @@ def test_apply_writes_a_pool_overlay():
     assert not baseline_mgr.written
 
 
-def test_teardown_returns_everything(monkeypatch):
+def test_an_empty_request_returns_everything(monkeypatch):
     monkeypatch.setattr(main, "get_valid_apic_ids_from_system", lambda: {0, 1, 4, 5})
     monkeypatch.setattr(main, "list_instance_names", lambda: [])
     manager, baseline_mgr = FakeManager(), FakeBaselineManager(live=_tree([], [], {}))
     current = _tree([4, 5], [PoolMemoryRegion(0x1_0000_0000, GB, 0)], {})
+    requested = main.build_baseline_from_cmdline("none", memory="none")
 
-    diff = main.reconcile_pool(current, main.build_teardown_tree(), set(), False,
-                               manager, baseline_mgr)
+    diff = main.reconcile_pool(current, requested, set(), False, manager, baseline_mgr)
 
     assert diff.cpus_to_host == [4, 5]
     assert [r.base for r in diff.memory_to_host] == [0x1_0000_0000]
     assert diff.memory_to_pool == []
     assert len(manager.applied) == 1
+
+
+def test_an_empty_request_dry_run_shows_the_releases(monkeypatch, capsys):
+    monkeypatch.setattr(main, "get_valid_apic_ids_from_system", lambda: {0, 4, 5})
+    manager, baseline_mgr = FakeManager(), FakeBaselineManager()
+    current = _tree([4, 5], [PoolMemoryRegion(0x1_0000_0000, GB, 0)], {})
+    requested = main.build_baseline_from_cmdline("none", memory="none")
+
+    main.reconcile_pool(current, requested, set(), True, manager, baseline_mgr)
+    out = capsys.readouterr().out
+
+    assert "CPUs to host: 4, 5" in out
+    assert "Memory to host: 0x100000000 (1024 MB)" in out
+    assert not manager.applied
+    assert not baseline_mgr.written
 
 
 def test_unparseable_read_back_is_a_first_init():
@@ -188,23 +203,26 @@ def test_host_cpu_list_alone_is_not_a_live_pool():
     assert not manager.applied
 
 
-def test_teardown_of_an_empty_pool_writes_nothing():
+def test_an_empty_request_against_an_empty_pool_writes_nothing(monkeypatch):
+    monkeypatch.setattr(main, "get_valid_apic_ids_from_system", lambda: {0, 1})
     manager, baseline_mgr = FakeManager(), FakeBaselineManager()
+    requested = main.build_baseline_from_cmdline("none", memory="none")
 
-    assert reconcile_pool(_tree([0, 1], [], {}), main.build_teardown_tree(), set(), False,
+    assert reconcile_pool(_tree([0, 1], [], {}), requested, set(), False,
                           manager, baseline_mgr) is None
     assert not baseline_mgr.written
     assert not manager.applied
 
 
-def test_teardown_refuses_while_instances_exist(monkeypatch):
+def test_an_empty_request_refuses_while_instances_exist(monkeypatch):
     monkeypatch.setattr(main, "get_valid_apic_ids_from_system", lambda: {0, 4})
     monkeypatch.setattr(main, "list_instance_names", lambda: ["db", "web"])
     manager, baseline_mgr = FakeManager(), FakeBaselineManager()
     current = _tree([4], [PoolMemoryRegion(0x1_0000_0000, GB, 0)], {})
+    requested = main.build_baseline_from_cmdline("none", memory="none")
 
     with pytest.raises(ValidationError, match="delete instances db, web first"):
-        reconcile_pool(current, main.build_teardown_tree(), set(), False, manager, baseline_mgr)
+        reconcile_pool(current, requested, set(), False, manager, baseline_mgr)
     assert not manager.applied
 
 
@@ -277,27 +295,29 @@ def test_pool_apic_ids_ignores_a_host_only_read_back():
     assert main.pool_apic_ids(_tree([0, 1, 2, 3], [], {})) == set()
 
 
-def test_teardown_tree_reserves_pool_cpus(monkeypatch):
+def test_an_empty_request_reserves_pool_cpus(monkeypatch):
     monkeypatch.setattr(main, "get_valid_apic_ids_from_system", lambda: {0})
 
-    tree = main.build_teardown_tree(pool_cpus={1, 2, 3})
+    tree = main.build_baseline_from_cmdline("none", memory="none", pool_cpus={1, 2, 3})
 
     assert tree.hardware.cpus.host_reserved == [0, 1, 2, 3]
     assert not tree.hardware.cpus.available
     assert tree.hardware.cpus.total == 4
+    assert not tree.hardware.memory.requested
+    assert tree.hardware.memory.total_bytes == 0
 
 
-def test_teardown_does_not_read_the_pool_back(monkeypatch, capsys):
-    # After a teardown /resources has no memory@N, so a read-back always
-    # fails; complaining about it makes a clean teardown look broken.
+def test_an_empty_request_does_not_read_the_pool_back(monkeypatch, capsys):
+    # Once the pool is gone /resources has no memory@N, so a read-back
+    # always fails; complaining about it makes a clean exit look broken.
     monkeypatch.setattr(main, "get_valid_apic_ids_from_system", lambda: {0, 1})
     monkeypatch.setattr(main, "list_instance_names", lambda: [])
     manager = FakeManager()
     baseline_mgr = FakeBaselineManager(
         read_error=ParseError("No memory description in /resources"))
     current = _tree([1], [PoolMemoryRegion(0x1_0000_0000, GB, 0)], {})
+    requested = main.build_baseline_from_cmdline("none", memory="none", pool_cpus={1})
 
-    main.reconcile_pool(current, main.build_teardown_tree(pool_cpus={1}), set(), False,
-                        manager, baseline_mgr)
+    main.reconcile_pool(current, requested, set(), False, manager, baseline_mgr)
 
     assert "could not read the pool back" not in capsys.readouterr().err

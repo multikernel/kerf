@@ -361,6 +361,73 @@ _NODE_SPEC = re.compile(r"^(.+)@(.*)$")
 PAGE_SIZE = 4096
 
 
+NO_RESOURCE = "none"
+
+
+def spec_is_empty(spec: str, option: str, synonyms: Tuple[str, ...] = ()) -> bool:
+    """
+    Whether an option spells "none of this resource".
+
+    Args:
+        spec: The option's value as typed on the command line
+        option: The option's name, for the error message
+        synonyms: Extra spellings that mean the same as "none"
+
+    Returns:
+        True if the option asks for nothing
+
+    Raises:
+        ValueError: If an empty spelling is mixed with real entries
+    """
+    empty = {NO_RESOURCE} | set(synonyms)
+    parts = [p.strip().lower() for p in spec.split(",") if p.strip()]
+    asked = [p for p in parts if p in empty]
+    if not asked:
+        return False
+    if len(parts) > 1:
+        raise ValueError(f"{option}={asked[0]} cannot be combined with other entries")
+    return True
+
+
+def parse_cpu_request(spec: str) -> List[int]:
+    """
+    Parse the pool CPU request, where "none" asks for no pool CPUs.
+
+    Args:
+        spec: APIC ID specification, or "none"
+
+    Returns:
+        The requested APIC IDs, empty for "none"
+
+    Raises:
+        ValueError: If the specification is malformed
+    """
+    if spec_is_empty(spec, "--cpus"):
+        return []
+    try:
+        return parse_cpu_spec(spec)
+    except ValueError as e:
+        raise ValueError(f"Invalid CPU specification '{spec}': {e}") from e
+
+
+def parse_device_request(spec: Optional[str]) -> List[str]:
+    """
+    Parse the pool device request, where "none" asks for no devices.
+
+    Args:
+        spec: Comma-separated device names, "none", or None
+
+    Returns:
+        The requested device names, empty for "none" and for no request
+
+    Raises:
+        ValueError: If "none" is mixed with device names
+    """
+    if not spec or spec_is_empty(spec, "--devices"):
+        return []
+    return parse_device_list(spec)
+
+
 def validate_memory_request(requested: Dict[int, int]) -> None:
     """
     Reject pool sizes the kernel cannot honour, however they were asked for.
@@ -388,18 +455,23 @@ def parse_memory_request(spec: str) -> Dict[int, int]:
     "2GB" asks for 2GB without naming a node, which the caller then
     resolves to the node of the requested CPUs; "8GB@0,8GB@1" asks for a
     specific amount per node, mirroring the device-tree unit address
-    convention. The two forms cannot be mixed.
+    convention. The two forms cannot be mixed. "none", or its synonym
+    "0", asks for no pool memory at all.
 
     Args:
         spec: Memory specification string
 
     Returns:
-        Mapping of NUMA node id (-1 when the node is left to kerf) to size in bytes
+        Mapping of NUMA node id (-1 when the node is left to kerf) to size
+        in bytes, empty for "none"
 
     Raises:
         ValueError: If the specification is malformed or a size is zero
                     or not page aligned
     """
+    if spec_is_empty(spec, "--memory", synonyms=("0",)):
+        return {}
+
     parts = [p.strip() for p in spec.split(",") if p.strip()]
     if not parts:
         raise ValueError("empty memory specification")
@@ -513,10 +585,11 @@ def build_baseline_from_cmdline(
     Build a GlobalDeviceTree from command line arguments.
 
     Args:
-        cpus: CPU specification string (e.g., "4-7" or "4,5,6,7")
+        cpus: CPU specification string (e.g., "4-7" or "4,5,6,7"), or "none"
         memory: Pool memory request, either "2GB" on the node of the
-                requested CPUs or "8GB@0,8GB@1" for specific nodes
-        devices: Optional device names (comma-separated, e.g., "enp9s0_dev,nvme0")
+                requested CPUs, "8GB@0,8GB@1" for specific nodes, or "none"
+        devices: Optional device names (comma-separated, e.g., "enp9s0_dev,nvme0"),
+                 or "none"
         verbose: Whether to print verbose output
         pool_cpus: APIC IDs the pool already holds
         pool_regions: Chunks the pool already holds
@@ -528,11 +601,9 @@ def build_baseline_from_cmdline(
         ValueError: If the CPU or memory specification is invalid
         KernelInterfaceError: If the system topology cannot be read
     """
-    try:
-        cpu_list = parse_cpu_spec(cpus)
-    except ValueError as e:
-        raise ValueError(f"Invalid CPU specification '{cpus}': {e}") from e
+    cpu_list = parse_cpu_request(cpus)
 
+    # Silence about memory would otherwise read as "give it all back".
     if not memory:
         raise ValueError("--memory is required")
     requested = parse_memory_request(memory)
@@ -596,8 +667,8 @@ def build_baseline_from_cmdline(
     )
 
     device_dict = {}
-    if devices:
-        device_names = parse_device_list(devices)
+    device_names = parse_device_request(devices)
+    if device_names:
         for device_name in device_names:
             device_info = detect_device_from_system(device_name)
             if device_info:
@@ -633,24 +704,6 @@ def build_baseline_from_cmdline(
     )
 
     return tree
-
-
-def build_teardown_tree(pool_cpus: Optional[set] = None) -> GlobalDeviceTree:
-    """Build the empty requested state: every pool resource goes back to the host."""
-    apic_ids = (get_valid_apic_ids_from_system() or set()) | set(pool_cpus or ())
-    cpu_allocation = CPUAllocation(
-        total=(max(apic_ids) + 1) if apic_ids else 0,
-        host_reserved=sorted(apic_ids),
-        available=[]
-    )
-
-    hardware = HardwareInventory(
-        cpus=cpu_allocation,
-        memory=MemoryAllocation(total_bytes=0, host_reserved_bytes=0, requested={}),
-        devices={}
-    )
-
-    return GlobalDeviceTree(hardware=hardware, instances={}, device_references={})
 
 
 INSTANCES_DIR = "/sys/fs/multikernel/instances"
@@ -718,7 +771,7 @@ def read_current_pool(baseline_mgr) -> Optional[GlobalDeviceTree]:
 
 
 def request_is_empty(requested: GlobalDeviceTree) -> bool:
-    """Whether the request asks for nothing at all, as --teardown does."""
+    """Whether the request asks for nothing at all, so the pool goes away."""
     hardware = requested.hardware
     return not (hardware.cpus.available or hardware.memory.requested or hardware.devices)
 
@@ -784,7 +837,7 @@ def reconcile_pool(
 
     Raises:
         KernelInterfaceError: If the kernel rejects the write or the overlay
-        ValidationError: If a teardown would strand running instances
+        ValidationError: If emptying the pool would strand running instances
     """
     if not pool_is_live(current):
         # The kernel rejects a baseline with no memory@N node, and there is
@@ -858,16 +911,15 @@ def _dump_baseline_dts(baseline_mgr: BaselineManager, tree: GlobalDeviceTree) ->
 @click.command()
 @click.pass_context
 @click.option('--input', '-i', help='Input DTS or DTB file containing all resources. Mutually exclusive with --cpus, --memory and --devices. When used, all resources must come from the file.')
-@click.option('--cpus', '-c', help='APIC ID specification for baseline (e.g., "128-134" or "128,130,132"). Use physical APIC IDs, not logical CPU numbers. Mutually exclusive with --input.')
-@click.option('--memory', '-m', help='Pool memory: SIZE (e.g. "2GB") on the node of the requested CPUs, or per-node "8GB@0,8GB@1". Required with --cpus, mutually exclusive with --input.')
-@click.option('--devices', '-d', help='Device names (comma-separated, e.g., "enp9s0_dev,nvme0"). Mutually exclusive with --input. Creates minimal device entries in baseline.')
-@click.option('--teardown', is_flag=True, help='Return every pool resource to the host. Mutually exclusive with --input, --cpus, --memory and --devices.')
+@click.option('--cpus', '-c', help='APIC ID specification for baseline (e.g., "128-134" or "128,130,132"), or "none" for no pool CPUs. Use physical APIC IDs, not logical CPU numbers. Mutually exclusive with --input.')
+@click.option('--memory', '-m', help='Pool memory: SIZE (e.g. "2GB") on the node of the requested CPUs, per-node "8GB@0,8GB@1", or "none" for no pool memory. Required with --cpus, mutually exclusive with --input.')
+@click.option('--devices', '-d', help='Device names (comma-separated, e.g., "enp9s0_dev,nvme0"), or "none" for no devices. Mutually exclusive with --input. Creates minimal device entries in baseline.')
 @click.option('--dry-run', is_flag=True, help='Report the plan without applying it. Still reads the pool from the kernel, so it needs root.')
-@click.option('--report', is_flag=True, help='Generate detailed validation report. Ignored with --teardown.')
+@click.option('--report', is_flag=True, help='Generate detailed validation report. Ignored when the request asks for no memory.')
 @click.option('--format', type=click.Choice(['text', 'json', 'yaml']),
               default='text', help='Report format (default: text)')
 @click.option('--verbose', '-v', is_flag=True, help='Verbose output')
-def init(ctx: click.Context, input: Optional[str], cpus: Optional[str], memory: Optional[str], devices: Optional[str], teardown: bool, dry_run: bool, report: bool, format: str, verbose: bool):
+def init(ctx: click.Context, input: Optional[str], cpus: Optional[str], memory: Optional[str], devices: Optional[str], dry_run: bool, report: bool, format: str, verbose: bool):
     """
     Initialize baseline device tree configuration.
 
@@ -878,13 +930,17 @@ def init(ctx: click.Context, input: Optional[str], cpus: Optional[str], memory: 
     The command is idempotent: the requested state is compared against the
     pool the kernel reports, and only the difference is applied. An empty
     pool takes the baseline write; a live pool is reconciled with a
-    /resources overlay transaction. Use --teardown to return everything to
-    the host, and --dry-run to see the plan without applying it. Even
-    --dry-run reads the pool from the kernel, so every form needs root.
+    /resources overlay transaction. Use --dry-run to see the plan without
+    applying it. Even --dry-run reads the pool from the kernel, so every
+    form needs root.
 
     You can either provide a DTS/DTB file via --input, or construct the
     request from command line arguments using --cpus and --memory. These
     options are mutually exclusive.
+
+    Every resource is spelled out: --cpus=none, --memory=none (or
+    --memory=0) and --devices=none ask for none of that resource, and a
+    request that asks for nothing returns the whole pool to the host.
 
     A --memory size that names no node is placed on the NUMA node of the
     requested CPUs. Kerf resolves it here so the kernel is always handed an
@@ -903,18 +959,16 @@ def init(ctx: click.Context, input: Optional[str], cpus: Optional[str], memory: 
         # Shrink the pool back to 1GB and 2 CPUs
         kerf init --cpus=128,129 --memory=1GB
 
+        # Keep the CPUs but hand every chunk back
+        kerf init --cpus=128,129 --memory=none
+
         # Return every pool resource to the host
-        kerf init --teardown
+        kerf init --cpus=none --memory=none
 
         # Show what would change without applying
         kerf init --cpus=128-134 --memory=1GB --dry-run
     """
     try:
-        if teardown and (input or cpus or memory or devices):
-            click.echo("Error: --teardown cannot be combined with --input, --cpus, --memory or --devices.", err=True)
-            click.echo("--teardown returns every pool resource to the host.", err=True)
-            sys.exit(2)
-
         # Validate that --input and resource specification options are mutually exclusive
         # When using --input, all resources must come from the DTS file
         if input and (cpus or memory or devices):
@@ -930,13 +984,13 @@ def init(ctx: click.Context, input: Optional[str], cpus: Optional[str], memory: 
             click.echo("Use either --input for a complete DTS/DTB file, or command-line options to construct baseline.", err=True)
             sys.exit(2)
 
-        if not input and not cpus and not teardown:
-            click.echo("Error: Either --input, --cpus or --teardown must be specified", err=True)
+        if not input and not cpus:
+            click.echo("Error: Either --input or --cpus must be specified", err=True)
             click.echo("\nUsage:", err=True)
             click.echo("  kerf init --input=hardware.dts", err=True)
             click.echo("  kerf init --cpus=4-7 --memory=1GB", err=True)
             click.echo("  kerf init --cpus=4-7 --memory=1GB@0 --devices=enp9s0_dev", err=True)
-            click.echo("  kerf init --teardown", err=True)
+            click.echo("  kerf init --cpus=none --memory=none", err=True)
             sys.exit(2)
 
         parser = DeviceTreeParser()
@@ -949,9 +1003,7 @@ def init(ctx: click.Context, input: Optional[str], cpus: Optional[str], memory: 
         live_cpus = pool_apic_ids(current)
         live_regions = pool_memory_regions(current)
 
-        if teardown:
-            tree = build_teardown_tree(pool_cpus=live_cpus)
-        elif input:
+        if input:
             # Parse from input file
             input_path = Path(input)
 
@@ -1004,9 +1056,9 @@ def init(ctx: click.Context, input: Optional[str], cpus: Optional[str], memory: 
             click.echo("\nInstances should be created via 'kerf create'", err=True)
             sys.exit(1)
 
-        # The teardown request holds no resources at all, which the resource
-        # validator reads as an unusable pool.
-        if not teardown:
+        # The resource validator reads a pool with no memory as unusable,
+        # which is exactly what a request for no memory asks for.
+        if tree.hardware.memory.requested:
             validator = MultikernelValidator()
             if dts_content is not None:
                 input_path_str = str(input) if input else "command-line"
