@@ -25,7 +25,7 @@ import os
 import re
 import sys
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 import click
 import libfdt
@@ -47,10 +47,12 @@ from ..models import (
     GlobalDeviceTree,
     HardwareInventory,
     MemoryAllocation,
+    PoolMemoryRegion,
 )
 from ..pool_diff import ANY_NODE, PoolDiff, compute_pool_diff
 from ..resources import get_busy_chunks_from_iomem
 from ..runtime import DeviceTreeManager
+from ..topology import cpu_numa_nodes, node_for_cpus
 
 
 MULTIKERNEL_MOUNT_POINT = "/sys/fs/multikernel"
@@ -364,13 +366,13 @@ def validate_memory_request(requested: Dict[int, int]) -> None:
     Reject pool sizes the kernel cannot honour, however they were asked for.
 
     Args:
-        requested: Mapping of NUMA node id (ANY_NODE for any node) to size
+        requested: Mapping of NUMA node id (ANY_NODE if not resolved yet) to size
 
     Raises:
         ValueError: If a size is zero, negative or not page aligned
     """
     for node, size in sorted(requested.items()):
-        where = "any node" if node == ANY_NODE else f"node {node}"
+        where = "the unpinned request" if node == ANY_NODE else f"node {node}"
         if size <= 0:
             raise ValueError(f"memory size for {where} must be greater than zero")
         if size % PAGE_SIZE:
@@ -383,7 +385,8 @@ def parse_memory_request(spec: str) -> Dict[int, int]:
     """
     Parse a pool memory request into per-NUMA-node sizes.
 
-    "2GB" asks for 2GB on any node (node -1), "8GB@0,8GB@1" asks for a
+    "2GB" asks for 2GB without naming a node, which the caller then
+    resolves to the node of the requested CPUs; "8GB@0,8GB@1" asks for a
     specific amount per node, mirroring the device-tree unit address
     convention. The two forms cannot be mixed.
 
@@ -391,7 +394,7 @@ def parse_memory_request(spec: str) -> Dict[int, int]:
         spec: Memory specification string
 
     Returns:
-        Mapping of NUMA node id (-1 for any node) to size in bytes
+        Mapping of NUMA node id (-1 when the node is left to kerf) to size in bytes
 
     Raises:
         ValueError: If the specification is malformed or a size is zero
@@ -427,23 +430,96 @@ def parse_memory_request(spec: str) -> Dict[int, int]:
     return requested
 
 
+def _cpu_ranges(cpus: List[int]) -> str:
+    """Render APIC ids the way they are written on the command line."""
+    parts = []
+    for cpu in sorted(set(cpus)):
+        if parts and cpu == parts[-1][1] + 1:
+            parts[-1][1] = cpu
+        else:
+            parts.append([cpu, cpu])
+    return ",".join(str(a) if a == b else f"{a}-{b}" for a, b in parts)
+
+
+def pick_memory_node(cpu_list: List[int],
+                     pool_cpus: Optional[set] = None,
+                     pool_regions: Optional[List[PoolMemoryRegion]] = None
+                     ) -> Tuple[int, str]:
+    """
+    Choose the NUMA node for a memory request that did not name one.
+
+    Placement is policy, so kerf decides it and the kernel is only ever
+    handed an explicit node.
+
+    Args:
+        cpu_list: APIC IDs the pool is being asked for
+        pool_cpus: APIC IDs the pool already holds
+        pool_regions: Chunks the pool already holds
+
+    Returns:
+        The chosen node and a short reason to show the user
+    """
+    node = node_for_cpus(cpu_list, cpu_numa_nodes())
+    if node is not None:
+        return node, f"from CPUs {_cpu_ranges(cpu_list)}"
+
+    # A CPU the pool already took is offline, so neither sysfs nor
+    # /proc/cpuinfo places it any more; its chunks still do.
+    if set(cpu_list) & set(pool_cpus or ()):
+        nodes = {r.node for r in (pool_regions or []) if r.node != ANY_NODE}
+        if len(nodes) == 1:
+            return nodes.pop(), "from the chunks the pool already holds"
+
+    return 0, "no NUMA topology available, defaulting to node 0"
+
+
+def resolve_memory_nodes(requested: Dict[int, int],
+                         cpu_list: List[int],
+                         pool_cpus: Optional[set] = None,
+                         pool_regions: Optional[List[PoolMemoryRegion]] = None
+                         ) -> Tuple[Dict[int, int], Optional[str]]:
+    """
+    Pin an unpinned memory request to a node before the kernel sees it.
+
+    Args:
+        requested: Mapping of NUMA node id (ANY_NODE for unpinned) to size
+        cpu_list: APIC IDs the pool is being asked for
+        pool_cpus: APIC IDs the pool already holds
+        pool_regions: Chunks the pool already holds
+
+    Returns:
+        The request with every size on an explicit node, and a line
+        describing the choice, or None if nothing had to be resolved
+    """
+    resolved = dict(requested)
+    size = resolved.pop(ANY_NODE, None)
+    if size is None:
+        return resolved, None
+
+    node, why = pick_memory_node(cpu_list, pool_cpus, pool_regions)
+    resolved[node] = resolved.get(node, 0) + size
+    return resolved, f"Memory: {size >> 20} MB on node {node} ({why})"
+
+
 def build_baseline_from_cmdline(
     cpus: str,
     memory: Optional[str] = None,
     devices: Optional[str] = None,
     verbose: bool = False,
-    pool_cpus: Optional[set] = None
+    pool_cpus: Optional[set] = None,
+    pool_regions: Optional[List[PoolMemoryRegion]] = None
 ) -> GlobalDeviceTree:
     """
     Build a GlobalDeviceTree from command line arguments.
 
     Args:
         cpus: CPU specification string (e.g., "4-7" or "4,5,6,7")
-        memory: Pool memory request, either "2GB" for any node or
-                "8GB@0,8GB@1" for specific nodes
+        memory: Pool memory request, either "2GB" on the node of the
+                requested CPUs or "8GB@0,8GB@1" for specific nodes
         devices: Optional device names (comma-separated, e.g., "enp9s0_dev,nvme0")
         verbose: Whether to print verbose output
         pool_cpus: APIC IDs the pool already holds
+        pool_regions: Chunks the pool already holds
 
     Returns:
         GlobalDeviceTree with resources only (no instances)
@@ -493,6 +569,10 @@ def build_baseline_from_cmdline(
         host_reserved_cpus = [0]
         cpu_list = sorted(list(available_cpus))
 
+    requested, note = resolve_memory_nodes(requested, cpu_list, pool_cpus, pool_regions)
+    if note:
+        click.echo(note)
+
     total_bytes = sum(requested.values())
     if verbose:
         click.echo(f"Parsed APIC ID specification: {cpus}")
@@ -501,8 +581,7 @@ def build_baseline_from_cmdline(
         click.echo(f"  Available APIC IDs: {cpu_list}")
         click.echo("Requested pool memory:")
         for node, size in sorted(requested.items()):
-            where = "any node" if node < 0 else f"node {node}"
-            click.echo(f"  {where}: {size} bytes ({size / (1024**3):.2f} GB)")
+            click.echo(f"  node {node}: {size} bytes ({size / (1024**3):.2f} GB)")
 
     cpu_allocation = CPUAllocation(
         total=total_cpus,
@@ -609,6 +688,13 @@ def pool_apic_ids(current: Optional[GlobalDeviceTree]) -> set:
     if not pool_is_live(current):
         return set()
     return set(current.hardware.cpus.available or [])
+
+
+def pool_memory_regions(current: Optional[GlobalDeviceTree]) -> List[PoolMemoryRegion]:
+    """Chunks the live pool holds, which place CPUs the host no longer reports."""
+    if not pool_is_live(current):
+        return []
+    return list(current.hardware.memory.regions)
 
 
 def read_current_pool(baseline_mgr) -> Optional[GlobalDeviceTree]:
@@ -773,7 +859,7 @@ def _dump_baseline_dts(baseline_mgr: BaselineManager, tree: GlobalDeviceTree) ->
 @click.pass_context
 @click.option('--input', '-i', help='Input DTS or DTB file containing all resources. Mutually exclusive with --cpus, --memory and --devices. When used, all resources must come from the file.')
 @click.option('--cpus', '-c', help='APIC ID specification for baseline (e.g., "128-134" or "128,130,132"). Use physical APIC IDs, not logical CPU numbers. Mutually exclusive with --input.')
-@click.option('--memory', '-m', help='Pool memory: SIZE for any node (e.g. "2GB") or per-node "8GB@0,8GB@1". Required with --cpus, mutually exclusive with --input.')
+@click.option('--memory', '-m', help='Pool memory: SIZE (e.g. "2GB") on the node of the requested CPUs, or per-node "8GB@0,8GB@1". Required with --cpus, mutually exclusive with --input.')
 @click.option('--devices', '-d', help='Device names (comma-separated, e.g., "enp9s0_dev,nvme0"). Mutually exclusive with --input. Creates minimal device entries in baseline.')
 @click.option('--teardown', is_flag=True, help='Return every pool resource to the host. Mutually exclusive with --input, --cpus, --memory and --devices.')
 @click.option('--dry-run', is_flag=True, help='Report the plan without applying it. Still reads the pool from the kernel, so it needs root.')
@@ -800,11 +886,15 @@ def init(ctx: click.Context, input: Optional[str], cpus: Optional[str], memory: 
     request from command line arguments using --cpus and --memory. These
     options are mutually exclusive.
 
+    A --memory size that names no node is placed on the NUMA node of the
+    requested CPUs. Kerf resolves it here so the kernel is always handed an
+    explicit node and never picks the placement itself.
+
     Examples:
         # Initialize from DTS file (all resources from file)
         kerf init --input=hardware.dts
 
-        # Request 1GB of pool memory on any node
+        # Request 1GB of pool memory on the node of the requested CPUs
         kerf init --cpus=128-134 --memory=1GB
 
         # Request memory per NUMA node
@@ -857,6 +947,7 @@ def init(ctx: click.Context, input: Optional[str], cpus: Optional[str], memory: 
         mount_multikernel_fs(verbose=verbose)
         current = read_current_pool(baseline_mgr)
         live_cpus = pool_apic_ids(current)
+        live_regions = pool_memory_regions(current)
 
         if teardown:
             tree = build_teardown_tree(pool_cpus=live_cpus)
@@ -884,11 +975,18 @@ def init(ctx: click.Context, input: Optional[str], cpus: Optional[str], memory: 
             except ValueError as e:
                 click.echo(f"Error: {input}: {e}", err=True)
                 sys.exit(2)
+
+            tree.hardware.memory.requested, note = resolve_memory_nodes(
+                tree.hardware.memory.requested, tree.hardware.cpus.available,
+                live_cpus, live_regions)
+            if note:
+                click.echo(note)
         else:
             # Build from command line arguments
             try:
                 tree = build_baseline_from_cmdline(cpus, memory=memory, devices=devices,
-                                                   verbose=verbose, pool_cpus=live_cpus)
+                                                   verbose=verbose, pool_cpus=live_cpus,
+                                                   pool_regions=live_regions)
             except ValueError as e:
                 click.echo(f"Error: {e}", err=True)
                 sys.exit(2)
