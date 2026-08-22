@@ -69,18 +69,13 @@ def create(name: str, cpus: List[int], memory: int):
         # Validate resources (against baseline)
         validate_cpu_allocation(modified, cpus)
 
-        # Find memory base
-        memory_base = find_available_memory_base(modified, memory)
-        if not memory_base:
-            raise ResourceError("No memory available")
-
-        # Create instance
+        # Create instance; the kernel places its memory in the pool
         instance = Instance(
             name=name,
             id=find_next_instance_id(modified),
             resources=InstanceResources(
                 cpus=cpus,
-                memory_base=memory_base,
+                memory_base=0,
                 memory_bytes=memory,
                 devices=[]
             )
@@ -173,6 +168,57 @@ class DeviceTreeManager:
         """
         return self.baseline_mgr.read_baseline()
 
+    def apply_dtbo(self, dtbo_data: bytes) -> str:
+        """
+        Write a compiled overlay to the kernel and check the transaction.
+
+        Args:
+            dtbo_data: DTBO blob to hand to /sys/fs/multikernel/overlays/new
+
+        Returns:
+            Transaction ID (from kernel-created directory)
+
+        Raises:
+            KernelInterfaceError: If the write fails or the kernel reports a
+                                  status other than applied
+        """
+        if not self.overlays_new.exists():
+            raise KernelInterfaceError(f"Overlay interface not found: {self.overlays_new}")
+
+        try:
+            with open(self.overlays_new, "wb") as f:
+                f.write(dtbo_data)
+        except OSError as e:
+            raise KernelInterfaceError(
+                f"Failed to write overlay to {self.overlays_new}: {e}"
+            ) from e
+
+        tx_id = self._find_latest_transaction()
+        if not tx_id:
+            raise KernelInterfaceError(
+                "Overlay written but kernel did not create transaction directory"
+            )
+
+        tx_dir = self.overlays_dir / f"tx_{tx_id}"
+        try:
+            status = (tx_dir / "status").read_text(encoding="utf-8").strip()
+        except OSError:
+            # An unreadable status may just mean the kernel is still processing.
+            return tx_id
+
+        if status not in ("applied", "success", "ok"):
+            error_msg = f"Overlay transaction {tx_id} failed with status: '{status}'"
+            try:
+                # The file is named 'instance' but holds the target path of
+                # the overlay's first fragment.
+                target = (tx_dir / "instance").read_text(encoding="utf-8").strip()
+                error_msg += f" (target: {target})"
+            except OSError:
+                pass
+            raise KernelInterfaceError(error_msg)
+
+        return tx_id
+
     def apply_overlay(self, current: GlobalDeviceTree, modified: GlobalDeviceTree) -> str:
         """
         Apply overlay by writing DTBO to kernel.
@@ -215,50 +261,7 @@ class DeviceTreeManager:
         except Exception as e:
             raise KernelInterfaceError(f"Failed to generate overlay: {e}") from e
 
-        try:
-            if not self.overlays_new.exists():
-                raise KernelInterfaceError(f"Overlay interface not found: {self.overlays_new}")
-
-            with open(self.overlays_new, "wb") as f:
-                f.write(dtbo_data)
-
-            tx_id = self._find_latest_transaction()
-            if not tx_id:
-                raise KernelInterfaceError(
-                    "Overlay written but kernel did not create transaction directory"
-                )
-
-            # Verify transaction succeeded by checking status
-            tx_dir = self.overlays_dir / f"tx_{tx_id}"
-            status_file = tx_dir / "status"
-
-            if status_file.exists():
-                try:
-                    with open(status_file, "r", encoding="utf-8") as f:
-                        status = f.read().strip()
-                    if status not in ("applied", "success", "ok"):
-                        error_msg = f"Overlay transaction {tx_id} failed with status: '{status}'"
-                        instance_file = tx_dir / "instance"
-                        if instance_file.exists():
-                            try:
-                                with open(instance_file, "r", encoding="utf-8") as f:
-                                    instance_name = f.read().strip()
-                                error_msg += f" (instance: {instance_name})"
-                            except OSError:
-                                pass
-
-                        raise KernelInterfaceError(error_msg)
-                except OSError:
-                    # If we can't read status, assume it might still be processing
-                    # But warn that we couldn't verify
-                    pass
-
-            return tx_id
-
-        except OSError as e:
-            raise KernelInterfaceError(
-                f"Failed to write overlay to {self.overlays_new}: {e}"
-            ) from e
+        return self.apply_dtbo(dtbo_data)
 
     def apply_removal_overlay(self, instance_name: str) -> str:
         """
@@ -278,54 +281,13 @@ class DeviceTreeManager:
         Raises:
             KernelInterfaceError: If overlay application fails
         """
-        with self._acquire_lock():
+        with self.lock():
             try:
                 dtbo_data = self.overlay_gen.generate_removal_overlay(instance_name)
             except Exception as e:
                 raise KernelInterfaceError(f"Failed to generate removal overlay: {e}") from e
 
-            try:
-                if not self.overlays_new.exists():
-                    raise KernelInterfaceError(f"Overlay interface not found: {self.overlays_new}")
-
-                with open(self.overlays_new, "wb") as f:
-                    f.write(dtbo_data)
-
-                tx_id = self._find_latest_transaction()
-                if not tx_id:
-                    raise KernelInterfaceError(
-                        "Overlay written but kernel did not create transaction directory"
-                    )
-
-                tx_dir = self.overlays_dir / f"tx_{tx_id}"
-                status_file = tx_dir / "status"
-
-                if status_file.exists():
-                    try:
-                        with open(status_file, "r", encoding="utf-8") as f:
-                            status = f.read().strip()
-                        if status not in ("applied", "success", "ok"):
-                            error_msg = (
-                                f"Overlay transaction {tx_id} failed with status: '{status}'"
-                            )
-                            instance_file = tx_dir / "instance"
-                            if instance_file.exists():
-                                try:
-                                    with open(instance_file, "r", encoding="utf-8") as f:
-                                        tx_instance_name = f.read().strip()
-                                    error_msg += f" (instance: {tx_instance_name})"
-                                except OSError:
-                                    pass
-                            raise KernelInterfaceError(error_msg)
-                    except OSError:
-                        pass
-
-                return tx_id
-
-            except OSError as e:
-                raise KernelInterfaceError(
-                    f"Failed to write overlay to {self.overlays_new}: {e}"
-                ) from e
+            return self.apply_dtbo(dtbo_data)
 
     def _find_latest_transaction(self) -> Optional[str]:
         """Find the latest transaction ID from kernel-created directories."""
@@ -417,7 +379,7 @@ class DeviceTreeManager:
         return transactions
 
     @contextmanager
-    def _acquire_lock(self):
+    def lock(self):
         """
         Acquire file lock for concurrency safety.
 
@@ -486,7 +448,7 @@ class DeviceTreeManager:
             KernelInterfaceError: If kernel interface operations fail
             Any exceptions raised by the operation function
         """
-        with self._acquire_lock():
+        with self.lock():
             current = self.read_baseline()
 
             # Apply operation (returns modified state)

@@ -32,7 +32,7 @@ import click
 from ..create.main import parse_cpu_spec, parse_memory_base, parse_memory_spec
 from ..exceptions import KernelInterfaceError, ParseError, ResourceError, ValidationError
 from ..resources import (
-    find_available_memory_base,
+    chunk_containing,
     validate_cpu_allocation,
     validate_memory_allocation,
 )
@@ -281,35 +281,23 @@ def update(
 
             if memory_bytes is not None:
                 if memory_base_addr is None:
-                    # Keep the same base address and extend/shrink in place
                     old_base = existing_instance.resources.memory_base
                     old_size = existing_instance.resources.memory_bytes
 
+                    # The overlay names an existing range, so an instance can
+                    # only grow into the chunk it already sits in.
                     if memory_bytes > old_size:
-                        # Growing: validate the extension region doesn't overlap
-                        extension_base = old_base + old_size
-                        extension_size = memory_bytes - old_size
-                        try:
-                            validate_memory_allocation(
-                                modified, extension_base, extension_size,
-                                exclude_instance=instance_node_name
+                        if chunk_containing(modified, old_base, memory_bytes) is None:
+                            raise ResourceError(
+                                f"Cannot grow instance '{name}' to {memory_bytes} bytes: "
+                                f"the extension leaves the pool chunk holding "
+                                f"{hex(old_base)}-{hex(old_base + old_size - 1)}"
                             )
-                            memory_base_addr = old_base
-                        except (ResourceError,) as exc:
-                            # Extension conflicts, find a completely new region
-                            found_base = find_available_memory_base(modified, memory_bytes)
-                            if found_base is None:
-                                raise ResourceError(
-                                    f"No available memory region found for {memory_bytes} bytes. "
-                                    "Try specifying --memory-base or reduce memory size."
-                                ) from exc
-                            memory_base_addr = found_base
-                    elif memory_bytes < old_size:
-                        # Shrinking: always keep the same base
-                        memory_base_addr = old_base
-                    else:
-                        # Same size, no change
-                        memory_base_addr = old_base
+                        validate_memory_allocation(
+                            modified, old_base + old_size, memory_bytes - old_size,
+                            exclude_instance=instance_node_name
+                        )
+                    memory_base_addr = old_base
                 else:
                     validate_memory_allocation(
                         modified, memory_base_addr, memory_bytes, exclude_instance=instance_node_name
@@ -364,50 +352,11 @@ def update(
                 dtbo_data = manager.overlay_gen.generate_update_overlay(name, old_instance, new_instance)
                 return dtbo_data
 
-            with manager._acquire_lock():  # pylint: disable=protected-access
+            with manager.lock():
                 current = manager.read_baseline()
                 dtbo_data = apply_update_operation(current)
 
-                try:
-                    if not manager.overlays_new.exists():
-                        raise KernelInterfaceError(
-                            f"Overlay interface not found: {manager.overlays_new}"
-                        )
-
-                    with open(manager.overlays_new, 'wb') as f:
-                        f.write(dtbo_data)
-
-                    tx_id = manager._find_latest_transaction()  # pylint: disable=protected-access
-                    if not tx_id:
-                        raise KernelInterfaceError(
-                            "Overlay written but kernel did not create transaction directory"
-                        )
-
-                    tx_dir = manager.overlays_dir / f"tx_{tx_id}"
-                    status_file = tx_dir / "status"
-
-                    if status_file.exists():
-                        try:
-                            with open(status_file, 'r', encoding='utf-8') as f:
-                                status = f.read().strip()
-                            if status not in ("applied", "success", "ok"):
-                                error_msg = f"Overlay transaction {tx_id} failed with status: '{status}'"
-                                instance_file = tx_dir / "instance"
-                                if instance_file.exists():
-                                    try:
-                                        with open(instance_file, 'r', encoding='utf-8') as f:
-                                            instance_name_from_tx = f.read().strip()
-                                        error_msg += f" (instance: {instance_name_from_tx})"
-                                    except OSError:
-                                        pass
-                                raise KernelInterfaceError(error_msg)
-                        except OSError:
-                            pass
-
-                except OSError as e:
-                    raise KernelInterfaceError(
-                        f"Failed to write overlay to {manager.overlays_new}: {e}"
-                    ) from e
+                tx_id = manager.apply_dtbo(dtbo_data)
 
             click.echo(f"✓ Updated instance '{name}' (transaction {tx_id})")
             if verbose:

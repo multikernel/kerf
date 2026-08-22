@@ -29,6 +29,7 @@ from kerf.models import (
     HardwareInventory,
     CPUAllocation,
     MemoryAllocation,
+    PoolMemoryRegion,
     DeviceInfo,
     Instance,
     InstanceResources,
@@ -49,8 +50,7 @@ def create_test_tree():
     memory = MemoryAllocation(
         total_bytes=16 * 1024**3,  # 16GB
         host_reserved_bytes=2 * 1024**3,  # 2GB
-        memory_pool_base=0x80000000,
-        memory_pool_bytes=14 * 1024**3,  # 14GB
+        regions=[PoolMemoryRegion(base=0x80000000, size=14 * 1024**3, node=0)],  # 14GB
     )
 
     devices = {
@@ -131,6 +131,21 @@ def test_validation():
     print(report)
 
     assert result.is_valid, "Validation should pass for valid tree"
+
+
+def test_reporter_zero_total_bytes():
+    """A kernel read-back tree has total_bytes == 0; percentages must not divide by zero."""
+    tree = create_test_tree()
+    tree.hardware.memory.total_bytes = 0
+    tree.hardware.memory.host_reserved_bytes = 0
+
+    validator = MultikernelValidator()
+    result = validator.validate(tree)
+
+    reporter = ValidationReporter()
+    report = reporter.generate_report(result, tree, verbose=True)
+
+    assert "n/a" in report
 
 
 def test_extraction():

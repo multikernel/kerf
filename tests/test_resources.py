@@ -24,7 +24,9 @@ from kerf.resources import (
     get_allocated_memory_regions_from_iomem,
     get_memory_pool_from_iomem,
     get_pool_allocated_bytes,
-    find_available_memory_base,
+    get_pool_chunks_from_iomem,
+    get_busy_chunks_from_iomem,
+    chunk_containing,
     validate_cpu_allocation,
     validate_memory_allocation,
     find_next_instance_id,
@@ -43,6 +45,19 @@ class TestCPUAllocation:
         # web-server uses 4-7, database uses 8-15
         # So 16-31 should be available
         assert available == set(range(16, 32))
+
+    def test_get_available_cpus_trusts_the_kernel_free_list(self, sample_tree):
+        """A read-back lists no instances, so its free list is the only truth."""
+        sample_tree.hardware.cpus.available_free = [20, 21, 22]
+        sample_tree.instances = {}
+
+        assert get_available_cpus(sample_tree) == {20, 21, 22}
+
+    def test_get_available_cpus_free_list_minus_tree_instances(self, sample_tree):
+        """When the tree does list instances, their CPUs are not free."""
+        sample_tree.hardware.cpus.available_free = [4, 5, 20]
+
+        assert get_available_cpus(sample_tree) == {20}
 
     def test_get_allocated_cpus(self, sample_tree):
         """Test getting allocated CPUs."""
@@ -100,38 +115,25 @@ class TestMemoryAllocation:
         assert 0x80000000 in bases  # web-server
         assert 0x100000000 in bases  # database
 
-    def test_find_available_memory_base_empty_pool(self, sample_hardware):
-        """Test finding memory base in empty pool."""
-        from kerf.models import GlobalDeviceTree
+    def test_chunk_containing_finds_the_holding_chunk(self, sample_tree):
+        """A region inside a chunk resolves to that chunk."""
+        chunk = chunk_containing(sample_tree, 0x100000000, 1024**3)
 
-        # Create tree with no instances
+        assert chunk is sample_tree.hardware.memory.regions[0]
+
+    def test_chunk_containing_rejects_a_region_spanning_two_chunks(self, sample_hardware):
+        """Host memory between two chunks is not part of the pool."""
+        from kerf.models import GlobalDeviceTree, PoolMemoryRegion
+
+        sample_hardware.memory.regions = [
+            PoolMemoryRegion(base=0x100000000, size=1024**3, node=0),
+            PoolMemoryRegion(base=0x200000000, size=1024**3, node=1),
+        ]
         tree = GlobalDeviceTree(hardware=sample_hardware, instances={}, device_references={})
 
-        # Request 1GB
-        size = 1024**3
-        base = find_available_memory_base(tree, size, use_iomem=False)
-
-        # Should get start of pool (aligned)
-        assert base == sample_hardware.memory.memory_pool_base
-
-    def test_find_available_memory_base_with_allocations(self, sample_tree):
-        """Test finding memory base with existing allocations."""
-        # Request 1GB after existing allocations
-        size = 1024**3
-        base = find_available_memory_base(sample_tree, size, use_iomem=False)
-
-        # Should find a gap or append at end
-        assert base is not None
-        assert base >= sample_tree.hardware.memory.memory_pool_base
-
-    def test_find_available_memory_base_no_space(self, sample_tree):
-        """Test finding memory base when no space available."""
-        # Request more memory than available in pool
-        size = 100 * 1024**3  # 100GB - way more than pool size
-        base = find_available_memory_base(sample_tree, size, use_iomem=False)
-
-        # Should return None
-        assert base is None
+        assert chunk_containing(tree, 0x100000000, 1024**3) is not None
+        assert chunk_containing(tree, 0x200000000, 1024**3) is not None
+        assert chunk_containing(tree, 0x1C0000000, 1024**3) is None
 
     def test_validate_memory_allocation_success(self, sample_tree):
         """Test successful memory allocation validation."""
@@ -153,12 +155,12 @@ class TestMemoryAllocation:
             validate_memory_allocation(sample_tree, memory_base, memory_bytes)
 
     def test_validate_memory_allocation_out_of_pool(self, sample_tree):
-        """Test memory allocation outside pool."""
-        # Use base before pool
-        memory_base = 0x10000000  # Below pool base
+        """Test memory allocation outside every pool chunk."""
+        # Use base before the only chunk
+        memory_base = 0x10000000
         memory_bytes = 1024**3
 
-        with pytest.raises(ResourceError, match="below pool base"):
+        with pytest.raises(ResourceError, match="does not fit in any pool chunk"):
             validate_memory_allocation(sample_tree, memory_base, memory_bytes)
 
     def test_validate_memory_allocation_misaligned(self, sample_tree):
@@ -303,3 +305,38 @@ class TestIomemPoolAccounting:
         )
         usage = get_pool_allocated_bytes(str(path))
         assert usage == (0x40000000, 0x40000000, 0x8000000)
+
+    TWO_CHUNKS = "\n".join(
+        [
+            "100000000-13fffffff : Multikernel Memory Pool",
+            "  100000000-10fffffff : mk-instance-1-web-region-0",
+            "200000000-21fffffff : Multikernel Memory Pool",
+        ]
+    )
+
+    @pytest.fixture
+    def two_chunk_iomem(self, tmp_path):
+        path = tmp_path / "iomem"
+        path.write_text(self.TWO_CHUNKS + "\n", encoding="utf-8")
+        return str(path)
+
+    def test_pool_chunks_and_busy(self, two_chunk_iomem):
+        assert get_pool_chunks_from_iomem(two_chunk_iomem) == [
+            (0x100000000, 1 << 30),
+            (0x200000000, 1 << 29),
+        ]
+        assert get_busy_chunks_from_iomem(two_chunk_iomem) == {0x100000000}
+
+    def test_first_chunk_and_allocation_across_chunks(self, two_chunk_iomem):
+        assert get_memory_pool_from_iomem(two_chunk_iomem) == (0x100000000, 1 << 30)
+        assert get_pool_allocated_bytes(two_chunk_iomem) == (
+            0x100000000,
+            (1 << 30) + (1 << 29),
+            1 << 28,
+        )
+
+    def test_no_chunks(self, tmp_path):
+        path = tmp_path / "iomem"
+        path.write_text("00001000-0009ffff : System RAM\n", encoding="utf-8")
+        assert get_pool_chunks_from_iomem(str(path)) == []
+        assert get_busy_chunks_from_iomem(str(path)) == set()

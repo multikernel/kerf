@@ -37,10 +37,9 @@ class TestDeviceTreeParser:
 
         # Verify resources match
         assert parsed_tree.hardware.cpus.available == sample_tree.hardware.cpus.available
-        assert (
-            parsed_tree.hardware.memory.memory_pool_base
-            == sample_tree.hardware.memory.memory_pool_base
-        )
+        assert parsed_tree.hardware.memory.requested == {
+            0: sample_tree.hardware.memory.memory_pool_bytes
+        }
         assert (
             parsed_tree.hardware.memory.memory_pool_bytes
             == sample_tree.hardware.memory.memory_pool_bytes

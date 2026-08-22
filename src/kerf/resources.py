@@ -24,11 +24,13 @@ import re
 from pathlib import Path
 from typing import List, Set, Optional, Tuple
 
-from .lazy_cma import MULTIKERNEL_POOL_NAME
-from .models import GlobalDeviceTree
+from .models import GlobalDeviceTree, PoolMemoryRegion
 from .exceptions import ResourceError
 
 IOMEM_PATH = "/proc/iomem"
+
+#: iomem resource name the kernel registers every pool chunk under.
+MULTIKERNEL_POOL_NAME = "Multikernel Memory Pool"
 
 _IOMEM_RANGE_RE = re.compile(r"([0-9a-fA-F]+)-([0-9a-fA-F]+)\s*:\s*(.*)")
 
@@ -52,47 +54,84 @@ def _parse_iomem_regions(iomem_path: str) -> List[Tuple[int, int, str]]:
     return regions
 
 
+def _pool_chunks(regions: List[Tuple[int, int, str]]) -> List[Tuple[int, int]]:
+    """Pick the pool chunks out of already parsed /proc/iomem regions."""
+    return [
+        (base, end - base + 1)
+        for base, end, name in regions
+        if MULTIKERNEL_POOL_NAME in name
+    ]
+
+
+def _chunk_children(regions: List[Tuple[int, int, str]],
+                    chunks: List[Tuple[int, int]]) -> List[Tuple[int, int, int]]:
+    """Map every region nested in a pool chunk to (chunk_base, base, end)."""
+    children = []
+    for base, end, name in regions:
+        if MULTIKERNEL_POOL_NAME in name:
+            continue
+        for chunk_base, chunk_size in chunks:
+            if chunk_base <= base and end <= chunk_base + chunk_size - 1:
+                children.append((chunk_base, base, end))
+                break
+    return children
+
+
+def get_pool_chunks_from_iomem(iomem_path: str = IOMEM_PATH) -> List[Tuple[int, int]]:
+    """
+    List every multikernel pool chunk registered in /proc/iomem.
+
+    Returns:
+        (base_address, size_bytes) tuples in /proc/iomem order
+    """
+    return _pool_chunks(_parse_iomem_regions(iomem_path))
+
+
+def get_busy_chunks_from_iomem(iomem_path: str = IOMEM_PATH) -> Set[int]:
+    """
+    Find the pool chunks that still hold an allocation.
+
+    A chunk with any nested region cannot be returned to the host, so the
+    pool diff avoids picking it when it has a choice.
+
+    Returns:
+        Base addresses of the chunks with at least one child region
+    """
+    regions = _parse_iomem_regions(iomem_path)
+    return {chunk_base for chunk_base, _, _ in _chunk_children(regions, _pool_chunks(regions))}
+
+
 def get_memory_pool_from_iomem(iomem_path: str = IOMEM_PATH) -> Optional[Tuple[int, int]]:
     """
-    Get the multikernel memory pool region from /proc/iomem.
+    Get the first multikernel memory pool chunk from /proc/iomem.
 
     Returns:
         (base_address, size_bytes) or None if the pool is not registered
     """
-    for base, end, name in _parse_iomem_regions(iomem_path):
-        if MULTIKERNEL_POOL_NAME in name:
-            return (base, end - base + 1)
-    return None
+    chunks = get_pool_chunks_from_iomem(iomem_path)
+    return chunks[0] if chunks else None
 
 
 def get_pool_allocated_bytes(iomem_path: str = IOMEM_PATH) -> Optional[Tuple[int, int, int]]:
     """
     Compute pool usage from /proc/iomem, the single source of truth.
 
-    Every region nested inside the pool range (instance memory, daxfs
+    Every region nested inside a pool chunk (instance memory, daxfs
     heaps, ...) counts as allocated. Overlapping and nested child regions
     are merged so nothing is double counted.
 
     Returns:
-        (pool_base, pool_bytes, allocated_bytes), or None if the pool is
-        not registered in /proc/iomem
+        (first_chunk_base, pool_bytes, allocated_bytes), or None if the
+        pool is not registered in /proc/iomem
     """
-    pool = get_memory_pool_from_iomem(iomem_path)
-    if pool is None:
+    regions = _parse_iomem_regions(iomem_path)
+    chunks = _pool_chunks(regions)
+    if not chunks:
         return None
-    pool_base, pool_bytes = pool
-    pool_end = pool_base + pool_bytes - 1
-
-    children = []
-    for base, end, name in _parse_iomem_regions(iomem_path):
-        if MULTIKERNEL_POOL_NAME in name:
-            continue
-        if base >= pool_base and end <= pool_end:
-            children.append((base, end))
 
     allocated = 0
     current_base = current_end = None
-    for base, end in sorted(children):
+    for _, base, end in sorted(_chunk_children(regions, chunks), key=lambda c: c[1:]):
         if current_base is None:
             current_base, current_end = base, end
         elif base <= current_end + 1:
@@ -103,12 +142,16 @@ def get_pool_allocated_bytes(iomem_path: str = IOMEM_PATH) -> Optional[Tuple[int
     if current_base is not None:
         allocated += current_end - current_base + 1
 
-    return (pool_base, pool_bytes, allocated)
+    return (chunks[0][0], sum(size for _, size in chunks), allocated)
 
 
 def get_available_cpus(tree: GlobalDeviceTree) -> Set[int]:
     """
     Get set of CPUs available for allocation (not allocated to any instance).
+
+    The kernel's own free list wins when the tree carries one: the root
+    read-back has no instances section, so deriving free CPUs from pool
+    membership alone would hand out CPUs that are already lent out.
 
     Args:
         tree: GlobalDeviceTree to analyze
@@ -116,15 +159,13 @@ def get_available_cpus(tree: GlobalDeviceTree) -> Set[int]:
     Returns:
         Set of available CPU IDs
     """
-    # Get all CPUs in the available pool
-    available = set(tree.hardware.cpus.available)
+    allocated = get_allocated_cpus(tree)
 
-    # Subtract CPUs allocated to instances
-    allocated = set()
-    for instance in tree.instances.values():
-        allocated.update(instance.resources.cpus)
+    free = tree.hardware.cpus.available_free
+    if free is not None:
+        return set(free) - allocated
 
-    return available - allocated
+    return set(tree.hardware.cpus.available) - allocated
 
 
 def get_allocated_cpus(tree: GlobalDeviceTree) -> Set[int]:
@@ -183,63 +224,23 @@ def get_allocated_memory_regions(tree: GlobalDeviceTree) -> List[tuple[int, int]
     return regions
 
 
-def find_available_memory_base(
-    tree: GlobalDeviceTree, size_bytes: int, alignment: int = 0x1000, use_iomem: bool = True
-) -> Optional[int]:
+def chunk_containing(
+    tree: GlobalDeviceTree, base: int, size: int
+) -> Optional[PoolMemoryRegion]:
     """
-    Find available memory region for allocation.
+    Find the pool chunk that holds a whole memory region.
 
     Args:
-        tree: GlobalDeviceTree to analyze (for pool boundaries)
-        size_bytes: Size of memory region needed
-        alignment: Required alignment (default 4KB)
-        use_iomem: If True, read actual allocations from /proc/iomem (kernel source of truth).
-                   If False, use allocations from tree (for validation/dry-run).
+        tree: GlobalDeviceTree carrying the live pool chunks
+        base: Base address of the region
+        size: Size of the region in bytes
 
     Returns:
-        Base address for allocation, or None if no space available
+        The chunk containing the region, or None if no single chunk holds it
     """
-    pool_base = tree.hardware.memory.memory_pool_base
-    pool_end = tree.hardware.memory.memory_pool_end
-
-    if use_iomem:
-        allocated_regions = get_allocated_memory_regions_from_iomem()
-    else:
-        allocated_regions = get_allocated_memory_regions(tree)
-    # Sort by base address
-    allocated_regions.sort()
-
-    # Try to find gap between allocations or at start/end
-    if not allocated_regions:
-        # No allocations yet, use start of pool (aligned)
-        aligned_base = (pool_base + alignment - 1) // alignment * alignment
-        if aligned_base + size_bytes <= pool_end:
-            return aligned_base
-        return None
-
-    # Check gap at start
-    first_base = allocated_regions[0][0]
-    aligned_base = (pool_base + alignment - 1) // alignment * alignment
-    if aligned_base + size_bytes <= first_base:
-        return aligned_base
-
-    # Check gaps between allocations
-    for i in range(len(allocated_regions) - 1):
-        current_end = allocated_regions[i][0] + allocated_regions[i][1]
-        next_base = allocated_regions[i + 1][0]
-
-        # Align current_end
-        aligned_base = (current_end + alignment - 1) // alignment * alignment
-
-        if aligned_base + size_bytes <= next_base:
-            return aligned_base
-
-    # Check gap at end
-    last_end = allocated_regions[-1][0] + allocated_regions[-1][1]
-    aligned_base = (last_end + alignment - 1) // alignment * alignment
-    if aligned_base + size_bytes <= pool_end:
-        return aligned_base
-
+    for chunk in tree.hardware.memory.regions:
+        if chunk.base <= base and base + size <= chunk.base + chunk.size:
+            return chunk
     return None
 
 
@@ -309,35 +310,33 @@ def validate_memory_allocation(
                          (for update operations)
 
     Raises:
-        ResourceError: If memory region is invalid or conflicts
+        ResourceError: If the region is misaligned, leaves the pool chunk that
+                       holds it, or conflicts with another instance
     """
-    pool_base = tree.hardware.memory.memory_pool_base
-    pool_end = tree.hardware.memory.memory_pool_end
-    memory_end = memory_base + memory_bytes
-
-    # Check memory is within pool
-    if memory_base < pool_base:
-        raise ResourceError(f"Memory base {hex(memory_base)} is below pool base {hex(pool_base)}")
-
-    if memory_end > pool_end:
-        raise ResourceError(
-            f"Memory region extends beyond pool: "
-            f"{hex(memory_base)}-{hex(memory_end)} vs pool end {hex(pool_end)}"
-        )
-
-    # Check alignment (4KB)
     if memory_base % 0x1000 != 0:
         raise ResourceError(f"Memory base {hex(memory_base)} is not 4KB-aligned")
 
-    # Check for overlaps with other instances
+    memory_end = memory_base + memory_bytes
+
+    # The pool is a list of chunks, so a region has to sit inside one of them;
+    # spanning two chunks means spanning the host memory between them.
+    chunks = tree.hardware.memory.regions
+    if chunks and chunk_containing(tree, memory_base, memory_bytes) is None:
+        listed = ", ".join(f"{hex(c.base)}-{hex(c.base + c.size - 1)}" for c in chunks)
+        raise ResourceError(
+            f"Memory region {hex(memory_base)}-{hex(memory_end)} does not fit in "
+            f"any pool chunk ({listed})"
+        )
+
     for instance in tree.instances.values():
         if instance.name == exclude_instance:
             continue
 
         inst_base = instance.resources.memory_base
+        if not inst_base:
+            continue
         inst_end = inst_base + instance.resources.memory_bytes
 
-        # Check for overlap
         if not (memory_end <= inst_base or memory_base >= inst_end):
             raise ResourceError(
                 f"Memory region {hex(memory_base)}-{hex(memory_end)} "

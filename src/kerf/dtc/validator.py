@@ -20,7 +20,7 @@ import re
 from pathlib import Path
 from typing import List, Dict, Optional
 from ..models import GlobalDeviceTree, ValidationResult, ResourceUsage
-from ..resources import get_memory_pool_from_iomem
+from ..resources import chunk_containing, get_pool_chunks_from_iomem
 
 
 class MultikernelValidator:
@@ -254,47 +254,32 @@ class MultikernelValidator:
             )
 
         memory = tree.hardware.memory
-        if memory.total_bytes <= 0:
-            self.errors.append("Hardware inventory: Total memory must be positive")
-
         if memory.memory_pool_bytes <= 0:
             self.errors.append("Hardware inventory: Spawn pool size must be positive")
 
-        iomem_pool = get_memory_pool_from_iomem()
-        if iomem_pool is None or (
-            memory.memory_pool_base != iomem_pool[0] or memory.memory_pool_bytes != iomem_pool[1]
-        ):
-            # Pool doesn't match kernel-provided pool, validate against total_bytes
-            if memory.memory_pool_base + memory.memory_pool_bytes > memory.total_bytes:
-                self.errors.append("Hardware inventory: Spawn pool extends beyond total memory")
-        if iomem_pool is not None:
-            iomem_base, iomem_size = iomem_pool
-            iomem_end = iomem_base + iomem_size
+        # Only bites a caller-built tree: a parsed one derives total_bytes from
+        # the pool itself, and 0 means the caller knows no system total.
+        if memory.total_bytes and memory.memory_pool_bytes > memory.total_bytes:
+            self.errors.append("Hardware inventory: Spawn pool extends beyond total memory")
 
-            if memory.memory_pool_base != iomem_base:
-                self.errors.append(
-                    f"Hardware inventory: Memory pool base ({hex(memory.memory_pool_base)}) "
-                    f"does not match multikernel pool in /proc/iomem ({hex(iomem_base)})"
-                )
+        # A request names sizes only; the kernel picks the chunks, so there is
+        # nothing to line up with /proc/iomem until they are read back.
+        if memory.regions:
+            self._validate_pool_against_iomem(memory)
 
-            pool_end = memory.memory_pool_base + memory.memory_pool_bytes
-            if pool_end > iomem_end:
-                exceeds_by = pool_end - iomem_end
-                self.errors.append(
-                    f"Hardware inventory: Memory pool extends beyond multikernel reserved pool in /proc/iomem "
-                    f"by {exceeds_by} bytes ({exceeds_by / (1024**3):.2f} GB). "
-                    f"Configured pool: {hex(memory.memory_pool_base)}-{hex(pool_end-1)}, "
-                    f"Reserved pool: {hex(iomem_base)}-{hex(iomem_end-1)}"
-                )
-
-            if memory.memory_pool_bytes > iomem_size:
-                self.errors.append(
-                    f"Hardware inventory: Memory pool size ({memory.memory_pool_bytes} bytes = "
-                    f"{memory.memory_pool_bytes / (1024**3):.2f} GB) exceeds multikernel reserved pool "
-                    f"({iomem_size} bytes = {iomem_size / (1024**3):.2f} GB) in /proc/iomem"
-                )
-        else:
+    def _validate_pool_against_iomem(self, memory):
+        """Every pool chunk the kernel reported must be registered in /proc/iomem."""
+        iomem_chunks = set(get_pool_chunks_from_iomem())
+        if not iomem_chunks:
             self.warnings.append("Could not find multikernel memory pool in /proc/iomem")
+            return
+
+        missing = sorted({(r.base, r.size) for r in memory.regions} - iomem_chunks)
+        for base, size in missing:
+            self.errors.append(
+                f"Hardware inventory: Pool chunk {hex(base)}-{hex(base + size - 1)} "
+                f"({size / (1024**3):.2f} GB) is not registered in /proc/iomem"
+            )
 
     def _validate_instances(self, tree: GlobalDeviceTree):
         """Validate instance definitions."""
@@ -383,34 +368,27 @@ class MultikernelValidator:
 
     def _validate_memory_allocation(self, instance, tree: GlobalDeviceTree):
         """Validate memory allocation for an instance."""
-        memory = tree.hardware.memory
         instance_memory = instance.resources
-
         memory_start = instance_memory.memory_base
+
+        # A zero base means the instance carries no placement of its own: the
+        # kernel picks one out of the pool when it creates the instance.
+        if not memory_start:
+            return
+
         memory_end = memory_start + instance_memory.memory_bytes
+        chunks = tree.hardware.memory.regions
 
-        if memory_start < memory.memory_pool_base:
+        if chunks and chunk_containing(tree, memory_start, instance_memory.memory_bytes) is None:
+            listed = ", ".join(f"{hex(c.base)}-{hex(c.base + c.size - 1)}" for c in chunks)
             error_msg = self._format_error_with_context(
                 error_type="Memory allocation error",
                 instance_name=instance.name,
-                problem=f"Memory base {hex(memory_start)} is before memory pool start",
-                current_state=f"Spawn pool starts at {hex(memory.memory_pool_base)}",
-                suggestion=f"Use memory base >= {hex(memory.memory_pool_base)}",
-                alternative="Adjust memory pool configuration",
-                pattern=f"memory-base = <{hex(memory_start)}>",
-            )
-            self.errors.append(error_msg)
-
-        if memory_end > memory.memory_pool_base + memory.memory_pool_bytes:
-            pool_end = memory.memory_pool_base + memory.memory_pool_bytes
-            exceeds_by = memory_end - pool_end
-            error_msg = self._format_error_with_context(
-                error_type="Memory allocation error",
-                instance_name=instance.name,
-                problem="Memory region extends beyond memory pool",
-                current_state=f"Instance memory: {hex(memory_start)}-{hex(memory_end)}, Pool: {hex(memory.memory_pool_base)}-{hex(pool_end)}",
-                suggestion=f"Reduce memory size by {hex(exceeds_by)} or use different base address",
-                alternative="Increase memory pool size or adjust memory allocation",
+                problem="Memory region does not fit in any pool chunk",
+                current_state=f"Instance memory: {hex(memory_start)}-{hex(memory_end)}, "
+                              f"pool chunks: {listed}",
+                suggestion="Place the instance inside one chunk or reduce its memory size",
+                alternative="Grow the pool with 'kerf init --memory=...'",
                 pattern=f"memory-size = <{hex(instance_memory.memory_bytes)}>",
             )
             self.errors.append(error_msg)
@@ -427,6 +405,8 @@ class MultikernelValidator:
                 continue
 
             other_start = other_instance.resources.memory_base
+            if not other_start:
+                continue
             other_end = other_start + other_instance.resources.memory_bytes
 
             if not (memory_end <= other_start or other_end <= memory_start):
@@ -438,7 +418,8 @@ class MultikernelValidator:
                     f"Instance {instance.name} and {other_name}: Memory region overlap detected\n"
                     f"  {instance.name} memory: {hex(memory_start)} - {hex(memory_end)}\n"
                     f"  {other_name} memory: {hex(other_start)} - {hex(other_end)}\n"
-                    f"  Overlapping region: {hex(overlap_start)} - {hex(overlap_end)} ({overlap_size} bytes)"
+                    f"  Overlapping region: {hex(overlap_start)} - {hex(overlap_end)} "
+                    f"({overlap_size} bytes)"
                 )
 
     def _validate_device_allocation(self, instance, tree: GlobalDeviceTree):

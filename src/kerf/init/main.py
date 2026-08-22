@@ -25,7 +25,7 @@ import os
 import re
 import sys
 from pathlib import Path
-from typing import Optional
+from typing import Dict, List, Optional, Tuple
 
 import click
 import libfdt
@@ -38,8 +38,6 @@ except ImportError:
 from ..baseline import BaselineManager
 from ..create.main import parse_cpu_spec, parse_device_list, parse_memory_spec
 from ..dtc.parser import DeviceTreeParser
-from ..lazy_cma import LAZY_CMA_DEVICE, allocate_multikernel_pool
-from ..resources import get_memory_pool_from_iomem
 from ..dtc.reporter import ValidationReporter
 from ..dtc.validator import MultikernelValidator
 from ..exceptions import KernelInterfaceError, ParseError, ValidationError
@@ -49,7 +47,12 @@ from ..models import (
     GlobalDeviceTree,
     HardwareInventory,
     MemoryAllocation,
+    PoolMemoryRegion,
 )
+from ..pool_diff import ANY_NODE, PoolDiff, compute_pool_diff
+from ..resources import get_busy_chunks_from_iomem
+from ..runtime import DeviceTreeManager
+from ..topology import cpu_numa_nodes, node_for_cpus
 
 
 MULTIKERNEL_MOUNT_POINT = "/sys/fs/multikernel"
@@ -353,34 +356,186 @@ def get_valid_apic_ids_from_system() -> Optional[set]:
     return None
 
 
+_NODE_SPEC = re.compile(r"^(.+)@(.*)$")
+
+PAGE_SIZE = 4096
+
+
+def validate_memory_request(requested: Dict[int, int]) -> None:
+    """
+    Reject pool sizes the kernel cannot honour, however they were asked for.
+
+    Args:
+        requested: Mapping of NUMA node id (ANY_NODE if not resolved yet) to size
+
+    Raises:
+        ValueError: If a size is zero, negative or not page aligned
+    """
+    for node, size in sorted(requested.items()):
+        where = "the unpinned request" if node == ANY_NODE else f"node {node}"
+        if size <= 0:
+            raise ValueError(f"memory size for {where} must be greater than zero")
+        if size % PAGE_SIZE:
+            raise ValueError(
+                f"memory size for {where} must be a multiple of {PAGE_SIZE} bytes"
+            )
+
+
+def parse_memory_request(spec: str) -> Dict[int, int]:
+    """
+    Parse a pool memory request into per-NUMA-node sizes.
+
+    "2GB" asks for 2GB without naming a node, which the caller then
+    resolves to the node of the requested CPUs; "8GB@0,8GB@1" asks for a
+    specific amount per node, mirroring the device-tree unit address
+    convention. The two forms cannot be mixed.
+
+    Args:
+        spec: Memory specification string
+
+    Returns:
+        Mapping of NUMA node id (-1 when the node is left to kerf) to size in bytes
+
+    Raises:
+        ValueError: If the specification is malformed or a size is zero
+                    or not page aligned
+    """
+    parts = [p.strip() for p in spec.split(",") if p.strip()]
+    if not parts:
+        raise ValueError("empty memory specification")
+
+    requested: Dict[int, int] = {}
+    for part in parts:
+        match = _NODE_SPEC.match(part)
+        if match:
+            size_part, node_part = match.group(1), match.group(2)
+            try:
+                node = int(node_part)
+            except ValueError as exc:
+                raise ValueError(
+                    f"invalid NUMA node '{node_part}' in '{part}' (expected SIZE@N)"
+                ) from exc
+            if node < 0:
+                raise ValueError(f"NUMA node in '{part}' must not be negative")
+            size = parse_memory_spec(size_part)
+        else:
+            node, size = ANY_NODE, parse_memory_spec(part)
+        if node in requested:
+            raise ValueError(f"node {node} specified twice")
+        requested[node] = size
+
+    if ANY_NODE in requested and len(requested) > 1:
+        raise ValueError("cannot mix a plain size with SIZE@N entries")
+    validate_memory_request(requested)
+    return requested
+
+
+def _cpu_ranges(cpus: List[int]) -> str:
+    """Render APIC ids the way they are written on the command line."""
+    parts = []
+    for cpu in sorted(set(cpus)):
+        if parts and cpu == parts[-1][1] + 1:
+            parts[-1][1] = cpu
+        else:
+            parts.append([cpu, cpu])
+    return ",".join(str(a) if a == b else f"{a}-{b}" for a, b in parts)
+
+
+def pick_memory_node(cpu_list: List[int],
+                     pool_cpus: Optional[set] = None,
+                     pool_regions: Optional[List[PoolMemoryRegion]] = None
+                     ) -> Tuple[int, str]:
+    """
+    Choose the NUMA node for a memory request that did not name one.
+
+    Placement is policy, so kerf decides it and the kernel is only ever
+    handed an explicit node.
+
+    Args:
+        cpu_list: APIC IDs the pool is being asked for
+        pool_cpus: APIC IDs the pool already holds
+        pool_regions: Chunks the pool already holds
+
+    Returns:
+        The chosen node and a short reason to show the user
+    """
+    node = node_for_cpus(cpu_list, cpu_numa_nodes())
+    if node is not None:
+        return node, f"from CPUs {_cpu_ranges(cpu_list)}"
+
+    # A CPU the pool already took is offline, so neither sysfs nor
+    # /proc/cpuinfo places it any more; its chunks still do.
+    if set(cpu_list) & set(pool_cpus or ()):
+        nodes = {r.node for r in (pool_regions or []) if r.node != ANY_NODE}
+        if len(nodes) == 1:
+            return nodes.pop(), "from the chunks the pool already holds"
+
+    return 0, "no NUMA topology available, defaulting to node 0"
+
+
+def resolve_memory_nodes(requested: Dict[int, int],
+                         cpu_list: List[int],
+                         pool_cpus: Optional[set] = None,
+                         pool_regions: Optional[List[PoolMemoryRegion]] = None
+                         ) -> Tuple[Dict[int, int], Optional[str]]:
+    """
+    Pin an unpinned memory request to a node before the kernel sees it.
+
+    Args:
+        requested: Mapping of NUMA node id (ANY_NODE for unpinned) to size
+        cpu_list: APIC IDs the pool is being asked for
+        pool_cpus: APIC IDs the pool already holds
+        pool_regions: Chunks the pool already holds
+
+    Returns:
+        The request with every size on an explicit node, and a line
+        describing the choice, or None if nothing had to be resolved
+    """
+    resolved = dict(requested)
+    size = resolved.pop(ANY_NODE, None)
+    if size is None:
+        return resolved, None
+
+    node, why = pick_memory_node(cpu_list, pool_cpus, pool_regions)
+    resolved[node] = resolved.get(node, 0) + size
+    return resolved, f"Memory: {size >> 20} MB on node {node} ({why})"
+
+
 def build_baseline_from_cmdline(
     cpus: str,
     memory: Optional[str] = None,
     devices: Optional[str] = None,
-    verbose: bool = False
+    verbose: bool = False,
+    pool_cpus: Optional[set] = None,
+    pool_regions: Optional[List[PoolMemoryRegion]] = None
 ) -> GlobalDeviceTree:
     """
     Build a GlobalDeviceTree from command line arguments.
 
     Args:
         cpus: CPU specification string (e.g., "4-7" or "4,5,6,7")
-        memory: Optional pool size to allocate at runtime via /dev/lazy_cma
-                (e.g., "1GB"); when omitted an existing pool must already
-                be registered in /proc/iomem
+        memory: Pool memory request, either "2GB" on the node of the
+                requested CPUs or "8GB@0,8GB@1" for specific nodes
         devices: Optional device names (comma-separated, e.g., "enp9s0_dev,nvme0")
         verbose: Whether to print verbose output
+        pool_cpus: APIC IDs the pool already holds
+        pool_regions: Chunks the pool already holds
 
     Returns:
         GlobalDeviceTree with resources only (no instances)
 
     Raises:
-        ValueError: If CPU or memory specification is invalid
-        KernelInterfaceError: If the memory pool cannot be found or allocated
+        ValueError: If the CPU or memory specification is invalid
+        KernelInterfaceError: If the system topology cannot be read
     """
     try:
         cpu_list = parse_cpu_spec(cpus)
     except ValueError as e:
         raise ValueError(f"Invalid CPU specification '{cpus}': {e}") from e
+
+    if not memory:
+        raise ValueError("--memory is required")
+    requested = parse_memory_request(memory)
 
     # Validate against valid APIC IDs on the system
     valid_apic_ids = get_valid_apic_ids_from_system()
@@ -389,6 +544,10 @@ def build_baseline_from_cmdline(
             "Could not read APIC IDs from /proc/cpuinfo. "
             "Ensure the system exposes CPU topology information."
         )
+
+    # The host stops listing a CPU in /proc/cpuinfo once the pool takes it,
+    # so a re-init has to count the pool's own CPUs as valid.
+    valid_apic_ids = valid_apic_ids | set(pool_cpus or ())
 
     invalid_cpus = set(cpu_list) - valid_apic_ids
     if invalid_cpus:
@@ -410,45 +569,19 @@ def build_baseline_from_cmdline(
         host_reserved_cpus = [0]
         cpu_list = sorted(list(available_cpus))
 
-    memory_pool = get_memory_pool_from_iomem()
-    if memory_pool is None:
-        if not memory:
-            raise KernelInterfaceError(
-                "Could not find multikernel memory pool in /proc/iomem. "
-                "Pass --memory=SIZE (e.g. --memory=1GB) to allocate the pool "
-                f"at runtime via {LAZY_CMA_DEVICE}."
-            )
+    requested, note = resolve_memory_nodes(requested, cpu_list, pool_cpus, pool_regions)
+    if note:
+        click.echo(note)
 
-        pool_bytes = parse_memory_spec(memory)
-        pool_base = allocate_multikernel_pool(pool_bytes)
-        if verbose:
-            click.echo(f"Allocated multikernel memory pool via {LAZY_CMA_DEVICE}:")
-            click.echo(f"  Base: {hex(pool_base)}")
-            click.echo(f"  Size: {pool_bytes} bytes ({pool_bytes / (1024**3):.2f} GB)")
-
-        # Re-read /proc/iomem so the baseline reflects exactly what the
-        # kernel registered for the allocation.
-        memory_pool = get_memory_pool_from_iomem() or (pool_base, pool_bytes)
-    elif memory:
-        click.echo(
-            "Note: multikernel memory pool already exists in /proc/iomem; "
-            "ignoring --memory",
-            err=True,
-        )
-    memory_pool_base, memory_pool_bytes = memory_pool
-
-    total_bytes = memory_pool_base + memory_pool_bytes
-    host_reserved_bytes = memory_pool_base
+    total_bytes = sum(requested.values())
     if verbose:
         click.echo(f"Parsed APIC ID specification: {cpus}")
         click.echo(f"  Valid APIC IDs on system: {sorted(valid_apic_ids)}")
         click.echo(f"  Host-reserved APIC IDs: {host_reserved_cpus}")
         click.echo(f"  Available APIC IDs: {cpu_list}")
-        click.echo("Memory pool from /proc/iomem:")
-        click.echo(f"  Base: {hex(memory_pool_base)}")
-        click.echo(f"  Size: {memory_pool_bytes} bytes ({memory_pool_bytes / (1024**3):.2f} GB)")
-        click.echo(f"  Total bytes: {total_bytes} bytes ({total_bytes / (1024**3):.2f} GB)")
-        click.echo(f"  Host-reserved: {host_reserved_bytes} bytes ({host_reserved_bytes / (1024**3):.2f} GB)")
+        click.echo("Requested pool memory:")
+        for node, size in sorted(requested.items()):
+            click.echo(f"  node {node}: {size} bytes ({size / (1024**3):.2f} GB)")
 
     cpu_allocation = CPUAllocation(
         total=total_cpus,
@@ -458,9 +591,8 @@ def build_baseline_from_cmdline(
 
     memory_allocation = MemoryAllocation(
         total_bytes=total_bytes,
-        host_reserved_bytes=host_reserved_bytes,
-        memory_pool_base=memory_pool_base,
-        memory_pool_bytes=memory_pool_bytes
+        host_reserved_bytes=0,
+        requested=requested
     )
 
     device_dict = {}
@@ -503,18 +635,239 @@ def build_baseline_from_cmdline(
     return tree
 
 
+def build_teardown_tree(pool_cpus: Optional[set] = None) -> GlobalDeviceTree:
+    """Build the empty requested state: every pool resource goes back to the host."""
+    apic_ids = (get_valid_apic_ids_from_system() or set()) | set(pool_cpus or ())
+    cpu_allocation = CPUAllocation(
+        total=(max(apic_ids) + 1) if apic_ids else 0,
+        host_reserved=sorted(apic_ids),
+        available=[]
+    )
+
+    hardware = HardwareInventory(
+        cpus=cpu_allocation,
+        memory=MemoryAllocation(total_bytes=0, host_reserved_bytes=0, requested={}),
+        devices={}
+    )
+
+    return GlobalDeviceTree(hardware=hardware, instances={}, device_references={})
+
+
+INSTANCES_DIR = "/sys/fs/multikernel/instances"
+
+
+def list_instance_names(instances_dir: str = INSTANCES_DIR) -> List[str]:
+    """Names of the instances the kernel currently holds."""
+    path = Path(instances_dir)
+    if not path.exists():
+        return []
+    try:
+        return sorted(child.name for child in path.iterdir() if child.is_dir())
+    except OSError:
+        return []
+
+
+def pool_is_live(current: Optional[GlobalDeviceTree]) -> bool:
+    """
+    Whether the kernel already holds pool resources we have to diff against.
+
+    A non-empty cpus list is not evidence: before a pool exists the root
+    read-back lists the host's own online CPUs there. Only the pool branch
+    of the kernel's device tree emits cpus-available, memory@N or devices.
+    """
+    if current is None:
+        return False
+    hardware = current.hardware
+    return bool(hardware.cpus.available_free is not None
+                or hardware.memory.regions
+                or hardware.devices)
+
+
+def pool_apic_ids(current: Optional[GlobalDeviceTree]) -> set:
+    """APIC IDs the live pool holds, which the host no longer reports."""
+    if not pool_is_live(current):
+        return set()
+    return set(current.hardware.cpus.available or [])
+
+
+def pool_memory_regions(current: Optional[GlobalDeviceTree]) -> List[PoolMemoryRegion]:
+    """Chunks the live pool holds, which place CPUs the host no longer reports."""
+    if not pool_is_live(current):
+        return []
+    return list(current.hardware.memory.regions)
+
+
+def read_current_pool(baseline_mgr) -> Optional[GlobalDeviceTree]:
+    """
+    Read the live pool back from the kernel.
+
+    Before any pool exists the kernel still publishes a root device tree,
+    but one that describes the host rather than a pool and that carries no
+    memory node, so a failed read means "no pool yet", not an error.
+
+    Args:
+        baseline_mgr: BaselineManager to read through
+
+    Returns:
+        The baseline the kernel reports, or None if there is no pool yet
+    """
+    try:
+        return baseline_mgr.read_baseline()
+    except (ParseError, KernelInterfaceError):
+        return None
+
+
+def request_is_empty(requested: GlobalDeviceTree) -> bool:
+    """Whether the request asks for nothing at all, as --teardown does."""
+    hardware = requested.hardware
+    return not (hardware.cpus.available or hardware.memory.requested or hardware.devices)
+
+
+def _print_diff(diff: PoolDiff) -> None:
+    """Show what would move between the host and the pool."""
+    def line(label, items):
+        if items:
+            click.echo(f"  {label}: {', '.join(str(i) for i in items)}")
+
+    line("CPUs to pool", diff.cpus_to_pool)
+    line("CPUs to host", diff.cpus_to_host)
+    line("Memory to pool", [
+        f"{size >> 20} MB" + ("" if node == ANY_NODE else f" on node {node}")
+        for node, size in diff.memory_to_pool
+    ])
+    line("Memory to host", [f"{hex(r.base)} ({r.size >> 20} MB)" for r in diff.memory_to_host])
+    line("Devices to pool", diff.devices_to_pool)
+    line("Devices to host", diff.devices_to_host)
+
+
+def _report_shortfall(live: GlobalDeviceTree, requested: GlobalDeviceTree) -> None:
+    """Warn when the kernel could not shrink the pool all the way down."""
+    for node, want in requested.hardware.memory.requested.items():
+        if node == ANY_NODE:
+            have = live.hardware.memory.memory_pool_bytes
+        else:
+            have = live.hardware.memory.bytes_on_node(node)
+        if have > want:
+            where = "any" if node == ANY_NODE else node
+            click.echo(
+                f"Note: node {where} still holds {(have - want) >> 20} MB more than "
+                "requested; only whole idle chunks can be returned",
+                err=True,
+            )
+
+
+def reconcile_pool(
+    current: Optional[GlobalDeviceTree],
+    requested: GlobalDeviceTree,
+    busy_chunks: set,
+    dry_run: bool,
+    manager,
+    baseline_mgr,
+) -> Optional[PoolDiff]:
+    """
+    Bring the live pool in line with the requested baseline.
+
+    An empty pool takes the baseline write; a live pool is reconciled with
+    a /resources overlay transaction, since the kernel refuses a baseline
+    write once it owns resources.
+
+    Args:
+        current: Baseline read back from the kernel, or None if there is none
+        requested: Requested state
+        busy_chunks: Bases of pool chunks that still hold an allocation
+        dry_run: Report the plan without touching the kernel
+        manager: DeviceTreeManager used to apply the overlay
+        baseline_mgr: BaselineManager used for the initial write
+
+    Returns:
+        The applied (or planned) difference, or None if a baseline was written
+
+    Raises:
+        KernelInterfaceError: If the kernel rejects the write or the overlay
+        ValidationError: If a teardown would strand running instances
+    """
+    if not pool_is_live(current):
+        # The kernel rejects a baseline with no memory@N node, and there is
+        # nothing to hand back anyway.
+        if request_is_empty(requested):
+            click.echo("Pool is already empty; nothing to do")
+            return None
+        if dry_run:
+            click.echo("Baseline validation passed; would write the initial baseline (dry-run)")
+            return None
+        baseline_mgr.write_baseline(requested)
+        click.echo("✓ Baseline applied to kernel successfully")
+        return None
+
+    diff = compute_pool_diff(current, requested, busy_chunks=busy_chunks)
+    _print_diff(diff)
+    if diff.is_empty():
+        click.echo("✓ Pool already matches the request; nothing to do")
+        _report_shortfall(current, requested)
+        return diff
+    if dry_run:
+        click.echo("Would apply the changes above (dry-run)")
+        _report_shortfall(current, requested)
+        return diff
+
+    if request_is_empty(requested):
+        held = list_instance_names()
+        if held:
+            raise ValidationError(
+                f"The pool still runs {len(held)} instance(s): "
+                f"delete instances {', '.join(held)} first"
+            )
+
+    with manager.lock():
+        tx_id = manager.apply_dtbo(manager.overlay_gen.generate_pool_overlay(diff))
+    click.echo(f"✓ Pool updated (transaction {tx_id})")
+
+    if request_is_empty(requested):
+        # /resources carries no memory@N once the pool is gone, so there is
+        # nothing left to read back or compare against.
+        return diff
+
+    try:
+        live = baseline_mgr.read_baseline()
+    except (ParseError, KernelInterfaceError) as e:
+        # The transaction already landed; a failed read-back is worth a word,
+        # not a failure.
+        click.echo(f"Note: could not read the pool back after the transaction: {e}", err=True)
+    else:
+        _report_shortfall(live, requested)
+    return diff
+
+
+def _dump_baseline_dts(baseline_mgr: BaselineManager, tree: GlobalDeviceTree) -> None:
+    """Print the DTS the baseline write would carry."""
+    try:
+        dtb_data = baseline_mgr.extractor.generate_global_dtb(tree)
+        fdt = libfdt.Fdt(dtb_data)
+        dts_parser = DeviceTreeParser()
+        dts_parser.fdt = fdt
+        dts_lines = dts_parser._fdt_to_dts_recursive(0, 0)  # pylint: disable=protected-access
+
+        click.echo("Debug: Baseline DTS source being written to kernel:")
+        click.echo("─" * 70)
+        click.echo('\n'.join(dts_lines))
+        click.echo("─" * 70)
+    except Exception as e:  # pylint: disable=broad-except
+        click.echo(f"Debug: Failed to convert baseline DTB to DTS: {e}", err=True)
+
+
 @click.command()
 @click.pass_context
 @click.option('--input', '-i', help='Input DTS or DTB file containing all resources. Mutually exclusive with --cpus, --memory and --devices. When used, all resources must come from the file.')
-@click.option('--cpus', '-c', help='APIC ID specification for baseline (e.g., "128-134" or "128,130,132"). Use physical APIC IDs, not logical CPU numbers. Mutually exclusive with --input. Memory comes from --memory or an existing pool in /proc/iomem.')
-@click.option('--memory', '-m', help='Memory pool size to allocate at runtime via /dev/lazy_cma (e.g., "1GB", "512MB"). If omitted, an existing pool is discovered from /proc/iomem. Mutually exclusive with --input.')
+@click.option('--cpus', '-c', help='APIC ID specification for baseline (e.g., "128-134" or "128,130,132"). Use physical APIC IDs, not logical CPU numbers. Mutually exclusive with --input.')
+@click.option('--memory', '-m', help='Pool memory: SIZE (e.g. "2GB") on the node of the requested CPUs, or per-node "8GB@0,8GB@1". Required with --cpus, mutually exclusive with --input.')
 @click.option('--devices', '-d', help='Device names (comma-separated, e.g., "enp9s0_dev,nvme0"). Mutually exclusive with --input. Creates minimal device entries in baseline.')
-@click.option('--dry-run', is_flag=True, help='Validate without applying')
-@click.option('--report', is_flag=True, help='Generate detailed validation report')
+@click.option('--teardown', is_flag=True, help='Return every pool resource to the host. Mutually exclusive with --input, --cpus, --memory and --devices.')
+@click.option('--dry-run', is_flag=True, help='Report the plan without applying it. Still reads the pool from the kernel, so it needs root.')
+@click.option('--report', is_flag=True, help='Generate detailed validation report. Ignored with --teardown.')
 @click.option('--format', type=click.Choice(['text', 'json', 'yaml']),
               default='text', help='Report format (default: text)')
 @click.option('--verbose', '-v', is_flag=True, help='Verbose output')
-def init(ctx: click.Context, input: Optional[str], cpus: Optional[str], memory: Optional[str], devices: Optional[str], dry_run: bool, report: bool, format: str, verbose: bool):
+def init(ctx: click.Context, input: Optional[str], cpus: Optional[str], memory: Optional[str], devices: Optional[str], teardown: bool, dry_run: bool, report: bool, format: str, verbose: bool):
     """
     Initialize baseline device tree configuration.
 
@@ -522,33 +875,46 @@ def init(ctx: click.Context, input: Optional[str], cpus: Optional[str], memory: 
     available for allocation. The baseline must contain ONLY resources
     (no instances). Instances are created via 'kerf create' using overlays.
 
-    By default, the baseline is applied to the kernel after validation.
-    Use --dry-run to validate without applying.
+    The command is idempotent: the requested state is compared against the
+    pool the kernel reports, and only the difference is applied. An empty
+    pool takes the baseline write; a live pool is reconciled with a
+    /resources overlay transaction. Use --teardown to return everything to
+    the host, and --dry-run to see the plan without applying it. Even
+    --dry-run reads the pool from the kernel, so every form needs root.
 
     You can either provide a DTS/DTB file via --input, or construct the
-    baseline from command line arguments using --cpus. These options are
-    mutually exclusive - when using --input, all resources must come from
-    the DTS file. With --cpus, the memory pool is allocated at runtime
-    via /dev/lazy_cma when --memory is given, or discovered from
-    /proc/iomem otherwise.
+    request from command line arguments using --cpus and --memory. These
+    options are mutually exclusive.
+
+    A --memory size that names no node is placed on the NUMA node of the
+    requested CPUs. Kerf resolves it here so the kernel is always handed an
+    explicit node and never picks the placement itself.
 
     Examples:
         # Initialize from DTS file (all resources from file)
         kerf init --input=hardware.dts
 
-        # Initialize from command line, allocating a 1GB pool at runtime
+        # Request 1GB of pool memory on the node of the requested CPUs
         kerf init --cpus=128-134 --memory=1GB
 
-        # Initialize reusing a pool already registered in /proc/iomem
-        kerf init --cpus=128-134
+        # Request memory per NUMA node
+        kerf init --cpus=128-134 --memory=8GB@0,8GB@1
 
-        # Initialize with APIC IDs and devices
-        kerf init --cpus=128,130,132 --memory=1GB --devices=enp9s0_dev,nvme0
+        # Shrink the pool back to 1GB and 2 CPUs
+        kerf init --cpus=128,129 --memory=1GB
 
-        # Validate baseline without applying
-        kerf init --input=hardware.dts --dry-run
+        # Return every pool resource to the host
+        kerf init --teardown
+
+        # Show what would change without applying
+        kerf init --cpus=128-134 --memory=1GB --dry-run
     """
     try:
+        if teardown and (input or cpus or memory or devices):
+            click.echo("Error: --teardown cannot be combined with --input, --cpus, --memory or --devices.", err=True)
+            click.echo("--teardown returns every pool resource to the host.", err=True)
+            sys.exit(2)
+
         # Validate that --input and resource specification options are mutually exclusive
         # When using --input, all resources must come from the DTS file
         if input and (cpus or memory or devices):
@@ -564,18 +930,28 @@ def init(ctx: click.Context, input: Optional[str], cpus: Optional[str], memory: 
             click.echo("Use either --input for a complete DTS/DTB file, or command-line options to construct baseline.", err=True)
             sys.exit(2)
 
-        if not input and not cpus:
-            click.echo("Error: Either --input or --cpus must be specified", err=True)
+        if not input and not cpus and not teardown:
+            click.echo("Error: Either --input, --cpus or --teardown must be specified", err=True)
             click.echo("\nUsage:", err=True)
             click.echo("  kerf init --input=hardware.dts", err=True)
             click.echo("  kerf init --cpus=4-7 --memory=1GB", err=True)
-            click.echo("  kerf init --cpus=4-7 --memory=1GB --devices=enp9s0_dev", err=True)
+            click.echo("  kerf init --cpus=4-7 --memory=1GB@0 --devices=enp9s0_dev", err=True)
+            click.echo("  kerf init --teardown", err=True)
             sys.exit(2)
 
         parser = DeviceTreeParser()
         dts_content = None
 
-        if input:
+        baseline_mgr = BaselineManager()
+        manager = DeviceTreeManager()
+        mount_multikernel_fs(verbose=verbose)
+        current = read_current_pool(baseline_mgr)
+        live_cpus = pool_apic_ids(current)
+        live_regions = pool_memory_regions(current)
+
+        if teardown:
+            tree = build_teardown_tree(pool_cpus=live_cpus)
+        elif input:
             # Parse from input file
             input_path = Path(input)
 
@@ -593,18 +969,30 @@ def init(ctx: click.Context, input: Optional[str], cpus: Optional[str], memory: 
                 click.echo(f"Error: Unsupported input format: {input_path.suffix}", err=True)
                 click.echo("Supported formats: .dts, .dtb", err=True)
                 sys.exit(2)
+
+            try:
+                validate_memory_request(tree.hardware.memory.requested)
+            except ValueError as e:
+                click.echo(f"Error: {input}: {e}", err=True)
+                sys.exit(2)
+
+            tree.hardware.memory.requested, note = resolve_memory_nodes(
+                tree.hardware.memory.requested, tree.hardware.cpus.available,
+                live_cpus, live_regions)
+            if note:
+                click.echo(note)
         else:
             # Build from command line arguments
             try:
-                tree = build_baseline_from_cmdline(cpus, memory=memory, devices=devices, verbose=verbose)
+                tree = build_baseline_from_cmdline(cpus, memory=memory, devices=devices,
+                                                   verbose=verbose, pool_cpus=live_cpus,
+                                                   pool_regions=live_regions)
             except ValueError as e:
                 click.echo(f"Error: {e}", err=True)
                 sys.exit(2)
             except KernelInterfaceError as e:
                 click.echo(f"Error: {e}", err=True)
                 sys.exit(1)
-
-        baseline_mgr = BaselineManager()
 
         try:
             baseline_mgr.validate_baseline(tree)
@@ -616,74 +1004,59 @@ def init(ctx: click.Context, input: Optional[str], cpus: Optional[str], memory: 
             click.echo("\nInstances should be created via 'kerf create'", err=True)
             sys.exit(1)
 
-        validator = MultikernelValidator()
-        if dts_content is not None:
-            input_path_str = str(input) if input else "command-line"
-            validator.set_dts_context(dts_content, input_path_str)
+        # The teardown request holds no resources at all, which the resource
+        # validator reads as an unusable pool.
+        if not teardown:
+            validator = MultikernelValidator()
+            if dts_content is not None:
+                input_path_str = str(input) if input else "command-line"
+                validator.set_dts_context(dts_content, input_path_str)
 
-        validation_result = validator.validate(tree)
+            validation_result = validator.validate(tree)
 
-        if report:
-            reporter = ValidationReporter()
-            report_text = reporter.generate_report(validation_result, tree, verbose, format)
-            click.echo(report_text)
+            if report:
+                reporter = ValidationReporter()
+                report_text = reporter.generate_report(validation_result, tree, verbose, format)
+                click.echo(report_text)
+                if not validation_result.is_valid:
+                    sys.exit(1)
+                return
+
             if not validation_result.is_valid:
+                click.echo("Validation failed:", err=True)
+                for error in validation_result.errors:
+                    click.echo(f"  ✗ {error}", err=True)
+                if validation_result.warnings:
+                    click.echo("\nWarnings:", err=True)
+                    for warning in validation_result.warnings:
+                        click.echo(f"  ⚠ {warning}", err=True)
                 sys.exit(1)
-            return
 
-        if not validation_result.is_valid:
-            click.echo("Validation failed:", err=True)
-            for error in validation_result.errors:
-                click.echo(f"  ✗ {error}", err=True)
-            if validation_result.warnings:
-                click.echo("\nWarnings:", err=True)
-                for warning in validation_result.warnings:
-                    click.echo(f"  ⚠ {warning}", err=True)
-            sys.exit(1)
-
-        if verbose:
-            click.echo("✓ Baseline validation passed")
-            if validation_result.warnings:
-                click.echo("\nWarnings:")
-                for warning in validation_result.warnings:
-                    click.echo(f"  ⚠ {warning}")
+            if verbose:
+                click.echo("✓ Baseline validation passed")
+                if validation_result.warnings:
+                    click.echo("\nWarnings:")
+                    for warning in validation_result.warnings:
+                        click.echo(f"  ⚠ {warning}")
 
         debug = ctx.obj.get('debug', False) if ctx and ctx.obj else False
 
-        if dry_run:
-            click.echo(" Baseline validation passed")
-            click.echo(" Baseline would be applied (dry-run mode)")
-        else:
-            try:
-                mount_multikernel_fs(verbose=verbose)
+        if debug and not pool_is_live(current):
+            _dump_baseline_dts(baseline_mgr, tree)
 
-                if debug:
-                    try:
-                        dtb_data = baseline_mgr.extractor.generate_global_dtb(tree)
-                        fdt = libfdt.Fdt(dtb_data)
-                        dts_parser = DeviceTreeParser()
-                        dts_parser.fdt = fdt
-                        dts_lines = dts_parser._fdt_to_dts_recursive(0, 0)  # pylint: disable=protected-access
-                        dts_content = '\n'.join(dts_lines)
-
-                        click.echo("Debug: Baseline DTS source being written to kernel:")
-                        click.echo("─" * 70)
-                        click.echo(dts_content)
-                        click.echo("─" * 70)
-                    except Exception as e:
-                        click.echo(f"Debug: Failed to convert baseline DTB to DTS: {e}", err=True)
-
-                if verbose:
-                    click.echo("Writing baseline to kernel...")
-                baseline_mgr.write_baseline(tree)
-                click.echo("✓ Baseline applied to kernel successfully")
-                click.echo("  Baseline: /sys/fs/multikernel/device_tree")
-            except KernelInterfaceError as e:
-                click.echo(f"Error: Failed to apply baseline: {e}", err=True)
-                if verbose:
-                    import traceback
-                    traceback.print_exc()
-                sys.exit(1)
+        try:
+            reconcile_pool(current, tree, get_busy_chunks_from_iomem(), dry_run,
+                           manager, baseline_mgr)
+        except ValidationError as e:
+            click.echo(f"Error: {e}", err=True)
+            sys.exit(1)
+        except KernelInterfaceError as e:
+            click.echo(f"Error: {e}", err=True)
+            click.echo("Run 'dmesg | tail' for the kernel's reason (it names the busy CPU or chunk).", err=True)
+            if verbose:
+                import traceback
+                traceback.print_exc()
+            sys.exit(1)
 
     except ParseError as e:
         click.echo(f"Error: Failed to parse input file: {e}", err=True)

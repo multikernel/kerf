@@ -17,11 +17,13 @@ Device tree parsing and model building.
 """
 
 import re
-from typing import Dict, List, Optional
+import struct
+from typing import Dict, List, Optional, Tuple
 
 import libfdt
 
 from ..exceptions import ParseError
+from ..pool_diff import ANY_NODE
 from .cells import unpack_cpu_ids
 from ..models import (
     CPUAllocation,
@@ -33,8 +35,23 @@ from ..models import (
     MemoryAllocation,
     NUMANode,
     OverlayInstanceData,
+    PoolMemoryRegion,
     TopologySection,
 )
+
+
+_LEGACY_MEMORY_ERROR = (
+    "memory-base/memory-bytes are not supported; "
+    "use memory@N { size; numa-node-id; }"
+)
+
+_NO_MEMORY_ERROR = (
+    "No memory description in /resources; "
+    "expected memory@N { size; numa-node-id; }"
+)
+
+# A live pool always publishes cpus-available, and may legitimately hold no
+# memory at all: a transaction that gave back every chunk but kept the CPUs.
 
 
 class DeviceTreeParser:
@@ -138,8 +155,6 @@ class DeviceTreeParser:
                 memory=MemoryAllocation(
                     total_bytes=0,
                     host_reserved_bytes=0,
-                    memory_pool_base=0,
-                    memory_pool_bytes=0
                 ),
                 topology=None,
                 devices={}
@@ -210,6 +225,11 @@ class DeviceTreeParser:
             # No cpus property means all CPUs are allocated
             available = []
 
+        available_free = None
+        free_prop = self._optional_prop(resources_node, 'cpus-available')
+        if free_prop is not None:
+            available_free = unpack_cpu_ids(free_prop)
+
         if available:
             total = max(available) + 1
         else:
@@ -219,35 +239,76 @@ class DeviceTreeParser:
         return CPUAllocation(
             total=total,
             host_reserved=host_reserved,
-            available=available
+            available=available,
+            available_free=available_free
         )
 
+    def _subnodes(self, node: int):
+        """Yield the offsets of a node's immediate children."""
+        try:
+            offset = self.fdt.first_subnode(node)
+        except libfdt.FdtException:
+            return
+        while offset >= 0:
+            yield offset
+            try:
+                offset = self.fdt.next_subnode(offset)
+            except libfdt.FdtException:
+                return
+
+    def _optional_prop(self, node: int, name: str):
+        """Return a property, or None when the node does not carry it."""
+        try:
+            return self.fdt.getprop(node, name)
+        except libfdt.FdtException:
+            return None
+
+    def _optional_u32(self, node: int, name: str, default: int) -> int:
+        """Return a u32 property, or default when the node does not carry it."""
+        prop = self._optional_prop(node, name)
+        if prop is None:
+            return default
+        return prop.as_uint32()
+
     def _parse_memory_allocation(self, resources_node: int) -> MemoryAllocation:
-        """Parse memory allocation from resources node."""
-        try:
-            memory_pool_base_prop = self.fdt.getprop(resources_node, 'memory-base')
-            if len(memory_pool_base_prop) != 8:
-                raise ParseError(f"Invalid 'memory-base' property size: {len(memory_pool_base_prop)} bytes (expected 8 bytes)")
-            memory_pool_base = memory_pool_base_prop.as_uint64()
-        except libfdt.FdtException as e:
-            raise ParseError(f"Missing 'memory-base' property in /resources: {e}") from e
+        """Parse pool chunks and per-node memory requests from resources node."""
+        regions = []
+        requested = {}
 
-        try:
-            memory_pool_bytes_prop = self.fdt.getprop(resources_node, 'memory-bytes')
-            if len(memory_pool_bytes_prop) != 8:
-                raise ParseError(f"Invalid 'memory-bytes' property size: {len(memory_pool_bytes_prop)} bytes (expected 8 bytes)")
-            memory_pool_bytes = memory_pool_bytes_prop.as_uint64()
-        except libfdt.FdtException as e:
-            raise ParseError(f"Missing 'memory-bytes' property in /resources: {e}") from e
+        for node in self._subnodes(resources_node):
+            name = self.fdt.get_name(node)
+            if not name.startswith('memory@'):
+                continue
+            node_id = self._optional_u32(node, 'numa-node-id', ANY_NODE)
+            reg = self._optional_prop(node, 'reg')
+            size_prop = self._optional_prop(node, 'size')
+            if reg is not None:
+                if len(reg) != 16:
+                    raise ParseError(f"{name}: 'reg' must be two u64 cells")
+                base, size = struct.unpack('>QQ', bytes(reg))
+                regions.append(PoolMemoryRegion(base=base, size=size, node=node_id))
+            elif size_prop is not None:
+                if len(size_prop) != 8:
+                    raise ParseError(f"{name}: 'size' must be a u64")
+                requested[node_id] = requested.get(node_id, 0) + size_prop.as_uint64()
+            else:
+                raise ParseError(f"{name}: expected 'reg' (existing chunk) or 'size' (request)")
 
-        total_bytes = memory_pool_base + memory_pool_bytes
-        host_reserved_bytes = 0
+        for legacy in ('memory-base', 'memory-bytes'):
+            if self._optional_prop(resources_node, legacy) is not None:
+                raise ParseError(_LEGACY_MEMORY_ERROR)
+
+        if not regions and not requested:
+            if self._optional_prop(resources_node, 'cpus-available') is None:
+                raise ParseError(_NO_MEMORY_ERROR)
+
+        total_bytes = sum(r.size for r in regions) or sum(requested.values())
 
         return MemoryAllocation(
             total_bytes=total_bytes,
-            host_reserved_bytes=host_reserved_bytes,
-            memory_pool_base=memory_pool_base,
-            memory_pool_bytes=memory_pool_bytes
+            host_reserved_bytes=0,
+            regions=regions,
+            requested=requested
         )
 
     def _parse_devices(self, resources_node: int) -> Dict[str, DeviceInfo]:
@@ -758,6 +819,12 @@ class DeviceTreeParser:
             raise ParseError("Missing 'cpus' property in /resources")
 
         available = [int(x.strip()) for x in cpus_match.group(1).split()]
+
+        free_match = re.search(r'cpus-available\s*=\s*<([^>]+)>', resources_text)
+        available_free = None
+        if free_match:
+            available_free = [int(x.strip()) for x in free_match.group(1).split()]
+
         if available:
             total = max(available) + 1
         else:
@@ -771,35 +838,90 @@ class DeviceTreeParser:
             total=total,
             host_reserved=host_reserved,
             available=available,
-            topology=topology
+            topology=topology,
+            available_free=available_free
         )
 
+    def _split_node_body(self, body: str) -> Tuple[str, List[Tuple[str, str]]]:
+        """Split a DTS node body into its own property text and its direct children.
+
+        Nested nodes carry properties of their own (a NUMA node@N describes itself
+        with memory-base/memory-size), so callers must not confuse them with the
+        properties of the node they are inspecting.
+        """
+        properties = []
+        children = []
+        depth = 0
+        chunk_start = 0
+        body_start = 0
+        name = ""
+
+        for i, char in enumerate(body):
+            if char == '{':
+                depth += 1
+                if depth == 1:
+                    head = body[chunk_start:i]
+                    tokens = head.replace(';', ' ').split()
+                    name = tokens[-1] if tokens else ""
+                    properties.append(head[:head.rfind(name)] if name else head)
+                    body_start = i + 1
+            elif char == '}':
+                depth -= 1
+                if depth == 0:
+                    children.append((name, body[body_start:i]))
+                    chunk_start = i + 1
+
+        properties.append(body[chunk_start:])
+        return '\n'.join(properties), children
+
     def _parse_memory_from_dts(self, dts_content: str) -> MemoryAllocation:
-        """Parse memory allocation from DTS content."""
+        """Parse pool chunks and per-node memory requests from DTS content."""
 
         resources_text = self._extract_resources_section(dts_content)
         if not resources_text:
             raise ParseError("Missing /resources section in DTS")
 
-        memory_base_match = re.search(r'memory-base\s*=\s*<([^>]+)>', resources_text)
-        if not memory_base_match:
-            raise ParseError("Missing 'memory-base' property in /resources")
+        own_properties, children = self._split_node_body(resources_text)
+        if re.search(r'memory-(?:base|bytes)\s*=', own_properties):
+            raise ParseError(_LEGACY_MEMORY_ERROR)
 
-        memory_bytes_match = re.search(r'memory-bytes\s*=\s*<([^>]+)>', resources_text)
-        if not memory_bytes_match:
-            raise ParseError("Missing 'memory-bytes' property in /resources")
+        regions = []
+        requested = {}
 
-        memory_pool_base = self._parse_hex_value(memory_base_match.group(1))
-        memory_pool_bytes = self._parse_hex_value(memory_bytes_match.group(1))
+        for name, body in children:
+            if not name.startswith('memory@'):
+                continue
+            node_id = ANY_NODE
+            node_match = re.search(r'numa-node-id\s*=\s*<\s*([^>\s]+)\s*>', body)
+            if node_match:
+                node_id = int(node_match.group(1), 0)
 
-        total_bytes = memory_pool_base + memory_pool_bytes
-        host_reserved_bytes = 0
+            reg_match = re.search(r'reg\s*=\s*<([^>]+)>', body)
+            size_match = re.search(r'(?<![\w-])size\s*=\s*<([^>]+)>', body)
+            if reg_match:
+                cells = reg_match.group(1).split()
+                if len(cells) != 4:
+                    raise ParseError(f"{name}: 'reg' must be two u64 cells")
+                base = self._parse_hex_value(' '.join(cells[:2]))
+                size = self._parse_hex_value(' '.join(cells[2:]))
+                regions.append(PoolMemoryRegion(base=base, size=size, node=node_id))
+            elif size_match:
+                size = self._parse_hex_value(size_match.group(1))
+                requested[node_id] = requested.get(node_id, 0) + size
+            else:
+                raise ParseError(f"{name}: expected 'reg' (existing chunk) or 'size' (request)")
+
+        if not regions and not requested:
+            if not re.search(r'cpus-available\s*=', own_properties):
+                raise ParseError(_NO_MEMORY_ERROR)
+
+        total_bytes = sum(r.size for r in regions) or sum(requested.values())
 
         return MemoryAllocation(
             total_bytes=total_bytes,
-            host_reserved_bytes=host_reserved_bytes,
-            memory_pool_base=memory_pool_base,
-            memory_pool_bytes=memory_pool_bytes
+            host_reserved_bytes=0,
+            regions=regions,
+            requested=requested
         )
 
     def _parse_devices_from_dts(self, dts_content: str) -> Dict[str, DeviceInfo]:

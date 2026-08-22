@@ -18,6 +18,7 @@ DTB generation from device tree models.
 
 import libfdt
 from ..models import GlobalDeviceTree, Instance
+from ..pool_diff import ANY_NODE
 from .cells import pack_cpu_ids
 
 
@@ -125,9 +126,14 @@ class InstanceExtractor:
         fdt_sw.property("cpus", pack_cpu_ids(cpus.available))
 
     def _add_memory_properties_sw(self, fdt_sw, memory):
-        """Add memory properties directly to resources node."""
-        fdt_sw.property_u64("memory-base", memory.memory_pool_base)
-        fdt_sw.property_u64("memory-bytes", memory.memory_pool_bytes)
+        """Add one memory@<idx> request node per requested size (or live chunk)."""
+        entries = list(memory.requested.items()) or [(r.node, r.size) for r in memory.regions]
+        for idx, (node, size) in enumerate(entries):
+            fdt_sw.begin_node(f"memory@{idx}")
+            fdt_sw.property_u64("size", size)
+            if node != ANY_NODE:
+                fdt_sw.property_u32("numa-node-id", node)
+            fdt_sw.end_node()
 
     def _add_devices_section_sw(self, fdt_sw, devices):
         """Add devices section using FdtSw."""
@@ -243,78 +249,6 @@ class InstanceExtractor:
                     fdt_sw.property_u32("namespace-id", device_ref.namespace_id)
 
             fdt_sw.end_node()
-
-    def _add_resources_section(self, parent_offset: int, tree: GlobalDeviceTree):
-        """Add resources section to DTB."""
-        resources_offset = self.fdt.add_subnode(parent_offset, "resources")
-
-        # Add CPU information
-        self._add_cpu_section(resources_offset, tree.hardware.cpus)
-
-        # Add memory information
-        self._add_memory_section(resources_offset, tree.hardware.memory)
-
-        # Add device information
-        self._add_devices_section(resources_offset, tree.hardware.devices)
-
-    def _add_cpu_section(self, parent_offset: int, cpus):
-        """Add CPU section to DTB."""
-        cpus_offset = self.fdt.add_subnode(parent_offset, "cpus")
-        self.fdt.setprop_u32(cpus_offset, "total", cpus.total)
-
-        self.fdt.setprop(cpus_offset, "host-reserved", pack_cpu_ids(cpus.host_reserved))
-        self.fdt.setprop(cpus_offset, "available", pack_cpu_ids(cpus.available))
-
-    def _add_memory_section(self, parent_offset: int, memory):
-        """Add memory section to DTB."""
-        memory_offset = self.fdt.add_subnode(parent_offset, "memory")
-        self.fdt.setprop_u64(memory_offset, "total-bytes", memory.total_bytes)
-        self.fdt.setprop_u64(memory_offset, "host-reserved-bytes", memory.host_reserved_bytes)
-        self.fdt.setprop_u64(memory_offset, "memory-pool-base", memory.memory_pool_base)
-        self.fdt.setprop_u64(memory_offset, "memory-pool-bytes", memory.memory_pool_bytes)
-
-    def _add_devices_section(self, parent_offset: int, devices):
-        """Add devices section to DTB."""
-        devices_offset = self.fdt.add_subnode(parent_offset, "devices")
-
-        for name, device_info in devices.items():
-            device_offset = self.fdt.add_subnode(devices_offset, name)
-            self.fdt.setprop_str(device_offset, "compatible", device_info.compatible)
-
-            if device_info.pci_id:
-                self.fdt.setprop_str(device_offset, "pci-id", device_info.pci_id)
-
-            if device_info.sriov_vfs is not None:
-                self.fdt.setprop_u32(device_offset, "sriov-vfs", device_info.sriov_vfs)
-
-            if device_info.host_reserved_vf is not None:
-                self.fdt.setprop_u32(
-                    device_offset, "host-reserved-vf", device_info.host_reserved_vf
-                )
-
-            if device_info.available_vfs:
-                import struct
-
-                vfs_data = struct.pack(
-                    ">" + "I" * len(device_info.available_vfs), *device_info.available_vfs
-                )
-                self.fdt.setprop(device_offset, "available-vfs", vfs_data)
-
-            if device_info.namespaces is not None:
-                self.fdt.setprop_u32(device_offset, "namespaces", device_info.namespaces)
-
-            if device_info.host_reserved_ns is not None:
-                self.fdt.setprop_u32(
-                    device_offset, "host-reserved-ns", device_info.host_reserved_ns
-                )
-
-            if device_info.available_ns:
-                import struct
-
-                ns_data = struct.pack(
-                    ">" + "I" * len(device_info.available_ns), *device_info.available_ns
-                )
-                self.fdt.setprop(device_offset, "available-ns", ns_data)
 
     def _add_instances_section(self, parent_offset: int, tree: GlobalDeviceTree):
         """Add instances section to DTB."""

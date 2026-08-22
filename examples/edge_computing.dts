@@ -12,8 +12,9 @@
 
     resources {
         cpus = <2 3 4 5 6 7 8 9 10 11 12 13 14 15>;
-        memory-base = <0x200000000>;
-        memory-bytes = <0x0 0x600000000>;   // 24GB
+        memory@0 {
+            size = <0x0 0x600000000>;  // 24GB
+        };
         
         devices {
             eth0: ethernet@0 {
