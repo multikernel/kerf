@@ -26,16 +26,19 @@ def test_plain_size_is_any_node():
 
 
 def test_per_node_sizes():
-    assert parse_memory_request("node0:8GB, node1:512MB") == {0: 8 * GB, 1: 512 << 20}
+    assert parse_memory_request("8GB@0, 512MB@1") == {0: 8 * GB, 1: 512 << 20}
 
 
-@pytest.mark.parametrize("spec", ["node0:1GB,2GB", "node0:1GB,node0:1GB", "nodeX:1GB", ""])
+@pytest.mark.parametrize(
+    "spec",
+    ["8GB@x", "8GB@-1", "8GB@0,8GB", "8GB@0,4GB@0", "@0", "8GB@", ""],
+)
 def test_invalid_specs(spec):
     with pytest.raises(ValueError):
         parse_memory_request(spec)
 
 
-@pytest.mark.parametrize("spec", ["0", "node0:0", "4097", "node1:5000"])
+@pytest.mark.parametrize("spec", ["0", "0@0", "4097", "5000@1"])
 def test_sizes_must_be_positive_and_page_aligned(spec):
     with pytest.raises(ValueError):
         parse_memory_request(spec)
