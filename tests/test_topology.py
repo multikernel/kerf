@@ -91,12 +91,12 @@ def test_offline_cpus_are_absent_from_the_mapping(tmp_path):
 def test_missing_files_leave_the_node_undecided(tmp_path):
     missing = str(tmp_path / "nowhere")
 
-    assert cpu_numa_nodes(missing, missing) == {}
+    assert not cpu_numa_nodes(missing, missing)
     assert node_for_cpus([0, 1], {}) is None
 
     cpuinfo = _cpuinfo(tmp_path, {0: 0})
-    assert cpu_numa_nodes(missing, cpuinfo) == {}
-    assert cpu_numa_nodes(_node_root(tmp_path, {0: "0"}), missing) == {}
+    assert not cpu_numa_nodes(missing, cpuinfo)
+    assert not cpu_numa_nodes(_node_root(tmp_path, {0: "0"}), missing)
 
 
 def test_memoryless_node_with_no_cpus_is_skipped(tmp_path):

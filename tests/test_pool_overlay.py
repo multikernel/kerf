@@ -36,8 +36,7 @@ def _walk(fdt, offset=0):
     yield offset
     child = fdt.first_subnode(offset, quiet=[libfdt.FDT_ERR_NOTFOUND])
     while child >= 0:
-        for descendant in _walk(fdt, child):
-            yield descendant
+        yield from _walk(fdt, child)
         child = fdt.next_subnode(child, quiet=[libfdt.FDT_ERR_NOTFOUND])
 
 
