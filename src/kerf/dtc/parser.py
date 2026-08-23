@@ -18,13 +18,11 @@ Device tree parsing and model building.
 
 import re
 import struct
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, TYPE_CHECKING, Tuple
 
 import libfdt
 
 from ..exceptions import ParseError
-from ..pool_diff import ANY_NODE
-from .cells import unpack_cpu_ids
 from ..models import (
     CPUAllocation,
     DeviceInfo,
@@ -38,6 +36,11 @@ from ..models import (
     PoolMemoryRegion,
     TopologySection,
 )
+from ..pool_diff import ANY_NODE
+from .cells import unpack_cpu_ids
+
+if TYPE_CHECKING:
+    from ..models import CPUTopology
 
 
 _LEGACY_MEMORY_ERROR = (
@@ -783,14 +786,14 @@ class DeviceTreeParser:
             devices=devices
         )
 
-    def _extract_resources_section(self, dts_content: str) -> Optional[str]:
-        """Extract the resources section content with proper brace matching."""
+    def _extract_named_section(self, dts_content: str, section_name: str) -> Optional[str]:
+        """Extract a named DTS section body with brace matching."""
 
-        resources_start = re.search(r'resources\s*\{', dts_content)
-        if not resources_start:
+        section_start = re.search(rf'{re.escape(section_name)}\s*\{{', dts_content)
+        if not section_start:
             return None
 
-        start_pos = resources_start.end() - 1
+        start_pos = section_start.end() - 1
         brace_count = 0
         end_pos = start_pos
 
@@ -804,8 +807,35 @@ class DeviceTreeParser:
                     break
 
         if brace_count == 0:
-            return dts_content[start_pos+1:end_pos]
+            return dts_content[start_pos + 1:end_pos]
         return None
+
+    def _extract_resources_section(self, dts_content: str) -> Optional[str]:
+        """Extract the resources section content with proper brace matching."""
+        return self._extract_named_section(dts_content, 'resources')
+
+    @staticmethod
+    def _parse_cell_values(values: str) -> List[int]:
+        """Parse integer cells after removing DTS comments."""
+
+        values = re.sub(r'/\*.*?\*/', ' ', values, flags=re.DOTALL)
+        values = re.sub(r'//[^\n]*', ' ', values)
+        return [int(value, 0) for value in values.split()]
+
+    def _parse_cpu_cell_values(
+        self, property_name: str, dts_content: str
+    ) -> Optional[List[int]]:
+        """Parse a CPU-list property accepting legacy and explicit-width cells."""
+
+        match = re.search(
+            rf'{re.escape(property_name)}\s*=\s*'
+            rf'(?:/bits/\s+(?:32|64)\s*)?<([^>]+)>',
+            dts_content,
+        )
+        if not match:
+            return None
+
+        return self._parse_cell_values(match.group(1))
 
     def _parse_cpus_from_dts(self, dts_content: str) -> CPUAllocation:
         """Parse CPU allocation from DTS content."""
@@ -814,17 +844,10 @@ class DeviceTreeParser:
         if not resources_text:
             raise ParseError("Missing /resources section in DTS")
 
-        cpus_match = re.search(r'cpus\s*=\s*<([^>]+)>', resources_text)
-        if not cpus_match:
+        available = self._parse_cpu_cell_values('cpus', resources_text)
+        if available is None:
             raise ParseError("Missing 'cpus' property in /resources")
-
-        available = [int(x.strip()) for x in cpus_match.group(1).split()]
-
-        free_match = re.search(r'cpus-available\s*=\s*<([^>]+)>', resources_text)
-        available_free = None
-        if free_match:
-            available_free = [int(x.strip()) for x in free_match.group(1).split()]
-
+        available_free = self._parse_cpu_cell_values('cpus-available', resources_text)
         if available:
             total = max(available) + 1
         else:
@@ -1177,10 +1200,9 @@ class DeviceTreeParser:
         resources_text = resources_section.group(1)
 
         # Parse CPUs
-        cpus_match = re.search(r'cpus\s*=\s*<([^>]+)>', resources_text)
-        if not cpus_match:
+        cpus = self._parse_cpu_cell_values('cpus', resources_text)
+        if cpus is None:
             raise ParseError("Missing 'cpus' in resources")
-        cpus = [int(x.strip()) for x in cpus_match.group(1).split()]
 
         # Parse memory base
         memory_base_match = re.search(r'memory-base\s*=\s*<([^>]+)>', resources_text)
@@ -1202,10 +1224,7 @@ class DeviceTreeParser:
             devices = [x.strip().lstrip('&') for x in devices_match.group(1).split(',')]
 
         # Parse NUMA nodes (optional)
-        numa_nodes = None
-        numa_nodes_match = re.search(r'numa-nodes\s*=\s*<([^>]+)>', resources_text)
-        if numa_nodes_match:
-            numa_nodes = [int(x.strip()) for x in numa_nodes_match.group(1).split()]
+        numa_nodes = self._parse_cpu_cell_values('numa-nodes', resources_text)
 
         # Parse CPU affinity (optional)
         cpu_affinity = None
@@ -1307,11 +1326,9 @@ class DeviceTreeParser:
         """Parse topology section from DTS content."""
 
         # Look for topology section
-        topology_section = re.search(r'topology\s*\{([^}]+)\}', dts_content, re.DOTALL)
-        if not topology_section:
+        topology_text = self._extract_named_section(dts_content, 'topology')
+        if not topology_text:
             return None
-
-        topology_text = topology_section.group(1)
 
         # Parse NUMA nodes from topology section
         numa_nodes = self._parse_numa_nodes_from_dts(topology_text)
@@ -1324,11 +1341,9 @@ class DeviceTreeParser:
         numa_nodes = {}
 
         # Look for numa-nodes subsection
-        numa_section = re.search(r'numa-nodes\s*\{([^}]+)\}', topology_text, re.DOTALL)
-        if not numa_section:
+        numa_text = self._extract_named_section(topology_text, 'numa-nodes')
+        if not numa_text:
             return None
-
-        numa_text = numa_section.group(1)
 
         # Find all NUMA node definitions
         node_pattern = r'node@(\d+)\s*\{([^}]+)\}'
@@ -1356,14 +1371,14 @@ class DeviceTreeParser:
                 memory_size = self._parse_hex_value(memory_size_match.group(1))
 
             # Parse CPUs
-            cpus_match = re.search(r'cpus\s*=\s*<([^>]+)>', node_content)
-            if cpus_match:
-                cpus = [int(x.strip()) for x in cpus_match.group(1).split()]
+            parsed_cpus = self._parse_cpu_cell_values('cpus', node_content)
+            if parsed_cpus is not None:
+                cpus = parsed_cpus
 
             # Parse distance matrix (optional)
             distance_match = re.search(r'distance-matrix\s*=\s*<([^>]+)>', node_content)
             if distance_match:
-                distances = [int(x.strip()) for x in distance_match.group(1).split()]
+                distances = self._parse_cell_values(distance_match.group(1))
                 # Simple distance matrix parsing - would need more sophisticated logic for full matrix
                 _ = distances  # Mark as intentionally unused for now
 
@@ -1383,27 +1398,28 @@ class DeviceTreeParser:
 
         return numa_nodes if numa_nodes else None
 
-    def _parse_cpu_topology_from_dts(self, dts_content: str) -> Optional[Dict[int, 'CPUTopology']]:
+    def _parse_cpu_topology_from_dts(
+        self, dts_content: str
+    ) -> Optional[Dict[int, 'CPUTopology']]:
         """Parse CPU topology from DTS content."""
         from ..models import CPUTopology
 
         topology = {}
 
         # Look for cores section
-        cores_section = re.search(r'cores\s*\{([^}]+)\}', dts_content, re.DOTALL)
-        if not cores_section:
+        cores_text = self._extract_named_section(dts_content, 'cores')
+        if not cores_text:
             return None
 
-        cores_text = cores_section.group(1)
-
         # Find all core definitions
-        core_pattern = r'core@(\d+)\s*\{\s*cpus\s*=\s*<([^>]+)>\s*;\s*\}'
+        core_pattern = r'core@(\d+)\s*\{([^}]+)\}'
         core_matches = re.finditer(core_pattern, cores_text, re.DOTALL)
 
         for match in core_matches:
             core_id = int(match.group(1))
-            cpus_str = match.group(2)
-            cpus = [int(x.strip()) for x in cpus_str.split()]
+            cpus = self._parse_cpu_cell_values('cpus', match.group(2))
+            if cpus is None:
+                continue
 
             # Create topology entries for each CPU in this core
             for i, cpu_id in enumerate(cpus):
