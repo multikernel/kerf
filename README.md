@@ -156,6 +156,10 @@ kerf exec web-server
 kerf show
 kerf show web-server
 
+# Dump the device tree the kernel holds, for 'kerf init --input'
+kerf dump -o host.dtb
+kerf dump web-server -o web.dtb
+
 # Shutdown a running kernel instance
 kerf kill web-server
 
@@ -336,6 +340,20 @@ kerf init --help
 
 # Carve a pool out of the host: 7 CPUs (by APIC ID) and 1GB on their NUMA node
 sudo kerf init --cpus=128-134 --memory=1GB --report
+```
+
+### Reusing a Dumped Baseline
+
+`kerf dump` writes the device tree the kernel holds, byte for byte, and
+`kerf init --input` accepts it back. This is the supported way to capture a
+pool configuration and replay it later or on another host; hand-written
+device tree files are not supported.
+
+```bash
+sudo kerf dump -o host.dtb            # baseline
+sudo kerf dump web-server -o web.dtb  # a running instance
+sudo kerf init --input=host.dtb       # replay the baseline
+dtc -I dtb -O dts host.dtb            # read it
 ```
 
 ## CPU and NUMA Topology Support

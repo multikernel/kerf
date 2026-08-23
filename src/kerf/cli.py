@@ -26,6 +26,7 @@ from .kill.main import kill_cmd
 from .unload.main import unload
 from .delete.main import delete
 from .show.main import show
+from .dump.main import dump
 from .console.main import console
 
 
@@ -49,6 +50,7 @@ main.add_command(kill_cmd)
 main.add_command(unload)
 main.add_command(delete)
 main.add_command(show)
+main.add_command(dump)
 main.add_command(console)
 
 

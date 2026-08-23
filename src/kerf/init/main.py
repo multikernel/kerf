@@ -910,7 +910,7 @@ def _dump_baseline_dts(baseline_mgr: BaselineManager, tree: GlobalDeviceTree) ->
 
 @click.command()
 @click.pass_context
-@click.option('--input', '-i', help='Input DTS or DTB file containing all resources. Mutually exclusive with --cpus, --memory and --devices. When used, all resources must come from the file.')
+@click.option('--input', '-i', help='Baseline DTB to replay, as written by "kerf dump". Mutually exclusive with --cpus, --memory and --devices.')
 @click.option('--cpus', '-c', help='APIC ID specification for baseline (e.g., "128-134" or "128,130,132"), or "none" for no pool CPUs. Use physical APIC IDs, not logical CPU numbers. Mutually exclusive with --input.')
 @click.option('--memory', '-m', help='Pool memory: SIZE (e.g. "2GB") on the node of the requested CPUs, per-node "8GB@0,8GB@1", or "none" for no pool memory. Required with --cpus, mutually exclusive with --input.')
 @click.option('--devices', '-d', help='Device names (comma-separated, e.g., "enp9s0_dev,nvme0"), or "none" for no devices. Mutually exclusive with --input. Creates minimal device entries in baseline.')
@@ -934,9 +934,9 @@ def init(ctx: click.Context, input: Optional[str], cpus: Optional[str], memory: 
     applying it. Even --dry-run reads the pool from the kernel, so every
     form needs root.
 
-    You can either provide a DTS/DTB file via --input, or construct the
-    request from command line arguments using --cpus and --memory. These
-    options are mutually exclusive.
+    You can either replay a baseline dumped with 'kerf dump' via --input,
+    or construct the request from command line arguments using --cpus and
+    --memory. These options are mutually exclusive.
 
     Every resource is spelled out: --cpus=none, --memory=none (or
     --memory=0) and --devices=none ask for none of that resource, and a
@@ -947,8 +947,8 @@ def init(ctx: click.Context, input: Optional[str], cpus: Optional[str], memory: 
     explicit node and never picks the placement itself.
 
     Examples:
-        # Initialize from DTS file (all resources from file)
-        kerf init --input=hardware.dts
+        # Replay a baseline captured with 'kerf dump -o host.dtb'
+        kerf init --input=host.dtb
 
         # Request 1GB of pool memory on the node of the requested CPUs
         kerf init --cpus=128-134 --memory=1GB
@@ -987,7 +987,7 @@ def init(ctx: click.Context, input: Optional[str], cpus: Optional[str], memory: 
         if not input and not cpus:
             click.echo("Error: Either --input or --cpus must be specified", err=True)
             click.echo("\nUsage:", err=True)
-            click.echo("  kerf init --input=hardware.dts", err=True)
+            click.echo("  kerf init --input=host.dtb", err=True)
             click.echo("  kerf init --cpus=4-7 --memory=1GB", err=True)
             click.echo("  kerf init --cpus=4-7 --memory=1GB@0 --devices=enp9s0_dev", err=True)
             click.echo("  kerf init --cpus=none --memory=none", err=True)
