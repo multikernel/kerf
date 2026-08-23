@@ -688,7 +688,7 @@ def build_baseline_from_cmdline(
             else:
                 raise KernelInterfaceError(
                     f"Could not detect device '{device_name}' from system. "
-                    f"Please ensure the device exists and is accessible, or use --input with a DTS file to specify device details."
+                    f"Please ensure the device exists and is accessible, or use --input with a dumped DTB to specify device details."
                 )
 
     hardware = HardwareInventory(
@@ -970,7 +970,7 @@ def init(ctx: click.Context, input: Optional[str], cpus: Optional[str], memory: 
     """
     try:
         # Validate that --input and resource specification options are mutually exclusive
-        # When using --input, all resources must come from the DTS file
+        # When using --input, all resources must come from the file
         if input and (cpus or memory or devices):
             conflicting = []
             if cpus:
@@ -980,8 +980,8 @@ def init(ctx: click.Context, input: Optional[str], cpus: Optional[str], memory: 
             if devices:
                 conflicting.append("--devices")
             click.echo(f"Error: --input is mutually exclusive with {', '.join(conflicting)}.", err=True)
-            click.echo("When using --input, all resources must come from the DTS/DTB file.", err=True)
-            click.echo("Use either --input for a complete DTS/DTB file, or command-line options to construct baseline.", err=True)
+            click.echo("When using --input, all resources must come from the file.", err=True)
+            click.echo("Use either --input for a complete DTB, or command-line options to construct baseline.", err=True)
             sys.exit(2)
 
         if not input and not cpus:
@@ -994,7 +994,6 @@ def init(ctx: click.Context, input: Optional[str], cpus: Optional[str], memory: 
             sys.exit(2)
 
         parser = DeviceTreeParser()
-        dts_content = None
 
         baseline_mgr = BaselineManager()
         manager = DeviceTreeManager()
@@ -1011,15 +1010,11 @@ def init(ctx: click.Context, input: Optional[str], cpus: Optional[str], memory: 
                 click.echo(f"Error: Input file '{input}' does not exist", err=True)
                 sys.exit(3)
 
-            if input_path.suffix == '.dts':
-                with open(input_path, 'r', encoding='utf-8') as f:
-                    dts_content = f.read()
-                tree = parser.parse_dts(dts_content)
-            elif input_path.suffix == '.dtb':
+            try:
                 tree = parser.parse_dtb(str(input_path))
-            else:
-                click.echo(f"Error: Unsupported input format: {input_path.suffix}", err=True)
-                click.echo("Supported formats: .dts, .dtb", err=True)
+            except ParseError as e:
+                click.echo(f"Error: {e}", err=True)
+                click.echo("--input takes a DTB as written by 'kerf dump'.", err=True)
                 sys.exit(2)
 
             try:
@@ -1060,9 +1055,6 @@ def init(ctx: click.Context, input: Optional[str], cpus: Optional[str], memory: 
         # which is exactly what a request for no memory asks for.
         if tree.hardware.memory.requested:
             validator = MultikernelValidator()
-            if dts_content is not None:
-                input_path_str = str(input) if input else "command-line"
-                validator.set_dts_context(dts_content, input_path_str)
 
             validation_result = validator.validate(tree)
 

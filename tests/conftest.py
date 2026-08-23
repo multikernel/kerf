@@ -16,8 +16,11 @@
 Pytest configuration and fixtures for kerf tests.
 """
 
+import struct
 import sys
 from pathlib import Path
+
+import libfdt
 
 import pytest
 
@@ -104,3 +107,24 @@ def sample_tree(sample_hardware, sample_instances):  # pylint: disable=redefined
     return GlobalDeviceTree(
         hardware=sample_hardware, instances=sample_instances, device_references={}
     )
+
+
+@pytest.fixture
+def pool_dtb():
+    """Build a baseline DTB with CPUs 4 and 5; build(sw) adds to /resources."""
+
+    def make(build):
+        sw = libfdt.FdtSw()
+        sw.finish_reservemap()
+        sw.begin_node("")
+        sw.property_string("compatible", "linux,multikernel-host")
+        sw.begin_node("resources")
+        sw.property("cpus", struct.pack(">QQ", 4, 5))
+        build(sw)
+        sw.end_node()
+        sw.end_node()
+        fdt = sw.as_fdt()
+        fdt.pack()
+        return bytes(fdt.as_bytearray())
+
+    return make

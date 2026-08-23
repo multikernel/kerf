@@ -145,24 +145,15 @@ def test_the_diff_sees_an_explicit_node(topology, monkeypatch):
     assert diff.memory_to_pool == [(1, GB)]
 
 
-_DTS_UNPINNED = """
-/multikernel-v1/;
-
-/ {
-    resources {
-        cpus = <4 5>;
-
-        memory@0 {
-            size = <0x0 0x40000000>;
-        };
-    };
-};
-"""
+def _unpinned_gb(sw):
+    sw.begin_node("memory@0")
+    sw.property_u64("size", GB)
+    sw.end_node()
 
 
-def test_a_baseline_file_without_numa_node_id_is_resolved_too(topology):
+def test_a_baseline_file_without_numa_node_id_is_resolved_too(topology, pool_dtb):
     topology({4: 1, 5: 1})
-    tree = DeviceTreeParser().parse_dts(_DTS_UNPINNED)
+    tree = DeviceTreeParser().parse_dtb_from_bytes(pool_dtb(_unpinned_gb))
     assert tree.hardware.memory.requested == {ANY_NODE: GB}
 
     requested, note = main.resolve_memory_nodes(
@@ -195,17 +186,17 @@ class _FakeManager:
         self.overlay_gen = OverlayGenerator()
 
 
-def test_init_resolves_a_baseline_file_before_writing_it(topology, monkeypatch, tmp_path):
+def test_init_resolves_a_baseline_file_before_writing_it(topology, pool_dtb, monkeypatch, tmp_path):
     topology({4: 1, 5: 1})
     baseline_mgr = _FakeBaselineManager()
     monkeypatch.setattr(main, "mount_multikernel_fs", lambda verbose=False: None)
     monkeypatch.setattr(main, "DeviceTreeManager", _FakeManager)
     monkeypatch.setattr(main, "get_busy_chunks_from_iomem", set)
     monkeypatch.setattr(main, "BaselineManager", lambda *a, **kw: baseline_mgr)
-    dts = tmp_path / "baseline.dts"
-    dts.write_text(_DTS_UNPINNED, encoding="utf-8")
+    dtb = tmp_path / "baseline.dtb"
+    dtb.write_bytes(pool_dtb(_unpinned_gb))
 
-    result = CliRunner().invoke(main.init, [f"--input={dts}"])
+    result = CliRunner().invoke(main.init, [f"--input={dtb}"])
 
     assert result.exit_code == 0, result.output
     assert "Memory: 1024 MB on node 1 (from CPUs 4-5)" in result.output

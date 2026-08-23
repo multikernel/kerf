@@ -30,24 +30,6 @@ class MultikernelValidator:
         self.errors: List[str] = []
         self.warnings: List[str] = []
         self.suggestions: List[str] = []
-        self.dts_content: str = ""
-        self.dts_filename: str = ""
-
-    def set_dts_context(self, dts_content: str, filename: str = ""):
-        """Set DTS content and filename for enhanced error messages."""
-        self.dts_content = dts_content
-        self.dts_filename = filename
-
-    def _find_line_number(self, pattern: str) -> int:
-        """Find line number for a pattern in DTS content."""
-        if not self.dts_content:
-            return 0
-
-        lines = self.dts_content.split("\n")
-        for i, line in enumerate(lines, 1):
-            if pattern in line:
-                return i
-        return 0
 
     def _format_error_with_context(
         self,
@@ -57,7 +39,6 @@ class MultikernelValidator:
         current_state: str,
         suggestion: str,
         alternative: str = None,
-        pattern: str = None,
     ) -> str:
         """Format enhanced error message with context and suggestions."""
         lines = []
@@ -69,13 +50,6 @@ class MultikernelValidator:
         lines.append(f"  Suggestion: {suggestion}")
         if alternative:
             lines.append(f"  Alternative: {alternative}")
-
-        if pattern and self.dts_content:
-            line_num = self._find_line_number(pattern)
-            if line_num > 0:
-                filename = self.dts_filename or "system.dts"
-                lines.append(f"  In file {filename}:")
-                lines.append(f"    Line {line_num}: {pattern}")
 
         return "\n".join(lines)
 
@@ -323,7 +297,6 @@ class MultikernelValidator:
                     current_state=f"Hardware has CPUs 0-{cpus.total-1}",
                     suggestion=f"Use CPUs in range 0-{cpus.total-1}",
                     alternative="Check hardware inventory configuration",
-                    pattern=f"cpus = <{','.join(map(str, sorted(instance_cpus)))}>",
                 )
                 self.errors.append(error_msg)
 
@@ -338,7 +311,6 @@ class MultikernelValidator:
                 current_state=f"Host reserved CPUs: {sorted(host_reserved)}",
                 suggestion=f"Use available CPUs: {available_cpus}",
                 alternative="Modify host-reserved CPU configuration",
-                pattern=f"cpus = <{','.join(map(str, sorted(instance_cpus)))}>",
             )
             self.errors.append(error_msg)
 
@@ -356,7 +328,6 @@ class MultikernelValidator:
                     current_state=f"Both instances use CPUs: {sorted(overlap)}",
                     suggestion=f"Assign different CPUs to {instance.name} or {other_name}",
                     alternative="Use CPU ranges instead of individual CPUs",
-                    pattern=f"cpus = <{','.join(map(str, sorted(instance_cpus)))}>",
                 )
                 self.errors.append(error_msg)
                 # Add suggestions
@@ -389,7 +360,6 @@ class MultikernelValidator:
                               f"pool chunks: {listed}",
                 suggestion="Place the instance inside one chunk or reduce its memory size",
                 alternative="Grow the pool with 'kerf init --memory=...'",
-                pattern=f"memory-size = <{hex(instance_memory.memory_bytes)}>",
             )
             self.errors.append(error_msg)
 
@@ -439,7 +409,6 @@ class MultikernelValidator:
                         current_state=f"Device '{device_name}' not found in hardware inventory",
                         suggestion=f"Use available devices: {available_devices}",
                         alternative="Add device '{device_name}' to hardware inventory",
-                        pattern=f"devices = <&{device_ref}>",
                     )
                     self.errors.append(error_msg)
                     continue
@@ -454,7 +423,6 @@ class MultikernelValidator:
                         current_state=f"Device {device_name} has VFs: {available_vfs}",
                         suggestion=f"Use available VF: {available_vfs[0] if available_vfs else 'none'}",
                         alternative="Configure VF {vf_id} for device {device_name}",
-                        pattern=f"devices = <&{device_ref}>",
                     )
                     self.errors.append(error_msg)
 
