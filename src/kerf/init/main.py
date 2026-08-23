@@ -37,7 +37,7 @@ except ImportError:
 
 from ..baseline import BaselineManager
 from ..create.main import parse_cpu_spec, parse_device_list, parse_memory_spec
-from ..dtc.parser import DeviceTreeParser
+from ..dtc.parser import DeviceTreeParser, is_dts_text
 from ..dtc.reporter import ValidationReporter
 from ..dtc.validator import MultikernelValidator
 from ..exceptions import KernelInterfaceError, ParseError, ValidationError
@@ -1010,6 +1010,10 @@ def init(ctx: click.Context, input: Optional[str], cpus: Optional[str], memory: 
                 click.echo(f"Error: Input file '{input}' does not exist", err=True)
                 sys.exit(3)
 
+            if is_dts_text(input_path):
+                click.echo(f"Error: {input} is DTS text; only the DTB from 'kerf dump' "
+                           "(without --dts) can be replayed.", err=True)
+                sys.exit(2)
             try:
                 tree = parser.parse_dtb(str(input_path))
             except ParseError as e:

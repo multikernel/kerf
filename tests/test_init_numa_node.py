@@ -201,3 +201,17 @@ def test_init_resolves_a_baseline_file_before_writing_it(topology, pool_dtb, mon
     assert result.exit_code == 0, result.output
     assert "Memory: 1024 MB on node 1 (from CPUs 4-5)" in result.output
     assert baseline_mgr.written[-1].hardware.memory.requested == {1: GB}
+
+
+def test_init_rejects_a_dts_dump(monkeypatch, tmp_path):
+    monkeypatch.setattr(main, "mount_multikernel_fs", lambda verbose=False: None)
+    monkeypatch.setattr(main, "DeviceTreeManager", _FakeManager)
+    monkeypatch.setattr(main, "BaselineManager", lambda *a, **kw: _FakeBaselineManager())
+    dts = tmp_path / "host.dts"
+    dts.write_text("/dts-v1/;\n/ { };\n", encoding="utf-8")
+
+    result = CliRunner().invoke(main.init, [f"--input={dts}"])
+
+    assert result.exit_code == 2
+    assert "kerf dump" in result.output
+    assert "--dts" in result.output

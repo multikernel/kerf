@@ -21,6 +21,7 @@ from kerf.dump import main
 
 BASELINE = b"\xd0\x0d\xfe\xed base"
 INSTANCE = b"\xd0\x0d\xfe\xed inst"
+DTS_PREFIX = "/dts-v1/;"
 
 
 @pytest.fixture(name="root")
@@ -77,3 +78,35 @@ def test_dump_without_kernel(tmp_path, monkeypatch):
     result = CliRunner().invoke(main.dump, [])
     assert result.exit_code != 0
     assert "multikernel" in result.output
+
+
+@pytest.fixture(name="real_root")
+def _real_root(tmp_path, monkeypatch, pool_dtb):
+    (tmp_path / "device_tree").write_bytes(pool_dtb(lambda sw: sw.property_string("tag", "pci")))
+    monkeypatch.setattr(main, "KERNFS_ROOT", tmp_path)
+    return tmp_path
+
+
+@pytest.mark.usefixtures("real_root")
+def test_dump_dts_is_readable_text():
+    result = CliRunner().invoke(main.dump, ["--dts"])
+    assert result.exit_code == 0, result.output
+    assert result.output.startswith(DTS_PREFIX)
+    assert 'compatible = "linux,multikernel-host";' in result.output
+    assert "resources {" in result.output
+    assert 'tag = "pci";' in result.output
+
+
+@pytest.mark.usefixtures("real_root")
+def test_dump_dts_to_file(tmp_path):
+    out = tmp_path / "host.dts"
+    result = CliRunner().invoke(main.dump, ["--dts", "-o", str(out)])
+    assert result.exit_code == 0, result.output
+    assert out.read_text(encoding="utf-8").startswith(DTS_PREFIX)
+
+
+@pytest.mark.usefixtures("real_root")
+def test_dump_dts_on_a_tty_is_fine(monkeypatch):
+    monkeypatch.setattr(main, "_stdout_is_tty", lambda: True)
+    result = CliRunner().invoke(main.dump, ["--dts"])
+    assert result.exit_code == 0, result.output

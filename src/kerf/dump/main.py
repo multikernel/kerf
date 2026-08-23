@@ -20,6 +20,9 @@ from pathlib import Path
 
 import click
 
+from ..dtc.parser import DeviceTreeParser
+from ..exceptions import ParseError
+
 KERNFS_ROOT = Path("/sys/fs/multikernel")
 
 
@@ -45,19 +48,32 @@ def _device_tree_path(name):
 
 @click.command()
 @click.argument("name", required=False)
-@click.option("--output", "-o", type=click.Path(dir_okay=False), help="Write the DTB here instead of stdout.")
-def dump(name, output):
-    """Dump the baseline device tree, or that of instance NAME, as a DTB.
+@click.option("--output", "-o", type=click.Path(dir_okay=False), help="Write here instead of stdout.")
+@click.option("--dts", is_flag=True, help="Render as DTS text for reading. Not accepted by --input.")
+def dump(name, output, dts):
+    """Dump the baseline device tree, or that of instance NAME.
 
-    The output is the blob the kernel holds, byte for byte, so a baseline
-    dump can be handed back to 'kerf init --input'. Use 'dtc -I dtb -O dts'
-    to read it.
+    The default output is the blob the kernel holds, byte for byte, which
+    'kerf init --input' and 'kerf create --input' take back. With --dts the
+    same tree is rendered as text for reading or diffing; only the DTB form
+    can be replayed.
     """
     path = _device_tree_path(name)
     try:
         data = path.read_bytes()
     except OSError as e:
         raise click.ClickException(f"Failed to read {path}: {e}") from e
+
+    if dts:
+        try:
+            text = DeviceTreeParser().dts_from_dtb(data)
+        except ParseError as e:
+            raise click.ClickException(str(e)) from e
+        if output:
+            Path(output).write_text(text, encoding="utf-8")
+        else:
+            click.echo(text, nl=False)
+        return
 
     if output:
         Path(output).write_bytes(data)

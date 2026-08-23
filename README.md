@@ -156,9 +156,10 @@ kerf exec web-server
 kerf show
 kerf show web-server
 
-# Dump the device tree the kernel holds, for 'kerf init --input'
+# Dump the device tree the kernel holds: DTB to replay, --dts to read
 kerf dump -o host.dtb
 kerf dump web-server -o web.dtb
+kerf dump web-server --dts
 
 # Shutdown a running kernel instance
 kerf kill web-server
@@ -356,7 +357,7 @@ sudo kerf dump -o host.dtb            # baseline
 sudo kerf dump web-server -o web.dtb  # a running instance
 sudo kerf init --input=host.dtb       # replay the baseline
 sudo kerf create --input=web.dtb      # recreate the instance
-dtc -I dtb -O dts host.dtb            # read it
+sudo kerf dump --dts                  # read it; text is not replayable
 ```
 
 ## CPU and NUMA Topology Support

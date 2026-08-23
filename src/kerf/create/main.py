@@ -28,7 +28,7 @@ from typing import List, Optional
 import click
 
 from ..runtime import DeviceTreeManager
-from ..dtc.parser import DeviceTreeParser
+from ..dtc.parser import DeviceTreeParser, is_dts_text
 from ..models import Instance, InstanceResources
 from ..resources import (
     validate_cpu_allocation,
@@ -558,6 +558,10 @@ def create(  # pylint: disable=too-many-arguments,too-many-positional-arguments
                     "the dump supplies those.",
                     err=True,
                 )
+                sys.exit(2)
+            if is_dts_text(Path(input_path)):
+                click.echo(f"Error: {input_path} is DTS text; only the DTB from 'kerf dump' "
+                           "(without --dts) can be replayed.", err=True)
                 sys.exit(2)
             try:
                 dumped = DeviceTreeParser().parse_instance_dtb_from_bytes(

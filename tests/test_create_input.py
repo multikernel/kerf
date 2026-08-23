@@ -122,3 +122,13 @@ def test_create_rejects_baseline_dump_as_instance(tmp_path, pool_dtb):
 
     assert result.exit_code == 2
     assert "instance" in result.output.lower()
+
+
+def test_create_rejects_a_dts_dump(tmp_path):
+    dts = tmp_path / "web.dts"
+    dts.write_text("/dts-v1/;\n/ { };\n", encoding="utf-8")
+
+    result = CliRunner().invoke(main.create, [f"--input={dts}"])
+
+    assert result.exit_code == 2
+    assert "--dts" in result.output
