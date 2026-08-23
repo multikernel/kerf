@@ -83,6 +83,17 @@ class DeviceTreeParser:
         except Exception as e:
             raise ParseError(f"Failed to parse DTB from bytes: {e}") from e
 
+    def parse_instance_dtb_from_bytes(self, dtb_data: bytes) -> Instance:
+        """Parse the DTB the kernel serves for one instance, as kerf dump writes it."""
+        try:
+            self.fdt = libfdt.Fdt(dtb_data)
+        except Exception as e:
+            raise ParseError(f"Failed to parse instance DTB: {e}") from e
+        name = self.fdt.get_name(0)
+        if not name:
+            raise ParseError("Not an instance device tree: the root node carries no instance name")
+        return self._parse_instance(0, name)
+
     def _build_global_tree(self) -> GlobalDeviceTree:
         """Build GlobalDeviceTree from parsed FDT."""
         try:
@@ -626,6 +637,13 @@ class DeviceTreeParser:
                 devices = [d.strip() for d in device_names_str.split() if d.strip()]
         except libfdt.FdtException:
             pass
+        if not devices:
+            # The kernel's readback spells each device as a child node instead
+            try:
+                devices_node = self.fdt.subnode_offset(resources_node, 'devices')
+                devices = [self.fdt.get_name(o) for o in self._subnodes(devices_node)]
+            except libfdt.FdtException:
+                pass
 
         uring_enabled = False
         uring_sq = None

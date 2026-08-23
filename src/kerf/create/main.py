@@ -23,10 +23,12 @@ creating an overlay and applying it to the kernel.
 import copy
 import sys
 import traceback
+from pathlib import Path
 from typing import List, Optional
 import click
 
 from ..runtime import DeviceTreeManager
+from ..dtc.parser import DeviceTreeParser
 from ..models import Instance, InstanceResources
 from ..resources import (
     validate_cpu_allocation,
@@ -376,9 +378,7 @@ def dump_overlay_for_debug(
     dtbo_data = manager.overlay_gen.generate_overlay(current, modified)
 
     try:
-        # pylint: disable=import-outside-toplevel
-        from ..dtc.parser import DeviceTreeParser
-        import libfdt  # pylint: disable=import-error
+        import libfdt  # pylint: disable=import-error,import-outside-toplevel
 
         fdt = libfdt.Fdt(dtbo_data)
         parser = DeviceTreeParser()
@@ -433,7 +433,7 @@ def dump_overlay_for_debug(
     "interleave (across NUMA nodes), or bind (specific NUMA nodes)",
 )
 @click.option(
-    "--memory", "-m", required=True, help='Memory allocation (e.g., "2GB", "2048MB", or bytes)'
+    "--memory", "-m", help='Memory allocation (e.g., "2GB", "2048MB", or bytes)'
 )
 @click.option(
     "--memory-base",
@@ -445,6 +445,15 @@ def dump_overlay_for_debug(
     "-d",
     help='Device names (comma-separated, e.g., "enp9s0_dev,nvme0"). '
     "Device names must match device node names in the baseline DTB.",
+)
+@click.option(
+    "--input",
+    "-i",
+    "input_path",
+    type=click.Path(exists=True, dir_okay=False),
+    help="Replay an instance dumped with 'kerf dump NAME -o FILE': its CPUs, memory "
+    "size, devices and id, unless overridden by NAME or --id. The memory base is "
+    "left to the kernel. Mutually exclusive with the resource options above.",
 )
 @click.option(
     "--enable-host-kcore", is_flag=True, help="Enable host kcore access for this instance"
@@ -467,6 +476,7 @@ def create(  # pylint: disable=too-many-arguments,too-many-positional-arguments
     memory: str,
     memory_base: Optional[str],
     devices: Optional[str],
+    input_path: Optional[str],
     enable_host_kcore: bool,
     uring: bool,
     uring_sq_entries: Optional[int],
@@ -513,6 +523,9 @@ def create(  # pylint: disable=too-many-arguments,too-many-positional-arguments
 
         # Validate without applying
         kerf create web-server --cpu-count=4 --memory=2GB --dry-run
+
+        # Recreate an instance from 'kerf dump web-server -o web.dtb'
+        kerf create --input=web.dtb
     """
     try:
         if name is None and ctx is not None:
@@ -524,11 +537,51 @@ def create(  # pylint: disable=too-many-arguments,too-many-positional-arguments
                     name = arg
                     break
 
+        dumped = None
+        if input_path:
+            given = [
+                flag
+                for flag, value in (
+                    ("--cpus", cpus),
+                    ("--cpu-count", cpu_count),
+                    ("--memory", memory),
+                    ("--memory-base", memory_base),
+                    ("--devices", devices),
+                    ("--numa-nodes", numa_nodes),
+                    ("--memory-policy", memory_policy),
+                )
+                if value is not None
+            ]
+            if given:
+                click.echo(
+                    f"Error: --input is mutually exclusive with {', '.join(given)}; "
+                    "the dump supplies those.",
+                    err=True,
+                )
+                sys.exit(2)
+            try:
+                dumped = DeviceTreeParser().parse_instance_dtb_from_bytes(
+                    Path(input_path).read_bytes()
+                )
+            except ParseError as e:
+                click.echo(f"Error: {input_path} is not an instance dump: {e}", err=True)
+                sys.exit(2)
+            name = name or dumped.name
+            if instance_id is None:
+                instance_id = dumped.id
+            cpus = ",".join(map(str, dumped.resources.cpus))
+            memory = str(dumped.resources.memory_bytes)
+            devices = ",".join(dumped.resources.devices) or None
+
         # Validate name is provided
         if not name:
             click.echo("Error: Instance name is required", err=True)
             click.echo("\nUsage: kerf create <name> [OPTIONS]", err=True)
             click.echo("       kerf create [OPTIONS] <name>", err=True)
+            sys.exit(2)
+
+        if memory is None:
+            click.echo("Error: --memory is required unless --input is given", err=True)
             sys.exit(2)
 
         # Validate that exactly one of --cpus or --cpu-count is provided
