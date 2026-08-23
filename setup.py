@@ -80,7 +80,6 @@ def main():
     print("\nNext steps:")
     print("1. Run 'python -m pytest tests/' to test the implementation")
     print("2. Run 'kerf --help' to see available commands")
-    print("3. Try: kerf dtc --input=examples/system.dts --output-dir=build/")
 
     return 0
 

@@ -334,22 +334,9 @@ pip install -e .
 kerf --help
 kerf init --help
 
-# Try with example baseline configuration
-kerf init --input=examples/baseline.dts --report
+# Carve a pool out of the host: 7 CPUs (by APIC ID) and 1GB on their NUMA node
+sudo kerf init --cpus=128-134 --memory=1GB --report
 ```
-
-## Examples
-
-The `examples/` directory contains sample baseline Device Tree Source (DTS) files demonstrating various hardware resource configurations:
-
-- **`baseline.dts`** - Complete baseline with CPU, memory, and device resources (32 CPUs, 16GB memory)
-- **`minimal.dts`** - Simple baseline for testing and development (8 CPUs, 8GB memory)
-- **`edge_computing.dts`** - Edge computing baseline with GPU support for AI inference (16 CPUs, 32GB memory)
-- **`numa_topology.dts`** - Advanced NUMA topology baseline with 4 NUMA nodes and topology-aware allocation
-- **`system.dts`** - Example baseline with various device configurations
-- **`conflict_example.dts`** - Intentionally invalid baseline demonstrating common validation errors
-
-**Note**: All baseline files contain **only** hardware resources - no instances. Instances are created dynamically via overlays using `kerf create` command.
 
 ## CPU and NUMA Topology Support
 

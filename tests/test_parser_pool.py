@@ -15,7 +15,6 @@
 """Tests for parsing pool chunks and per-node memory requests."""
 
 import struct
-from pathlib import Path
 
 import libfdt
 import pytest
@@ -278,11 +277,3 @@ def test_parse_dtb_legacy_memory_base_alone_rejected():
 
     with pytest.raises(ParseError, match="not supported"):
         DeviceTreeParser().parse_dtb_from_bytes(_dtb(build))
-
-
-@pytest.mark.parametrize(
-    "path", sorted(str(p) for p in Path(__file__).parent.parent.glob("examples/*.dts"))
-)
-def test_parse_example_dts(path):
-    tree = DeviceTreeParser().parse_dts(Path(path).read_text(encoding="utf-8"))
-    assert tree.hardware.memory.memory_pool_bytes > 0
