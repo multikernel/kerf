@@ -1439,19 +1439,11 @@ class DeviceTreeParser:
             return None
 
         nodes = {}
-
-        # Iterate through NUMA node definitions
-        offset = self.fdt.first_subnode(numa_nodes_node)
-        while offset >= 0:
-            try:
-                node_name = self.fdt.get_name(offset)
-                if node_name.startswith('node@'):
-                    node_id = int(node_name.split('@')[1])
-                    node_info = self._parse_numa_node_info(offset, node_id)
-                    nodes[node_id] = node_info
-                offset = self.fdt.next_subnode(offset)
-            except Exception:
-                offset = self.fdt.next_subnode(offset)
+        for offset in self._subnodes(numa_nodes_node):
+            node_name = self.fdt.get_name(offset)
+            if node_name.startswith('node@'):
+                node_id = int(node_name.split('@')[1])
+                nodes[node_id] = self._parse_numa_node_info(offset, node_id)
 
         return nodes if nodes else None
 

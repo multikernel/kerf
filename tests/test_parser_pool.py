@@ -241,6 +241,29 @@ def test_parse_dts_without_memory_rejected():
         DeviceTreeParser().parse_dts(_DTS_NO_MEMORY)
 
 
+def test_parse_topology_memory_base_is_not_the_pool():
+    def build(sw):
+        sw.begin_node("topology")
+        sw.begin_node("numa-nodes")
+        for node_id, cpu in ((0, 4), (1, 5)):
+            sw.begin_node(f"node@{node_id}")
+            sw.property_u32("node-id", node_id)
+            sw.property_u64("memory-base", node_id * (1 << 35))
+            sw.property_u64("memory-size", 1 << 35)
+            sw.property("cpus", struct.pack(">Q", cpu))
+            sw.end_node()
+        sw.end_node()
+        sw.end_node()
+        sw.begin_node("memory@0")
+        sw.property_u64("size", 1 << 30)
+        sw.property_u32("numa-node-id", 1)
+        sw.end_node()
+
+    tree = DeviceTreeParser().parse_dtb_from_bytes(_dtb(build))
+    assert tree.hardware.memory.requested == {1: 1 << 30}
+    assert tree.hardware.memory.regions == []
+
+
 def test_parse_dtb_without_memory_rejected():
     def build(sw):
         sw.property_u32("placeholder", 0)
