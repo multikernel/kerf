@@ -400,6 +400,7 @@ class MultikernelValidator:
                 device_name = device_ref.split("_vf")[0]
                 vf_id = int(device_ref.split("_vf")[1])
 
+                device_name = tree.hardware.find_device(device_name) or device_name
                 if device_name not in tree.hardware.devices:
                     available_devices = list(tree.hardware.devices.keys())
                     error_msg = self._format_error_with_context(
@@ -430,6 +431,7 @@ class MultikernelValidator:
                 device_name = device_ref.split("_ns")[0]
                 ns_id = int(device_ref.split("_ns")[1])
 
+                device_name = tree.hardware.find_device(device_name) or device_name
                 if device_name not in tree.hardware.devices:
                     self.errors.append(
                         f"Instance {instance.name}: Reference to non-existent device '{device_name}'"
@@ -443,8 +445,7 @@ class MultikernelValidator:
                     )
 
             else:
-                # Direct device reference
-                if device_ref not in tree.hardware.devices:
+                if tree.hardware.find_device(device_ref) is None:
                     self.errors.append(
                         f"Instance {instance.name}: Reference to non-existent device '{device_ref}'"
                     )

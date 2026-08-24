@@ -359,6 +359,8 @@ def display_baseline_info(tree: GlobalDeviceTree, verbose: bool = False):
         click.echo("\n  Devices:")
         for device_name, device_info in sorted(hardware.devices.items()):
             click.echo(f"    {device_name}:")
+            if device_info.alias:
+                click.echo(f"      Alias:         {device_info.alias}")
             click.echo(f"      Compatible:    {device_info.compatible}")
             if device_info.device_type:
                 click.echo(f"      Type:          {device_info.device_type}")

@@ -132,7 +132,7 @@ Baseline DTB (static)
 kerf init --cpus=4-7 --memory=2GB
 
 # Initialize with CPUs, per-node memory and devices
-kerf init --cpus=4-31 --memory=8GB@0,8GB@1 --devices=enp9s0_dev,nvme0
+kerf init --cpus=4-31 --memory=8GB@0,8GB@1 --devices=nvme0n1,enp9s0
 
 # Re-run to reshape the live pool; "none" asks for none of a resource
 kerf init --cpus=4-15 --memory=4GB

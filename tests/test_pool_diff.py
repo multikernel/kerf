@@ -113,3 +113,13 @@ def test_surplus_smaller_than_every_chunk_stays_in_the_pool():
     assert d.memory_to_host == []
     assert d.memory_to_pool == []
     assert d.is_empty()
+
+
+def test_device_aliases_follow_devices_joining_the_pool():
+    cur = _tree([4], devices=["0000:03:00.0"])
+    req = _tree([4], devices=["0000:03:00.0", "0000:04:00.0"])
+    req.hardware.devices["0000:03:00.0"].alias = "nvme0"
+    req.hardware.devices["0000:04:00.0"].alias = "nvme1"
+    d = compute_pool_diff(cur, req)
+    assert d.devices_to_pool == ["0000:04:00.0"]
+    assert d.device_aliases == {"0000:04:00.0": "nvme1"}

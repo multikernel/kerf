@@ -109,6 +109,8 @@ class InstanceExtractor:
 
         fdt_sw.end_node()  # End resources
 
+        self._add_aliases_sw(fdt_sw, tree.hardware.devices)
+
         if tree.instances:
             self._add_instances_section_sw(fdt_sw, tree.instances)
 
@@ -190,6 +192,16 @@ class InstanceExtractor:
 
             fdt_sw.end_node()
 
+        fdt_sw.end_node()
+
+    def _add_aliases_sw(self, fdt_sw, devices):
+        aliases = {info.alias: name for name, info in (devices or {}).items() if info.alias}
+        if not aliases:
+            return
+
+        fdt_sw.begin_node("aliases")
+        for alias, name in aliases.items():
+            fdt_sw.property_string(alias, f"/resources/devices/{name}")
         fdt_sw.end_node()
 
     def _add_instances_section_sw(self, fdt_sw, instances):

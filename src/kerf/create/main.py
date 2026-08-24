@@ -343,14 +343,14 @@ def parse_device_list(device_spec: Optional[str]) -> List[str]:
     """
     Parse device specification string into list of device references.
 
-    A reference is a pool device node name ("pci_0000_09_00_0") or a PCI
-    address ("0000:09:00.0"), comma-separated.
+    A reference is an alias ("nvme0"), a PCI address ("0000:4f:01.0") or a
+    device node name ("pci_0000_4f_01_0") from the baseline, comma-separated.
 
     Args:
         device_spec: Device specification string or None
 
     Returns:
-        List of device references
+        List of device references (e.g., ["nvme0", "0000:09:00.0"])
     """
     if not device_spec:
         return []
@@ -440,8 +440,8 @@ def dump_overlay_for_debug(
 @click.option(
     "--devices",
     "-d",
-    help='Pool devices to assign, by PCI address or node name '
-    '(comma-separated, e.g. "0000:09:00.0,pci_0000_0a_00_0"), as listed by kerf show.',
+    help='Pool devices to assign, by alias, PCI address or node name '
+    '(comma-separated, e.g. "nvme0,0000:09:00.0"), as listed by kerf show.',
 )
 @click.option(
     "--input",
@@ -504,7 +504,7 @@ def create(  # pylint: disable=too-many-arguments,too-many-positional-arguments
         kerf create database --cpus=128-142 --memory=8GB --memory-base=0x100000000
 
         # Create instance with devices
-        kerf create compute --cpus=128-142 --memory=4GB --devices=0000:09:00.0
+        kerf create compute --cpus=128-142 --memory=4GB --devices=enp9s0
 
         # Create instance with explicit single APIC ID
         kerf create web-server --cpus=128 --memory=2GB

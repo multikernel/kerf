@@ -315,13 +315,14 @@ class DeviceTreeParser:
         except libfdt.FdtException:
             return devices
 
-        # Iterate through device nodes
+        offsets = {}
         offset = self.fdt.first_subnode(devices_node)
         while offset >= 0:
             name = self.fdt.get_name(offset)
             try:
                 device_info = self._parse_device_info(offset, name)
                 devices[name] = device_info
+                offsets[offset] = name
             except ParseError:
                 # Skip nodes that don't have required properties (not valid devices)
                 pass
@@ -331,7 +332,27 @@ class DeviceTreeParser:
                 # No more subnodes
                 break
 
+        for alias, name in self._parse_aliases(offsets).items():
+            devices[name].alias = alias
+
         return devices
+
+    def _parse_aliases(self, offsets: Dict[int, str]) -> Dict[str, str]:
+        """Map each /aliases entry to the device node it points at."""
+        aliases = {}
+        aliases_node = self.fdt.path_offset('/aliases', libfdt.QUIET_NOTFOUND)
+        if aliases_node < 0:
+            return aliases
+
+        prop_offset = self.fdt.first_property_offset(aliases_node, libfdt.QUIET_NOTFOUND)
+        while prop_offset >= 0:
+            prop = self.fdt.get_property_by_offset(prop_offset)
+            target = self.fdt.path_offset(prop.as_str(), libfdt.QUIET_NOTFOUND)
+            if target in offsets:
+                aliases[prop.name] = offsets[target]
+            prop_offset = self.fdt.next_property_offset(prop_offset, libfdt.QUIET_NOTFOUND)
+
+        return aliases
 
     def _parse_device_info(self, node_offset: int, name: str) -> DeviceInfo:
         """Parse individual device information."""

@@ -159,3 +159,33 @@ class TestInstanceExtractor:
 
         assert len(parsed_tree.instances) == 3
         assert "test" in parsed_tree.instances
+
+
+def test_aliases_survive_the_dtb_round_trip(sample_tree):
+    from kerf.dtc.extractor import InstanceExtractor
+    from kerf.dtc.parser import DeviceTreeParser
+    from kerf.models import DeviceInfo
+
+    sample_tree.hardware.devices["pci_0000_4f_01_0"] = DeviceInfo(
+        name="pci_0000_4f_01_0", compatible="pci-storage", device_type="pci",
+        pci_id="0000:4f:01.0", vendor_id=0x144d, device_id=0xa80a, alias="nvme0",
+    )
+    dtb_data = InstanceExtractor().generate_global_dtb(sample_tree)
+
+    parser = DeviceTreeParser()
+    parsed = parser.parse_dtb_from_bytes(dtb_data)
+    assert parsed.hardware.devices["pci_0000_4f_01_0"].alias == "nvme0"
+    assert parsed.hardware.devices["eth0"].alias is None
+
+    aliases = parser.fdt.path_offset("/aliases")
+    assert parser.fdt.getprop(aliases, "nvme0").as_str() == "/resources/devices/pci_0000_4f_01_0"
+
+
+def test_no_aliases_node_without_aliases(sample_tree):
+    import libfdt
+    from kerf.dtc.extractor import InstanceExtractor
+    from kerf.dtc.parser import DeviceTreeParser
+
+    parser = DeviceTreeParser()
+    parser.parse_dtb_from_bytes(InstanceExtractor().generate_global_dtb(sample_tree))
+    assert parser.fdt.path_offset("/aliases", libfdt.QUIET_NOTFOUND) < 0

@@ -18,6 +18,8 @@ Data models for multikernel device tree representation.
 
 from dataclasses import dataclass, field
 from typing import List, Dict, Optional, Set, Tuple
+
+from .devices import normalize_pci_id
 from enum import Enum
 
 
@@ -151,6 +153,7 @@ class DeviceInfo:
     device_type: Optional[str] = None  # "pci", "platform", etc.
     device_name: Optional[str] = None  # For platform devices (e.g., "serial8250")
     pci_id: Optional[str] = None
+    alias: Optional[str] = None  # Stable name from /aliases (e.g., "nvme0")
     vendor_id: Optional[int] = None
     device_id: Optional[int] = None
     sriov_vfs: Optional[int] = None
@@ -228,11 +231,16 @@ class HardwareInventory:
     devices: Dict[str, DeviceInfo] = None
 
     def find_device(self, ref: str) -> Optional[str]:
-        """Resolve a device node name or PCI address to the pool node name."""
+        """Node name of the device a node name, alias or PCI address refers to."""
+        if not self.devices:
+            return None
         if ref in self.devices:
             return ref
+        pci_id = normalize_pci_id(ref)
         for name, device in self.devices.items():
-            if device.pci_id == ref:
+            if ref == device.alias:
+                return name
+            if pci_id and device.pci_id and normalize_pci_id(device.pci_id) == pci_id:
                 return name
         return None
 

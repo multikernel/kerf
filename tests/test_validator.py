@@ -17,6 +17,8 @@ Tests for kerf validator.
 """
 
 from kerf.dtc import validator as validator_module
+import pytest
+
 from kerf.dtc.validator import MultikernelValidator
 
 
@@ -474,3 +476,34 @@ class TestPoolChunks:
 
         assert not result.is_valid
         assert any("does not fit in any pool chunk" in error for error in result.errors)
+
+
+@pytest.mark.parametrize("ref", ["pci_0000_4f_01_0", "nvme0", "0000:4f:01.0"])
+def test_instance_may_name_a_device_by_node_alias_or_address(sample_hardware, ref):
+    from kerf.models import DeviceInfo, Instance, InstanceResources, GlobalDeviceTree
+
+    sample_hardware.devices["pci_0000_4f_01_0"] = DeviceInfo(
+        name="pci_0000_4f_01_0", compatible="pci-storage", device_type="pci",
+        pci_id="0000:4f:01.0", alias="nvme0",
+    )
+    instances = {
+        "db": Instance(name="db", id=1, resources=InstanceResources(
+            cpus=[4, 5], memory_base=0x80000000, memory_bytes=1 << 30, devices=[ref])),
+    }
+    tree = GlobalDeviceTree(hardware=sample_hardware, instances=instances, device_references={})
+
+    result = MultikernelValidator().validate(tree)
+    assert not [e for e in result.errors if "non-existent device" in e]
+
+
+def test_unknown_device_reference_is_rejected(sample_hardware):
+    from kerf.models import Instance, InstanceResources, GlobalDeviceTree
+
+    instances = {
+        "db": Instance(name="db", id=1, resources=InstanceResources(
+            cpus=[4, 5], memory_base=0x80000000, memory_bytes=1 << 30, devices=["nvme7"])),
+    }
+    tree = GlobalDeviceTree(hardware=sample_hardware, instances=instances, device_references={})
+
+    result = MultikernelValidator().validate(tree)
+    assert any("non-existent device 'nvme7'" in e for e in result.errors)
