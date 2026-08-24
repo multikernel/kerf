@@ -175,26 +175,28 @@ def detect_pci_device(device_name: str) -> Optional[DeviceInfo]:
             except (ValueError, pyudev.DeviceNotFoundError):
                 return None
         else:
-            try:
-                net_device = pyudev.Devices.from_name(context, 'net', device_name)
-                pci_device = net_device.find_parent('pci')
-                if pci_device:
-                    pci_slot = pci_device.sys_name
-            except (ValueError, pyudev.DeviceNotFoundError):
-                pass
+            # The nearest PCI ancestor is the device itself; anything higher
+            # up is a bridge on the path to it, and pooling a bridge would
+            # detach and expose the whole subtree.
+            for subsystem in ('net', 'block'):
+                try:
+                    child = pyudev.Devices.from_name(context, subsystem, device_name)
+                except (ValueError, pyudev.DeviceNotFoundError):
+                    continue
+                pci_device = child.find_parent('pci')
+                break
 
             if not pci_device:
-                for device in context.list_devices(subsystem='pci'):
+                for child in context.list_devices():
                     try:
-                        for child in device.children:
-                            if child.sys_name == device_name:
-                                pci_device = device
-                                pci_slot = device.sys_name
-                                break
-                        if pci_device:
+                        if child.sys_name == device_name:
+                            pci_device = child.find_parent('pci')
                             break
                     except (OSError, AttributeError):
                         continue
+
+            if pci_device:
+                pci_slot = pci_device.sys_name
 
         if not pci_device or not pci_slot:
             return None

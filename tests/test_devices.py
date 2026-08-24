@@ -86,3 +86,59 @@ def test_find_device_by_node_name_alias_or_address():
     assert inventory.find_device("nvme1") is None
     assert inventory.find_device("0000:4f:01.1") is None
     assert _inventory().find_device("nvme0") is None
+
+
+class _FakeUdevDevice:
+    def __init__(self, sys_name, sys_path=None, parent=None, subsystem=None):
+        self.sys_name = sys_name
+        self.sys_path = sys_path
+        self.subsystem = subsystem
+        self._parent = parent
+
+    def find_parent(self, subsystem):
+        node = self._parent
+        while node is not None:
+            if node.subsystem == subsystem:
+                return node
+            node = node._parent
+        return None
+
+
+def test_block_device_resolves_to_the_nearest_pci_ancestor(tmp_path, monkeypatch):
+    """A disk behind a root port must resolve to the endpoint, not the port."""
+    import types
+    from kerf.init import main as init_main
+
+    endpoint_path = tmp_path / "0000:50:00.0"
+    endpoint_path.mkdir()
+    (endpoint_path / "vendor").write_text("0x144d\n")
+    (endpoint_path / "device").write_text("0xa80a\n")
+    (endpoint_path / "class").write_text("0x010802\n")
+
+    root_port = _FakeUdevDevice("0000:4f:01.0", subsystem="pci")
+    endpoint = _FakeUdevDevice("0000:50:00.0", sys_path=str(endpoint_path),
+                               parent=root_port, subsystem="pci")
+    controller = _FakeUdevDevice("nvme0", parent=endpoint, subsystem="nvme")
+    disk = _FakeUdevDevice("nvme0n1", parent=controller, subsystem="block")
+    partition = _FakeUdevDevice("nvme0n1p1", parent=disk, subsystem="block")
+
+    class NotFound(Exception):
+        pass
+
+    def from_name(_context, subsystem, name):
+        if subsystem == "block" and name == "nvme0n1p1":
+            return partition
+        raise NotFound(name)
+
+    fake_pyudev = types.SimpleNamespace(
+        Context=lambda: types.SimpleNamespace(list_devices=lambda **kw: iter(())),
+        Devices=types.SimpleNamespace(from_name=from_name, from_path=lambda *a: None),
+        DeviceNotFoundError=NotFound,
+    )
+    monkeypatch.setattr(init_main, "pyudev", fake_pyudev)
+
+    info = init_main.detect_pci_device("nvme0n1p1")
+    assert info is not None
+    assert info.pci_id == "0000:50:00.0"
+    assert info.compatible == "pci-storage"
+    assert info.vendor_id == 0x144D
