@@ -19,7 +19,7 @@ A comprehensive multikernel management system designed to orchestrate
 and manage multiple kernel instances on a single host.
 """
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 __author__ = "Cong Wang"
 
 # Export main runtime components for easy access

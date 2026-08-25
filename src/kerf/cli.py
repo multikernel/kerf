@@ -31,7 +31,7 @@ from .console.main import console
 
 
 @click.group()
-@click.version_option(version="0.1.0", prog_name="kerf")
+@click.version_option(version="0.2.0", prog_name="kerf")
 @click.option("--debug", is_flag=True, help="Enable debug mode")
 @click.pass_context
 def main(ctx, debug):
