@@ -110,3 +110,59 @@ def test_dump_dts_on_a_tty_is_fine(monkeypatch):
     monkeypatch.setattr(main, "_stdout_is_tty", lambda: True)
     result = CliRunner().invoke(main.dump, ["--dts"])
     assert result.exit_code == 0, result.output
+
+
+def test_instance_dtb_with_host_bridge_nodes_parses_and_renders():
+    """The kernel now emits /aliases and pci@N host-bridge nodes alongside
+    /resources; dump parsing and DTS rendering must take them in stride."""
+    import struct
+    import libfdt
+    from kerf.dtc.parser import DeviceTreeParser
+
+    sw = libfdt.FdtSw()
+    sw.finish_reservemap()
+    sw.begin_node("web-server")
+    sw.property_string("compatible", "multikernel-v1")
+    sw.property_u32("id", 1)
+    sw.begin_node("resources")
+    sw.property_u64("memory-base", 0xFFFA0D000)
+    sw.property_u64("memory-bytes", 512 * 1024 * 1024)
+    sw.property("cpus", struct.pack(">Q", 174))
+    sw.begin_node("devices")
+    sw.begin_node("pci_0000_50_00_0")
+    sw.property_string("device-type", "pci")
+    sw.property_string("pci-id", "0000:50:00.0")
+    sw.property_u32("vendor-id", 0x144D)
+    sw.property_u32("device-id", 0xA80A)
+    sw.end_node()
+    sw.end_node()
+    sw.end_node()  # resources
+    sw.begin_node("aliases")
+    sw.property_string("nvme0", "/resources/devices/pci_0000_50_00_0")
+    sw.end_node()
+    sw.begin_node("pci@4f")
+    sw.property_string("compatible", "multikernel,pci-host-bridge")
+    sw.property_string("device_type", "pci")
+    sw.property_u32("#address-cells", 3)
+    sw.property_u32("#size-cells", 2)
+    sw.property_u32("linux,pci-domain", 0)
+    sw.property("bus-range", struct.pack(">II", 0x4F, 0x50))
+    sw.property("reg", struct.pack(">IIII", 0, 0xE04F0000, 0, 0x200000))
+    sw.property("ranges", struct.pack(">7I", 0x02000000, 0, 0xB0000000,
+                                      0, 0xB0000000, 0, 0x10000000))
+    sw.end_node()
+    sw.end_node()  # root
+    dtb = sw.as_fdt()
+    dtb.pack()
+    data = bytes(dtb.as_bytearray())
+
+    instance = DeviceTreeParser().parse_instance_dtb_from_bytes(data)
+    assert instance.name == "web-server"
+    assert instance.id == 1
+    assert instance.resources.devices == ["pci_0000_50_00_0"]
+
+    text = DeviceTreeParser().dts_from_dtb(data)
+    assert "pci@4f {" in text
+    assert "multikernel,pci-host-bridge" in text
+    assert "bus-range" in text
+    assert "nvme0" in text
