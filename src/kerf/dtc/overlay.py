@@ -20,7 +20,7 @@ overlays (DTBO) that represent incremental changes to the device tree state.
 """
 
 import struct
-from typing import Optional, Set, Tuple
+from typing import Dict, Optional, Set, Tuple
 
 import libfdt
 
@@ -77,7 +77,9 @@ class OverlayGenerator:
             if name not in modified.instances:
                 instances_to_remove.add(name)
 
-        return self._create_overlay_dtb(instances_to_add, instances_to_update, instances_to_remove)
+        pci_ids = {name: d.pci_id for name, d in modified.hardware.devices.items() if d.pci_id}
+        return self._create_overlay_dtb(instances_to_add, instances_to_update, instances_to_remove,
+                                        pci_ids)
 
     def generate_removal_overlay(self, instance_name: str) -> bytes:
         """
@@ -256,7 +258,8 @@ class OverlayGenerator:
         fdt_sw.end_node()
 
     def _create_overlay_dtb(
-        self, instances_to_add: dict, instances_to_update: dict, instances_to_remove: Set[str]
+        self, instances_to_add: dict, instances_to_update: dict, instances_to_remove: Set[str],
+        pci_ids: Optional[Dict[str, str]] = None,
     ) -> bytes:
         """
         Create overlay DTB with instance changes using fragment format.
@@ -265,6 +268,7 @@ class OverlayGenerator:
             instances_to_add: Dict of instance name -> Instance to add
             instances_to_update: Dict of instance name -> Instance to update
             instances_to_remove: Set of instance names to remove
+            pci_ids: PCI address of each pool device, by node name
 
         Returns:
             DTBO blob as bytes
@@ -295,10 +299,6 @@ class OverlayGenerator:
             fdt_sw.property("cpus", pack_cpu_ids(instance.resources.cpus))
 
             fdt_sw.property_u64("memory-bytes", instance.resources.memory_bytes)
-
-            if instance.resources.devices:
-                stringlist_data = b'\0'.join(d.encode('utf-8') for d in instance.resources.devices) + b'\0'
-                fdt_sw.property("device-names", stringlist_data)
 
             if instance.resources.numa_nodes:
                 numa_data = struct.pack(
@@ -340,6 +340,20 @@ class OverlayGenerator:
             fdt_sw.end_node()  # End __overlay__
             fdt_sw.end_node()  # End fragment
             fragment_id += 1
+
+            # Devices join the instance the same way "kerf update" hands them
+            # over, by PCI address against the live pool: the kernel resolves
+            # device-names against its baseline snapshot, which never learns
+            # of devices pooled after init.
+            if instance.resources.devices:
+                fdt_sw.begin_node(f"fragment@{fragment_id:x}")
+                fdt_sw.property_string("target-path", f"{self.INSTANCES_PATH}/{name}")
+                fdt_sw.begin_node("__overlay__")
+                self._device_op(fdt_sw, "device-add",
+                                [(pci_ids or {}).get(d, d) for d in instance.resources.devices])
+                fdt_sw.end_node()
+                fdt_sw.end_node()
+                fragment_id += 1
 
         for name in instances_to_remove:
             fdt_sw.begin_node(f"fragment@{fragment_id:x}")

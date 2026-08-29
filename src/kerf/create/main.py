@@ -341,19 +341,16 @@ def parse_memory_base(base_spec: str) -> int:
 
 def parse_device_list(device_spec: Optional[str]) -> List[str]:
     """
-    Parse device specification string into list of device names.
+    Parse device specification string into list of device references.
 
-    Supports formats:
-    - "enp9s0_dev" (single device name)
-    - "enp9s0_dev,nvme0" (comma-separated device names)
-
-    Device names must match device node names in the baseline DTB.
+    A reference is a pool device node name ("pci_0000_09_00_0") or a PCI
+    address ("0000:09:00.0"), comma-separated.
 
     Args:
-        device_spec: Device specification string or None (device names, comma-separated)
+        device_spec: Device specification string or None
 
     Returns:
-        List of device name strings (e.g., ["enp9s0_dev", "nvme0"])
+        List of device references
     """
     if not device_spec:
         return []
@@ -443,8 +440,8 @@ def dump_overlay_for_debug(
 @click.option(
     "--devices",
     "-d",
-    help='Device names (comma-separated, e.g., "enp9s0_dev,nvme0"). '
-    "Device names must match device node names in the baseline DTB.",
+    help='Pool devices to assign, by PCI address or node name '
+    '(comma-separated, e.g. "0000:09:00.0,pci_0000_0a_00_0"), as listed by kerf show.',
 )
 @click.option(
     "--input",
@@ -507,7 +504,7 @@ def create(  # pylint: disable=too-many-arguments,too-many-positional-arguments
         kerf create database --cpus=128-142 --memory=8GB --memory-base=0x100000000
 
         # Create instance with devices
-        kerf create compute --cpus=128-142 --memory=4GB --devices=enp9s0_dev
+        kerf create compute --cpus=128-142 --memory=4GB --devices=0000:09:00.0
 
         # Create instance with explicit single APIC ID
         kerf create web-server --cpus=128 --memory=2GB
@@ -711,13 +708,20 @@ def create(  # pylint: disable=too-many-arguments,too-many-positional-arguments
             else:
                 validate_memory_allocation(modified, memory_base_addr, memory_bytes)
 
+            device_nodes = []
+            for ref in device_list:
+                node = modified.hardware.find_device(ref)
+                if node is None:
+                    raise ResourceError(f"Device '{ref}' is not in the pool")
+                device_nodes.append(node)
+
             # Create instance resources with topology settings
             uring_enabled = uring or uring_sq_entries is not None or uring_cq_entries is not None or uring_shim_pages is not None
             resources = InstanceResources(
                 cpus=cpu_list,
                 memory_base=memory_base_addr,
                 memory_bytes=memory_bytes,
-                devices=device_list,
+                devices=device_nodes,
                 numa_nodes=numa_node_list,
                 cpu_affinity=cpu_affinity,
                 memory_policy=memory_policy,

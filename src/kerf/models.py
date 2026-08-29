@@ -227,6 +227,15 @@ class HardwareInventory:
     topology: Optional[TopologySection] = None
     devices: Dict[str, DeviceInfo] = None
 
+    def find_device(self, ref: str) -> Optional[str]:
+        """Resolve a device node name or PCI address to the pool node name."""
+        if ref in self.devices:
+            return ref
+        for name, device in self.devices.items():
+            if device.pci_id == ref:
+                return name
+        return None
+
 
 @dataclass
 class OverlayInstanceData:

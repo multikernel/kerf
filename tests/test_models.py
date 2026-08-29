@@ -316,3 +316,16 @@ class TestInstanceState:
         assert InstanceState.LOADED.value == "loaded"
         assert InstanceState.ACTIVE.value == "active"
         assert InstanceState.FAILED.value == "failed"
+
+
+class TestFindDevice:
+    """Pool devices are named by node name or PCI address."""
+
+    def test_by_node_name(self, sample_hardware):
+        assert sample_hardware.find_device("eth0") == "eth0"
+
+    def test_by_pci_address(self, sample_hardware):
+        assert sample_hardware.find_device("0000:01:00.0") == "eth0"
+
+    def test_unknown(self, sample_hardware):
+        assert sample_hardware.find_device("0000:09:00.0") is None

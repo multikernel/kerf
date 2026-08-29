@@ -156,3 +156,29 @@ def test_removal_overlay_targets_the_instance_namespace():
     assert fdt.getprop(fdt.path_offset("/fragment@0"), "target-path").as_str() == "/instances"
     remove = fdt.subnode_offset(ov, "instance-remove")
     assert fdt.getprop(remove, "instance-name").as_str() == "database"
+
+
+def _assign(sample_hardware, sample_instances, devices):
+    current = GlobalDeviceTree(hardware=sample_hardware, instances={}, device_references={})
+    instance = copy.deepcopy(sample_instances["database"])
+    instance.resources.devices = devices
+    modified = GlobalDeviceTree(
+        hardware=sample_hardware, instances={"database": instance}, device_references={})
+    return libfdt.Fdt(OverlayGenerator().generate_overlay(current, modified))
+
+
+def test_create_overlay_assigns_devices_by_pci_id(sample_hardware, sample_instances):
+    fdt = _assign(sample_hardware, sample_instances, ["eth0"])
+
+    resources = fdt.path_offset("/fragment@0/__overlay__/instance-create/resources")
+    assert fdt.getprop(resources, "device-names", quiet=[libfdt.FDT_ERR_NOTFOUND]) == MISSING
+
+    frag = fdt.path_offset("/fragment@1")
+    assert fdt.getprop(frag, "target-path").as_str() == "/instances/database"
+    pci = fdt.path_offset("/fragment@1/__overlay__/device-add/pci@0")
+    assert fdt.getprop(pci, "pci-id").as_str() == "0000:01:00.0"
+
+
+def test_create_overlay_without_devices_has_one_fragment(sample_hardware, sample_instances):
+    fdt = _assign(sample_hardware, sample_instances, [])
+    assert fdt.path_offset("/fragment@1", quiet=[libfdt.FDT_ERR_NOTFOUND]) == MISSING
