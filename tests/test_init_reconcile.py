@@ -20,10 +20,11 @@ import libfdt
 import pytest
 
 from kerf.dtc.overlay import OverlayGenerator
-from kerf.exceptions import ParseError, ValidationError
+from kerf.exceptions import KernelInterfaceError, ParseError, ValidationError
 from kerf.init import main
 from kerf.init.main import reconcile_pool
 from kerf.models import (
+    DeviceInfo,
     CPUAllocation,
     GlobalDeviceTree,
     HardwareInventory,
@@ -321,3 +322,40 @@ def test_an_empty_request_does_not_read_the_pool_back(monkeypatch, capsys):
     main.reconcile_pool(current, requested, set(), False, manager, baseline_mgr)
 
     assert "could not read the pool back" not in capsys.readouterr().err
+
+
+def _pooled_nic():
+    return {"pci_0000_09_00_0": DeviceInfo(
+        name="pci_0000_09_00_0", compatible="", device_type="pci",
+        pci_id="0000:09:00.0", vendor_id=0x1AF4, device_id=0x1041, alias="enp9s0")}
+
+
+@pytest.mark.parametrize("ref", ["enp9s0", "0000:09:00.0", "pci_0000_09_00_0"])
+def test_a_pooled_device_is_resolved_from_the_pool(monkeypatch, ref):
+    """A NIC in the pool no longer exists on the host, so init takes it
+    from the live tree instead of failing to detect it."""
+    monkeypatch.setattr(main, "detect_device_from_system", lambda name: None)
+
+    requested = main.build_baseline_from_cmdline("1-3", memory="512MB", devices=ref,
+                                                 pool_devices=_pooled_nic())
+
+    nic = requested.hardware.devices["pci_0000_09_00_0"]
+    assert nic.pci_id == "0000:09:00.0"
+    assert nic.alias == "enp9s0"
+
+
+def test_a_pooled_device_keeps_a_new_alias(monkeypatch):
+    monkeypatch.setattr(main, "detect_device_from_system", lambda name: None)
+
+    requested = main.build_baseline_from_cmdline("1-3", memory="512MB", devices="0000:09:00.0=uplink",
+                                                 pool_devices=_pooled_nic())
+
+    assert requested.hardware.devices["pci_0000_09_00_0"].alias == "uplink"
+
+
+def test_an_unknown_device_is_still_an_error(monkeypatch):
+    monkeypatch.setattr(main, "detect_device_from_system", lambda name: None)
+
+    with pytest.raises(KernelInterfaceError, match="enp7s0"):
+        main.build_baseline_from_cmdline("1-3", memory="512MB", devices="enp7s0",
+                                         pool_devices=_pooled_nic())

@@ -20,6 +20,7 @@ resources available for allocation to kernel instances. The baseline must
 contain only resources (no instances).
 """
 
+import copy
 import ctypes
 import os
 import re
@@ -531,6 +532,7 @@ def pick_memory_node(cpu_list: List[int],
         cpu_list: APIC IDs the pool is being asked for
         pool_cpus: APIC IDs the pool already holds
         pool_regions: Chunks the pool already holds
+        pool_devices: Devices the pool already holds, by node name
 
     Returns:
         The chosen node and a short reason to show the user
@@ -562,6 +564,7 @@ def resolve_memory_nodes(requested: Dict[int, int],
         cpu_list: APIC IDs the pool is being asked for
         pool_cpus: APIC IDs the pool already holds
         pool_regions: Chunks the pool already holds
+        pool_devices: Devices the pool already holds, by node name
 
     Returns:
         The request with every size on an explicit node, and a line
@@ -577,13 +580,23 @@ def resolve_memory_nodes(requested: Dict[int, int],
     return resolved, f"Memory: {size >> 20} MB on node {node} ({why})"
 
 
+def pooled_device(pool_devices: Optional[Dict[str, DeviceInfo]],
+                  ref: str) -> Optional[DeviceInfo]:
+    """A copy of the pool device that a node name, alias or PCI address names."""
+    if not pool_devices:
+        return None
+    name = HardwareInventory(cpus=None, memory=None, devices=pool_devices).find_device(ref)
+    return copy.deepcopy(pool_devices[name]) if name else None
+
+
 def build_baseline_from_cmdline(
     cpus: str,
     memory: Optional[str] = None,
     devices: Optional[str] = None,
     verbose: bool = False,
     pool_cpus: Optional[set] = None,
-    pool_regions: Optional[List[PoolMemoryRegion]] = None
+    pool_regions: Optional[List[PoolMemoryRegion]] = None,
+    pool_devices: Optional[Dict[str, DeviceInfo]] = None,
 ) -> GlobalDeviceTree:
     """
     Build a GlobalDeviceTree from command line arguments.
@@ -598,6 +611,7 @@ def build_baseline_from_cmdline(
         verbose: Whether to print verbose output
         pool_cpus: APIC IDs the pool already holds
         pool_regions: Chunks the pool already holds
+        pool_devices: Devices the pool already holds, by node name
 
     Returns:
         GlobalDeviceTree with resources only (no instances)
@@ -676,6 +690,9 @@ def build_baseline_from_cmdline(
         host_name, alias = split_alias(entry)
         device_info = detect_device_from_system(host_name)
         if not device_info:
+            # A device already in the pool is no longer on the host
+            device_info = pooled_device(pool_devices, host_name)
+        if not device_info:
             raise KernelInterfaceError(
                 f"Could not detect device '{host_name}' from system. "
                 f"Please ensure the device exists and is accessible, or use --input with a dumped DTB to specify device details."
@@ -685,7 +702,7 @@ def build_baseline_from_cmdline(
         if device_info.device_type == "pci":
             name = pci_node_name(device_info.pci_id)
             taken = {d.alias for d in device_dict.values() if d.alias}
-            alias = alias or default_alias(host_name, device_info.compatible)
+            alias = alias or device_info.alias or default_alias(host_name, device_info.compatible)
             if alias in taken:
                 raise KernelInterfaceError(f"Alias '{alias}' is requested for more than one device")
             device_info.name = name
@@ -1058,7 +1075,8 @@ def init(ctx: click.Context, input: Optional[str], cpus: Optional[str], memory: 
             try:
                 tree = build_baseline_from_cmdline(cpus, memory=memory, devices=devices,
                                                    verbose=verbose, pool_cpus=live_cpus,
-                                                   pool_regions=live_regions)
+                                                   pool_regions=live_regions,
+                                                   pool_devices=current.hardware.devices if current else None)
             except ValueError as e:
                 click.echo(f"Error: {e}", err=True)
                 sys.exit(2)
