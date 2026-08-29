@@ -22,6 +22,7 @@ from typing import Dict, List, Optional
 import libfdt
 
 from ..exceptions import ParseError
+from ..devices import pci_node_name
 from ..pool_diff import ANY_NODE
 from .cells import unpack_cpu_ids
 from ..models import (
@@ -309,33 +310,68 @@ class DeviceTreeParser:
     def _parse_devices(self, resources_node: int) -> Dict[str, DeviceInfo]:
         """Parse device information from resources node."""
         devices = {}
-
-        try:
-            devices_node = self.fdt.subnode_offset(resources_node, 'devices')
-        except libfdt.FdtException:
-            return devices
-
         offsets = {}
-        offset = self.fdt.first_subnode(devices_node)
-        while offset >= 0:
+
+        devices_node = self.fdt.subnode_offset(resources_node, 'devices',
+                                               libfdt.QUIET_NOTFOUND)
+        for offset in self._subnodes(devices_node) if devices_node >= 0 else ():
             name = self.fdt.get_name(offset)
             try:
-                device_info = self._parse_device_info(offset, name)
-                devices[name] = device_info
+                devices[name] = self._parse_device_info(offset, name)
                 offsets[offset] = name
             except ParseError:
-                # Skip nodes that don't have required properties (not valid devices)
                 pass
-            try:
-                offset = self.fdt.next_subnode(offset)
-            except libfdt.FdtException:
-                # No more subnodes
-                break
+
+        for offset, (name, device_info) in self._parse_pci_tree().items():
+            devices[name] = device_info
+            offsets[offset] = name
 
         for alias, name in self._parse_aliases(offsets).items():
             devices[name].alias = alias
 
         return devices
+
+    def _parse_pci_tree(self) -> Dict[int, tuple]:
+        """
+        PCI devices under the host-bridge nodes, keyed by node offset.
+
+        The kernel describes a device under the bus it sits on, in the
+        devicetree PCI bus binding: a bridge is recursed into, a leaf
+        carries vendor-id, and the unit address in reg names the bus,
+        device and function.
+        """
+        found = {}
+        for bridge in self._subnodes(0):
+            try:
+                compatible = self.fdt.getprop(bridge, 'compatible').as_str()
+            except libfdt.FdtException:
+                continue
+            if compatible != 'multikernel,pci-host-bridge':
+                continue
+            domain = 0
+            try:
+                domain = self.fdt.getprop(bridge, 'linux,pci-domain').as_uint32()
+            except libfdt.FdtException:
+                pass
+            self._walk_pci_bus(bridge, domain, found)
+        return found
+
+    def _walk_pci_bus(self, bus: int, domain: int, found: Dict[int, tuple]) -> None:
+        for node in self._subnodes(bus):
+            try:
+                phys_hi = self.fdt.getprop(node, 'reg').as_uint32_list()[0]
+            except (libfdt.FdtException, IndexError):
+                continue
+            if self.fdt.getprop(node, 'vendor-id', libfdt.QUIET_NOTFOUND) == -libfdt.NOTFOUND:
+                self._walk_pci_bus(node, domain, found)
+                continue
+            pci_id = (f"{domain:04x}:{phys_hi >> 16 & 0xff:02x}:"
+                      f"{phys_hi >> 11 & 0x1f:02x}.{phys_hi >> 8 & 0x7}")
+            name = pci_node_name(pci_id)
+            device_info = self._parse_device_info(node, name)
+            device_info.device_type = 'pci'
+            device_info.pci_id = pci_id
+            found[node] = (name, device_info)
 
     def _parse_aliases(self, offsets: Dict[int, str]) -> Dict[str, str]:
         """Map each /aliases entry to the device node it points at."""
@@ -672,6 +708,7 @@ class DeviceTreeParser:
                 devices = [self.fdt.get_name(o) for o in self._subnodes(devices_node)]
             except libfdt.FdtException:
                 pass
+        devices += sorted(name for name, _ in self._parse_pci_tree().values())
 
         uring_enabled = False
         uring_sq = None
