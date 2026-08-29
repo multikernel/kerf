@@ -55,3 +55,28 @@ def test_create_rejects_a_device_not_in_the_pool():
 
     assert result.exit_code == 1
     assert "0000:09:00.0" in result.output
+
+
+class _AppliedManager(_FakeManager):
+    """Stands in for the kernel after an overlay has been applied."""
+
+    def apply_operation(self, operation):
+        self.created = operation(self.tree).instances["web"]
+        return "tx_1"
+
+    def read_instance(self, name):
+        assert name == "web"
+        return self.created
+
+
+def test_create_verbose_reports_the_kernel_view(sample_tree, monkeypatch):
+    sample_tree.instances.clear()
+    monkeypatch.setattr(main, "DeviceTreeManager", lambda: _AppliedManager(sample_tree))
+
+    result = CliRunner().invoke(
+        main.create, ["web", "--cpus=4-5", "--memory=1GB", "--devices=eth0", "--verbose"])
+
+    assert result.exit_code == 0, result.output
+    assert "Created instance 'web' (transaction tx_1)" in result.output
+    assert "CPUs: 4, 5" in result.output
+    assert "Devices: eth0" in result.output

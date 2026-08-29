@@ -102,7 +102,7 @@ from .dtc.parser import DeviceTreeParser
 from .dtc.overlay import OverlayGenerator
 from .dtc.validator import MultikernelValidator
 from .baseline import BaselineManager
-from .models import GlobalDeviceTree
+from .models import GlobalDeviceTree, Instance
 from .exceptions import ValidationError, ParseError, KernelInterfaceError
 
 
@@ -472,6 +472,30 @@ class DeviceTreeManager:
             return list(tree.instances.keys())
         except (KernelInterfaceError, ParseError):
             return []
+
+    def read_instance(self, name: str) -> Instance:
+        """
+        Read one instance as the kernel serves it.
+
+        The root device tree carries only the pool, so an instance is read
+        from its own device_tree file.
+
+        Args:
+            name: Instance name
+
+        Returns:
+            The instance's resources and id
+
+        Raises:
+            KernelInterfaceError: If the instance tree cannot be read
+            ParseError: If the tree cannot be parsed
+        """
+        path = Path(f"/sys/fs/multikernel/instances/{name}/device_tree")
+        try:
+            data = path.read_bytes()
+        except OSError as e:
+            raise KernelInterfaceError(f"Failed to read {path}: {e}") from e
+        return self.parser.parse_instance_dtb_from_bytes(data)
 
     def has_instance(self, name: str) -> bool:
         """

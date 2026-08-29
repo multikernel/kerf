@@ -797,8 +797,7 @@ def create(  # pylint: disable=too-many-arguments,too-many-positional-arguments
 
             click.echo(f"✓ Created instance '{name}' (transaction {tx_id})")
             if verbose:
-                current = manager.read_baseline()
-                instance = current.instances[name]
+                instance = manager.read_instance(name)
                 click.echo(f"  Instance ID: {instance.id}")
                 click.echo(f"  CPUs: {', '.join(map(str, instance.resources.cpus))}")
                 if instance.resources.cpu_affinity:
