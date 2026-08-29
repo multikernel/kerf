@@ -86,8 +86,9 @@ def _pool_dtb():
 def _instance_dtb():
     sw = libfdt.FdtSw()
     sw.finish_reservemap()
-    sw.begin_node("web")
+    sw.begin_node("")
     sw.property_string("compatible", "multikernel-v1")
+    sw.property_string("model", "web")
     sw.property_u32("id", 2)
     sw.begin_node("resources")
     sw.property_u64("memory-base", 0x59A08000)

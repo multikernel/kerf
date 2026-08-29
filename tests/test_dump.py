@@ -121,8 +121,9 @@ def test_instance_dtb_with_host_bridge_nodes_parses_and_renders():
 
     sw = libfdt.FdtSw()
     sw.finish_reservemap()
-    sw.begin_node("web-server")
+    sw.begin_node("")
     sw.property_string("compatible", "multikernel-v1")
+    sw.property_string("model", "web-server")
     sw.property_u32("id", 1)
     sw.begin_node("resources")
     sw.property_u64("memory-base", 0xFFFA0D000)

@@ -30,8 +30,9 @@ def _instance_dtb(name="web", instance_id=7, cpus=(20, 21), memory=2 * GB, devic
     """Build what the kernel serves at instances/NAME/device_tree."""
     sw = libfdt.FdtSw()
     sw.finish_reservemap()
-    sw.begin_node(name)
+    sw.begin_node("")
     sw.property_string("compatible", "multikernel-v1")
+    sw.property_string("model", name)
     sw.property_u32("id", instance_id)
     sw.begin_node("resources")
     sw.property_u64("memory-base", 0x100000000)

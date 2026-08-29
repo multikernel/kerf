@@ -97,10 +97,10 @@ class DeviceTreeParser:
             self.fdt = libfdt.Fdt(dtb_data)
         except Exception as e:
             raise ParseError(f"Failed to parse instance DTB: {e}") from e
-        name = self.fdt.get_name(0)
-        if not name:
-            raise ParseError("Not an instance device tree: the root node carries no instance name")
-        return self._parse_instance(0, name)
+        name = self.fdt.getprop(0, 'model', libfdt.QUIET_NOTFOUND)
+        if name == -libfdt.NOTFOUND:
+            raise ParseError("Not an instance device tree: the root node carries no model")
+        return self._parse_instance(0, name.as_str())
 
     def _build_global_tree(self) -> GlobalDeviceTree:
         """Build GlobalDeviceTree from parsed FDT."""
