@@ -30,7 +30,10 @@ from typing import Optional, List
 import click
 
 from ..create.main import parse_cpu_spec, parse_memory_base, parse_memory_spec
+from ..dtc.parser import DeviceTreeParser
 from ..exceptions import KernelInterfaceError, ParseError, ResourceError, ValidationError
+from ..init.main import spec_is_empty
+from ..models import HardwareInventory
 from ..resources import (
     chunk_containing,
     validate_cpu_allocation,
@@ -39,21 +42,16 @@ from ..resources import (
 from ..runtime import DeviceTreeManager
 
 
-def parse_device_spec(device_spec: str) -> List[str]:
-    """Parse device specification string into list of PCI IDs."""
-    if not device_spec:
+def parse_device_request(spec: str) -> List[str]:
+    """
+    The devices an instance should hold, where "none" asks for none.
+
+    A device is named by alias ("enp9s0"), PCI address ("0000:09:00.0")
+    or pool node name ("pci_0000_09_00_0"), comma-separated.
+    """
+    if spec_is_empty(spec, "--devices"):
         return []
-
-    devices = [d.strip() for d in device_spec.split(',') if d.strip()]
-
-    # Validate PCI ID format (basic validation)
-    import re
-    pci_pattern = re.compile(r'^[0-9a-fA-F]{4}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}\.[0-9a-fA-F]$')
-    for device in devices:
-        if not pci_pattern.match(device):
-            raise ValueError(f"Invalid PCI ID format: {device}. Expected format: 0000:09:00.0")
-
-    return devices
+    return [d.strip() for d in spec.split(',') if d.strip()]
 
 
 def dump_overlay_for_debug(
@@ -61,13 +59,14 @@ def dump_overlay_for_debug(
     instance_name: str,
     old_instance,
     new_instance,
-    suffix: str = ""
+    suffix: str = "",
+    pci_ids=None,
 ) -> None:
     """Dump overlay DTS source to stdout for debugging when --debug is enabled."""
-    dtbo_data = manager.overlay_gen.generate_update_overlay(instance_name, old_instance, new_instance)
+    dtbo_data = manager.overlay_gen.generate_update_overlay(instance_name, old_instance, new_instance,
+                                                            pci_ids)
 
     try:
-        from ..dtc.parser import DeviceTreeParser
         import libfdt
 
         fdt = libfdt.Fdt(dtbo_data)
@@ -93,7 +92,8 @@ def dump_overlay_for_debug(
 @click.option('--memory-base',
               help='Update memory base address (hex: 0x80000000 or decimal, auto-assigned if not specified with --memory)')
 @click.option('--devices', '-d',
-              help='Update device allocation: PCI IDs (comma-separated, e.g., "0000:09:00.0,0000:0a:00.0")')
+              help='The devices the instance should hold, by alias, PCI address or node name '
+                   '(comma-separated, e.g. "enp9s0,0000:0a:00.0"), or "none" for no devices')
 @click.option('--dry-run', is_flag=True, help='Validate without applying to kernel')
 @click.option('--verbose', '-v', is_flag=True, help='Verbose output')
 @click.pass_context
@@ -137,7 +137,7 @@ def update(
         kerf update web-server --cpus=8-15 --memory=4GB --dry-run
     """
     try:
-        if not cpus and not memory and not devices:
+        if not cpus and not memory and devices is None:
             click.echo("Error: At least one of --cpus, --memory, or --devices must be specified", err=True)
             sys.exit(2)
 
@@ -180,93 +180,38 @@ def update(
         device_list = None
         if devices is not None:
             try:
-                device_list = parse_device_spec(devices)
+                device_list = parse_device_request(devices)
             except ValueError as e:
                 click.echo(f"Error: Invalid device specification '{devices}': {e}", err=True)
                 sys.exit(2)
 
+        pci_ids = {}
+
         def update_instance_operation(current):
             """Operation function to update instance resources. Returns (old_instance, new_instance)."""
             nonlocal memory_base_addr
-            nonlocal device_list
 
-            from pathlib import Path
-            import libfdt
-            import struct
-            from ..dtc.cells import unpack_cpu_ids
-            from ..models import Instance, InstanceResources
-
-            instance_dt_path = Path(f'/sys/fs/multikernel/instances/{name}/device_tree')
-            if not instance_dt_path.exists():
-                raise ResourceError(f"Instance '{name}' device_tree not found at {instance_dt_path}")
-
+            parser = DeviceTreeParser()
             try:
-                with open(instance_dt_path, 'rb') as f:
-                    instance_dtb_data = f.read()
-
-                fdt = libfdt.Fdt(instance_dtb_data)
-
-                instance_offset = 0
-                instance_node_name = fdt.get_name(instance_offset)
-
-                instance_id_prop = fdt.getprop(instance_offset, 'id')
-                instance_id = struct.unpack('>I', instance_id_prop)[0]
-
-                resources_offset = fdt.first_subnode(instance_offset)
-                if resources_offset < 0:
-                    raise ResourceError(f"No resources node found for instance '{instance_node_name}'")
-
-                cpus_prop = fdt.getprop(resources_offset, 'cpus')
-                cpus = unpack_cpu_ids(cpus_prop)
-
-                memory_base_prop = fdt.getprop(resources_offset, 'memory-base')
-                memory_base = struct.unpack('>Q', memory_base_prop)[0]
-
-                memory_bytes_prop = fdt.getprop(resources_offset, 'memory-bytes')
-                memory_bytes_val = struct.unpack('>Q', memory_bytes_prop)[0]
-
-                # Parse devices from resources/devices/ node
-                existing_device_list = []
-                try:
-                    devices_offset = fdt.first_subnode(resources_offset)
-                    while devices_offset >= 0:
-                        device_node_name = fdt.get_name(devices_offset)
-                        if device_node_name == 'devices':
-                            # Iterate through device subnodes
-                            device_child_offset = fdt.first_subnode(devices_offset)
-                            while device_child_offset >= 0:
-                                try:
-                                    pci_id_prop = fdt.getprop(device_child_offset, 'pci-id')
-                                    pci_id = pci_id_prop.as_str().rstrip('\0')
-                                    existing_device_list.append(pci_id)
-                                except libfdt.FdtException:
-                                    pass
-                                try:
-                                    device_child_offset = fdt.next_subnode(device_child_offset)
-                                except libfdt.FdtException:
-                                    break
-                        try:
-                            devices_offset = fdt.next_subnode(devices_offset)
-                        except libfdt.FdtException:
-                            break
-                except libfdt.FdtException:
-                    pass
-
-                existing_instance = Instance(
-                    name=instance_node_name,
-                    id=instance_id,
-                    resources=InstanceResources(
-                        cpus=cpus,
-                        memory_base=memory_base,
-                        memory_bytes=memory_bytes_val,
-                        devices=existing_device_list
-                    )
-                )
-
-            except libfdt.FdtException as e:
+                dtb = manager.read_instance_dtb(name)
+                existing_instance = parser.parse_instance_dtb_from_bytes(dtb)
+                held = parser.parse_instance_devices_from_bytes(dtb)
+            except ParseError as e:
                 raise ResourceError(f"Failed to parse instance '{name}' device_tree: {e}") from e
-            except Exception as e:
-                raise ResourceError(f"Failed to read instance '{name}' device_tree: {e}") from e
+            instance_node_name = existing_instance.name
+
+            # A device is named against the pool and what the instance holds;
+            # the instances record node names, the kernel wants addresses.
+            known = {**current.hardware.devices, **held}
+            pci_ids.update({k: d.pci_id for k, d in known.items() if d.pci_id})
+            device_nodes = None
+            if device_list is not None:
+                device_nodes = []
+                for ref in device_list:
+                    node = HardwareInventory(cpus=None, memory=None, devices=known).find_device(ref)
+                    if node is None:
+                        raise ResourceError(f"Device '{ref}' is neither in the pool nor held by '{name}'")
+                    device_nodes.append(node)
 
             modified = copy.deepcopy(current)
             modified.instances[instance_node_name] = copy.deepcopy(existing_instance)
@@ -309,8 +254,8 @@ def update(
             if memory_bytes is not None:
                 updated_instance.resources.memory_base = memory_base_addr
                 updated_instance.resources.memory_bytes = memory_bytes
-            if device_list is not None:
-                updated_instance.resources.devices = device_list
+            if device_nodes is not None:
+                updated_instance.resources.devices = device_nodes
 
             return (existing_instance, updated_instance)
 
@@ -326,7 +271,8 @@ def update(
                     click.echo(f"  Memory: {memory} at {hex(new_instance.resources.memory_base)}")
 
                 if debug:
-                    dump_overlay_for_debug(manager, name, old_instance, new_instance, suffix="_dryrun")
+                    dump_overlay_for_debug(manager, name, old_instance, new_instance, suffix="_dryrun",
+                                           pci_ids=pci_ids)
                     click.echo()
 
                 click.echo("\n✓ Instance would be updated (dry-run mode)")
@@ -345,11 +291,12 @@ def update(
                 old_instance, new_instance = update_instance_operation(current)
                 click.echo(f"\nDebug: Old instance: CPUs={old_instance.resources.cpus}, Devices={old_instance.resources.devices}")
                 click.echo(f"Debug: New instance: CPUs={new_instance.resources.cpus}, Devices={new_instance.resources.devices}")
-                dump_overlay_for_debug(manager, name, old_instance, new_instance)
+                dump_overlay_for_debug(manager, name, old_instance, new_instance, pci_ids=pci_ids)
 
             def apply_update_operation(current):
                 old_instance, new_instance = update_instance_operation(current)
-                dtbo_data = manager.overlay_gen.generate_update_overlay(name, old_instance, new_instance)
+                dtbo_data = manager.overlay_gen.generate_update_overlay(name, old_instance, new_instance,
+                                                                        pci_ids)
                 return dtbo_data
 
             with manager.lock():

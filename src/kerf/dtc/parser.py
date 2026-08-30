@@ -102,6 +102,21 @@ class DeviceTreeParser:
             raise ParseError("Not an instance device tree: the root node carries no model")
         return self._parse_instance(0, name.as_str())
 
+    def parse_instance_devices_from_bytes(self, dtb_data: bytes) -> Dict[str, DeviceInfo]:
+        """The PCI devices an instance tree describes, keyed like the pool's."""
+        try:
+            self.fdt = libfdt.Fdt(dtb_data)
+        except Exception as e:
+            raise ParseError(f"Failed to parse instance DTB: {e}") from e
+        devices = {}
+        offsets = {}
+        for offset, (name, device_info) in self._parse_pci_tree().items():
+            devices[name] = device_info
+            offsets[offset] = name
+        for alias, name in self._parse_aliases(offsets).items():
+            devices[name].alias = alias
+        return devices
+
     def _build_global_tree(self) -> GlobalDeviceTree:
         """Build GlobalDeviceTree from parsed FDT."""
         try:

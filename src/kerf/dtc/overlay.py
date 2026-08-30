@@ -96,7 +96,8 @@ class OverlayGenerator:
         """
         return self._create_overlay_dtb({}, {}, {instance_name})
 
-    def generate_update_overlay(self, instance_name: str, old_instance, new_instance) -> bytes:
+    def generate_update_overlay(self, instance_name: str, old_instance, new_instance,
+                                pci_ids: Optional[Dict[str, str]] = None) -> bytes:
         """
         Generate resource update overlay for an existing instance.
 
@@ -108,6 +109,7 @@ class OverlayGenerator:
             instance_name: Name of the instance to update
             old_instance: Current instance state
             new_instance: New instance state
+            pci_ids: PCI address of each device, by the node name the instances use
 
         Returns:
             DTBO blob as bytes containing resource update operations
@@ -136,8 +138,9 @@ class OverlayGenerator:
 
         old_devices = set(old_instance.resources.devices)
         new_devices = set(new_instance.resources.devices)
-        devices_to_remove = sorted(old_devices - new_devices)
-        devices_to_add = sorted(new_devices - old_devices)
+        pci_ids = pci_ids or {}
+        devices_to_remove = sorted(pci_ids.get(d, d) for d in old_devices - new_devices)
+        devices_to_add = sorted(pci_ids.get(d, d) for d in new_devices - old_devices)
 
         # Single fragment with all operations
         fdt_sw.begin_node("fragment@0")

@@ -490,12 +490,15 @@ class DeviceTreeManager:
             KernelInterfaceError: If the instance tree cannot be read
             ParseError: If the tree cannot be parsed
         """
+        return self.parser.parse_instance_dtb_from_bytes(self.read_instance_dtb(name))
+
+    def read_instance_dtb(self, name: str) -> bytes:
+        """The DTB the kernel serves for an instance, as kerf dump writes it."""
         path = Path(f"/sys/fs/multikernel/instances/{name}/device_tree")
         try:
-            data = path.read_bytes()
+            return path.read_bytes()
         except OSError as e:
             raise KernelInterfaceError(f"Failed to read {path}: {e}") from e
-        return self.parser.parse_instance_dtb_from_bytes(data)
 
     def has_instance(self, name: str) -> bool:
         """
