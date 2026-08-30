@@ -26,7 +26,7 @@ import os
 import re
 import sys
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 
 import click
 import libfdt
@@ -788,6 +788,23 @@ def pool_memory_regions(current: Optional[GlobalDeviceTree]) -> List[PoolMemoryR
     return list(current.hardware.memory.regions)
 
 
+def lent_devices(manager) -> Dict[str, DeviceInfo]:
+    """
+    The pool devices instances currently hold, by node name.
+
+    The pool tree lists only its free devices; the rest of the pool's
+    devices are found in the instance trees.
+    """
+    parser = DeviceTreeParser()
+    lent = {}
+    for name in list_instance_names():
+        try:
+            lent.update(parser.parse_instance_devices_from_bytes(manager.read_instance_dtb(name)))
+        except (KernelInterfaceError, ParseError):
+            continue
+    return lent
+
+
 def read_current_pool(baseline_mgr) -> Optional[GlobalDeviceTree]:
     """
     Read the live pool back from the kernel.
@@ -829,6 +846,7 @@ def _print_diff(diff: PoolDiff) -> None:
     line("Memory to host", [f"{hex(r.base)} ({r.size >> 20} MB)" for r in diff.memory_to_host])
     line("Devices to pool", diff.devices_to_pool)
     line("Devices to host", diff.devices_to_host)
+    line("Devices left with their instances", diff.devices_lent)
 
 
 def _report_shortfall(live: GlobalDeviceTree, requested: GlobalDeviceTree) -> None:
@@ -854,6 +872,7 @@ def reconcile_pool(
     dry_run: bool,
     manager,
     baseline_mgr,
+    lent: Optional[Set[str]] = None,
 ) -> Optional[PoolDiff]:
     """
     Bring the live pool in line with the requested baseline.
@@ -867,6 +886,7 @@ def reconcile_pool(
         requested: Requested state
         busy_chunks: Bases of pool chunks that still hold an allocation
         dry_run: Report the plan without touching the kernel
+        lent: PCI addresses of pool devices instances currently hold
         manager: DeviceTreeManager used to apply the overlay
         baseline_mgr: BaselineManager used for the initial write
 
@@ -890,7 +910,8 @@ def reconcile_pool(
         click.echo("✓ Baseline applied to kernel successfully")
         return None
 
-    diff = compute_pool_diff(current, requested, busy_chunks=busy_chunks)
+    diff = compute_pool_diff(current, requested, busy_chunks=busy_chunks,
+                             lent_devices=lent)
     _print_diff(diff)
     if diff.is_empty():
         click.echo("✓ Pool already matches the request; nothing to do")
@@ -1037,6 +1058,7 @@ def init(ctx: click.Context, input: Optional[str], cpus: Optional[str], memory: 
         manager = DeviceTreeManager()
         mount_multikernel_fs(verbose=verbose)
         current = read_current_pool(baseline_mgr)
+        held = lent_devices(manager) if current else {}
         live_cpus = pool_apic_ids(current)
         live_regions = pool_memory_regions(current)
 
@@ -1076,7 +1098,7 @@ def init(ctx: click.Context, input: Optional[str], cpus: Optional[str], memory: 
                 tree = build_baseline_from_cmdline(cpus, memory=memory, devices=devices,
                                                    verbose=verbose, pool_cpus=live_cpus,
                                                    pool_regions=live_regions,
-                                                   pool_devices=current.hardware.devices if current else None)
+                                                   pool_devices={**current.hardware.devices, **held} if current else None)
             except ValueError as e:
                 click.echo(f"Error: {e}", err=True)
                 sys.exit(2)
@@ -1133,7 +1155,8 @@ def init(ctx: click.Context, input: Optional[str], cpus: Optional[str], memory: 
 
         try:
             reconcile_pool(current, tree, get_busy_chunks_from_iomem(), dry_run,
-                           manager, baseline_mgr)
+                           manager, baseline_mgr,
+                           lent={d.pci_id for d in held.values() if d.pci_id})
         except ValidationError as e:
             click.echo(f"Error: {e}", err=True)
             sys.exit(1)

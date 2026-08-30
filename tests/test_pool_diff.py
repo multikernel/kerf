@@ -123,3 +123,20 @@ def test_device_aliases_follow_devices_joining_the_pool():
     d = compute_pool_diff(cur, req)
     assert d.devices_to_pool == ["0000:04:00.0"]
     assert d.device_aliases == {"0000:04:00.0": "nvme1"}
+
+
+def test_a_device_lent_to_an_instance_is_a_pool_member():
+    """The pool tree lists only free devices; a lent one is still the pool's."""
+    cur = _tree([4], devices=[])
+    req = _tree([4], devices=["0000:09:00.0"])
+    d = compute_pool_diff(cur, req, lent_devices={"0000:09:00.0"})
+    assert d.devices_to_pool == []
+    assert d.is_empty()
+
+
+def test_a_lent_device_the_request_omits_stays_with_its_instance():
+    cur = _tree([4], devices=["0000:03:00.0"])
+    req = _tree([4], devices=[])
+    d = compute_pool_diff(cur, req, lent_devices={"0000:09:00.0"})
+    assert d.devices_to_host == ["0000:03:00.0"]
+    assert d.devices_lent == ["0000:09:00.0"]

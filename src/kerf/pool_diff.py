@@ -28,6 +28,7 @@ class PoolDiff:
     cpus_to_host: List[int] = field(default_factory=list)
     devices_to_pool: List[str] = field(default_factory=list)
     devices_to_host: List[str] = field(default_factory=list)
+    devices_lent: List[str] = field(default_factory=list)
     device_aliases: Dict[str, str] = field(default_factory=dict)
     memory_to_pool: List[Tuple[int, int]] = field(default_factory=list)
     memory_to_host: List[PoolMemoryRegion] = field(default_factory=list)
@@ -82,17 +83,26 @@ def _release(remaining: List[PoolMemoryRegion], pred, surplus: int,
 
 
 def compute_pool_diff(current: GlobalDeviceTree, requested: GlobalDeviceTree,
-                       busy_chunks: Optional[Set[int]] = None) -> PoolDiff:
-    """The request is the desired state; memory on nodes it omits counts as surplus."""
+                       busy_chunks: Optional[Set[int]] = None,
+                       lent_devices: Optional[Set[str]] = None) -> PoolDiff:
+    """
+    The request is the desired state; memory on nodes it omits counts as surplus.
+
+    The pool tree lists only its free devices, so the devices lent to
+    instances are passed alongside: they are members the request need
+    not add, and they cannot go back to the host while lent.
+    """
     diff = PoolDiff()
     cur_cpus = set(current.hardware.cpus.available)
     req_cpus = set(requested.hardware.cpus.available)
     diff.cpus_to_pool = sorted(req_cpus - cur_cpus)
     diff.cpus_to_host = sorted(cur_cpus - req_cpus)
 
-    cur_dev, req_dev = _pci_ids(current), _pci_ids(requested)
+    lent = set(lent_devices or ())
+    cur_dev, req_dev = _pci_ids(current) | lent, _pci_ids(requested)
     diff.devices_to_pool = sorted(req_dev - cur_dev)
-    diff.devices_to_host = sorted(cur_dev - req_dev)
+    diff.devices_to_host = sorted(cur_dev - req_dev - lent)
+    diff.devices_lent = sorted(lent - req_dev)
     diff.device_aliases = {d.pci_id: d.alias for d in requested.hardware.devices.values()
                            if d.alias and d.pci_id in diff.devices_to_pool}
 

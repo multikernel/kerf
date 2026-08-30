@@ -359,3 +359,18 @@ def test_an_unknown_device_is_still_an_error(monkeypatch):
     with pytest.raises(KernelInterfaceError, match="enp7s0"):
         main.build_baseline_from_cmdline("1-3", memory="512MB", devices="enp7s0",
                                          pool_devices=_pooled_nic())
+
+
+def test_lent_devices_come_from_the_instance_trees(monkeypatch):
+    from tests.test_parser_pci_tree import _instance_dtb
+
+    class _Manager:
+        def read_instance_dtb(self, name):
+            assert name == "web"
+            return _instance_dtb()
+
+    monkeypatch.setattr(main, "list_instance_names", lambda: ["web"])
+    lent = main.lent_devices(_Manager())
+    assert set(lent) == {"pci_0000_09_00_0", "pci_0000_00_1f_2"}
+    assert lent["pci_0000_09_00_0"].alias == "enp9s0"
+    assert lent["pci_0000_09_00_0"].pci_id == "0000:09:00.0"
