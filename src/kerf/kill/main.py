@@ -17,6 +17,7 @@ Kernel shutdown subcommand implementation using reboot syscall with MULTIKERNEL_
 """
 
 import ctypes
+import errno
 import os
 import platform
 import sys
@@ -246,7 +247,13 @@ def kill_cmd(name: Optional[str], id: Optional[int], force: bool, verbose: bool)
 
     except OSError as e:
         click.echo(f"Error: reboot syscall failed: {e}", err=True)
-        if e.errno == 1:  # EPERM
+        if e.errno == errno.ETIMEDOUT and not force:
+            click.echo(
+                f"Instance '{instance_name}' did not answer the shutdown request; "
+                "stop it with --force",
+                err=True
+            )
+        elif e.errno == 1:  # EPERM
             click.echo(
                 "Note: This operation requires root privileges",
                 err=True
