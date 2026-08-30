@@ -16,10 +16,13 @@
 Tests for kerf device tree parser.
 """
 
+import libfdt
 import pytest
+
 from kerf.dtc.parser import DeviceTreeParser
 from kerf.dtc.extractor import InstanceExtractor
 from kerf.exceptions import ParseError
+from kerf.models import DeviceInfo
 
 
 class TestDeviceTreeParser:
@@ -162,10 +165,6 @@ class TestInstanceExtractor:
 
 
 def test_aliases_survive_the_dtb_round_trip(sample_tree):
-    from kerf.dtc.extractor import InstanceExtractor
-    from kerf.dtc.parser import DeviceTreeParser
-    from kerf.models import DeviceInfo
-
     sample_tree.hardware.devices["pci_0000_4f_01_0"] = DeviceInfo(
         name="pci_0000_4f_01_0", compatible="pci-storage", device_type="pci",
         pci_id="0000:4f:01.0", vendor_id=0x144d, device_id=0xa80a, alias="nvme0",
@@ -182,10 +181,6 @@ def test_aliases_survive_the_dtb_round_trip(sample_tree):
 
 
 def test_no_aliases_node_without_aliases(sample_tree):
-    import libfdt
-    from kerf.dtc.extractor import InstanceExtractor
-    from kerf.dtc.parser import DeviceTreeParser
-
     parser = DeviceTreeParser()
     parser.parse_dtb_from_bytes(InstanceExtractor().generate_global_dtb(sample_tree))
     assert parser.fdt.path_offset("/aliases", libfdt.QUIET_NOTFOUND) < 0

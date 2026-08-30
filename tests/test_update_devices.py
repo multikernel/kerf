@@ -84,8 +84,8 @@ def test_update_sees_the_devices_the_instance_holds(manager):
     result = CliRunner().invoke(main.update, ["web", "--devices=enp9s0,0000:00:1f.2"])
 
     assert result.exit_code == 0, result.output
-    assert _pci_ids(manager.applied[0], "device-add") == []
-    assert _pci_ids(manager.applied[0], "device-remove") == []
+    assert not _pci_ids(manager.applied[0], "device-add")
+    assert not _pci_ids(manager.applied[0], "device-remove")
 
 
 @pytest.mark.parametrize("ref", ["nvme0", "0000:04:00.0", "pci_0000_04_00_0"])
@@ -94,7 +94,7 @@ def test_update_adds_a_pool_device_by_any_name(manager, ref):
 
     assert result.exit_code == 0, result.output
     assert _pci_ids(manager.applied[0], "device-add") == ["0000:04:00.0"]
-    assert _pci_ids(manager.applied[0], "device-remove") == []
+    assert not _pci_ids(manager.applied[0], "device-remove")
 
 
 def test_update_returns_devices_not_named(manager):
@@ -102,7 +102,7 @@ def test_update_returns_devices_not_named(manager):
 
     assert result.exit_code == 0, result.output
     assert _pci_ids(manager.applied[0], "device-remove") == ["0000:00:1f.2"]
-    assert _pci_ids(manager.applied[0], "device-add") == []
+    assert not _pci_ids(manager.applied[0], "device-add")
 
 
 def test_update_none_returns_every_device(manager):

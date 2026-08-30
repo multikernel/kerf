@@ -60,6 +60,10 @@ def test_create_rejects_a_device_not_in_the_pool():
 class _AppliedManager(_FakeManager):
     """Stands in for the kernel after an overlay has been applied."""
 
+    def __init__(self, tree):
+        super().__init__(tree)
+        self.created = None
+
     def apply_operation(self, operation):
         self.created = operation(self.tree).instances["web"]
         return "tx_1"

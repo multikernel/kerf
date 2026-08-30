@@ -16,9 +16,9 @@
 Tests for kerf validator.
 """
 
-from kerf.dtc import validator as validator_module
 import pytest
 
+from kerf.dtc import validator as validator_module
 from kerf.dtc.validator import MultikernelValidator
 
 

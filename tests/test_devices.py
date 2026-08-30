@@ -93,14 +93,14 @@ class _FakeUdevDevice:
         self.sys_name = sys_name
         self.sys_path = sys_path
         self.subsystem = subsystem
-        self._parent = parent
+        self.parent = parent
 
     def find_parent(self, subsystem):
-        node = self._parent
+        node = self.parent
         while node is not None:
             if node.subsystem == subsystem:
                 return node
-            node = node._parent
+            node = node.parent
         return None
 
 

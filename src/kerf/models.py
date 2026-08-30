@@ -17,10 +17,10 @@ Data models for multikernel device tree representation.
 """
 
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import List, Dict, Optional, Set, Tuple
 
 from .devices import normalize_pci_id
-from enum import Enum
 
 
 class WorkloadType(Enum):
