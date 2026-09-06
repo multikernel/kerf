@@ -27,6 +27,7 @@ import click
 from ..runtime import DeviceTreeManager
 from ..models import InstanceState
 from ..exceptions import ResourceError, ValidationError, KernelInterfaceError, ParseError
+from ..xdp import Xdp, attached_netdevs
 from ..utils import get_instance_id_from_name, get_instance_name_from_id, get_instance_status
 
 
@@ -123,6 +124,10 @@ def delete(
 
             if verbose:
                 click.echo(f"Instance status: '{status}' (OK to delete)")
+
+        if attached_netdevs(instance_name) and not dry_run:
+            for dev, nic in Xdp().detach(instance_name):
+                click.echo(f"  XDP: detached {dev} from {nic}")
 
         if dry_run:
             try:

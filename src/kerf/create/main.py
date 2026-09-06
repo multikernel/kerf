@@ -30,6 +30,7 @@ import click
 from ..runtime import DeviceTreeManager
 from ..dtc.parser import DeviceTreeParser, is_dts_text
 from ..dtc.overlay import VIRTIO_IDS
+from ..xdp import Xdp, netdev_name, parse_virtio
 from ..models import Instance, InstanceResources
 from ..resources import (
     validate_cpu_allocation,
@@ -446,7 +447,8 @@ def dump_overlay_for_debug(
 )
 @click.option(
     "--virtio",
-    help="Host-served virtio devices, comma-separated: net,blk,console,fs",
+    help="Host-served virtio devices, comma-separated: net,blk,console,fs; "
+    "net:NIC also routes the device through NIC with XDP",
 )
 @click.option(
     "--input",
@@ -635,7 +637,7 @@ def create(  # pylint: disable=too-many-arguments,too-many-positional-arguments
 
         # Parse device list
         device_list = parse_device_list(devices)
-        virtio_kinds = [v.strip() for v in virtio.split(",") if v.strip()] if virtio else []
+        virtio_kinds, virtio_uplinks = parse_virtio(virtio) if virtio else ([], {})
         for kind in virtio_kinds:
             if kind not in VIRTIO_IDS:
                 raise click.BadParameter(f"unknown virtio device kind '{kind}'", param_hint="--virtio")
@@ -807,6 +809,9 @@ def create(  # pylint: disable=too-many-arguments,too-many-positional-arguments
             tx_id = manager.apply_operation(create_instance_operation)
 
             click.echo(f"✓ Created instance '{name}' (transaction {tx_id})")
+            for index, nic in virtio_uplinks.items():
+                mode = Xdp().attach(name, index, nic)
+                click.echo(f"  XDP: {netdev_name(name, index)} <-> {nic} ({mode})")
             if verbose:
                 instance = manager.read_instance(name)
                 click.echo(f"  Instance ID: {instance.id}")

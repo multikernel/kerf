@@ -32,6 +32,7 @@ from ..metadata import (
     save_instance_metadata,
 )
 from ..utils import get_instance_id_from_name, get_instance_name_from_id
+from ..xdp import Xdp, attached_netdevs, netdev_name
 from ..vmlinuz import BZIMAGE_HEADER_SIZE, VmlinuzError, is_bzimage, open_kernel_fd
 
 
@@ -553,6 +554,13 @@ def load(  # pylint: disable=too-many-arguments,too-many-positional-arguments,to
                 click.echo(f"✓ Kernel loaded successfully (result: {result})")
             else:
                 click.echo("✓ Kernel loaded successfully")
+
+            # An instance routed through a NIC is reachable at its static
+            # address before it has sent anything only if the NIC program
+            # already knows the address
+            if ip_addr and ip_addr.lower() != "dhcp" and attached_netdevs(instance_name):
+                if Xdp().seed(instance_name, 0, ip_addr):
+                    click.echo(f"  XDP: {netdev_name(instance_name, 0)} answers for {ip_addr}")
 
             # Record image provenance for kerf show; /proc/kimage only
             # knows about the loaded segments, not the source file
