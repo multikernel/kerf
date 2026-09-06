@@ -42,6 +42,10 @@ def _memory_ranges(old_base: int, old_size: int, new_base: int, new_size: int) -
     return None, None
 
 
+VIRTIO_IDS = {"net": 1, "blk": 2, "console": 3, "fs": 26}
+VIRTIO_QUEUES = {"net": 2, "blk": 1, "console": 2, "fs": 2}
+
+
 class OverlayGenerator:
     """Generates device tree overlay blobs (DTBO) from device tree model deltas."""
 
@@ -325,6 +329,16 @@ class OverlayGenerator:
                     fdt_sw.property_u32("cq-entries", instance.resources.uring_cq_entries)
                 if instance.resources.uring_shim_pages:
                     fdt_sw.property_u32("shim-data-pages", instance.resources.uring_shim_pages)
+                fdt_sw.end_node()
+
+            if instance.resources.virtio:
+                fdt_sw.begin_node("virtio")
+                for index, kind in enumerate(instance.resources.virtio):
+                    fdt_sw.begin_node(f"{kind}@{index}")
+                    fdt_sw.property_u32("device-id", VIRTIO_IDS[kind])
+                    fdt_sw.property_u32("queues", VIRTIO_QUEUES[kind])
+                    fdt_sw.property_u32("queue-size", 256)
+                    fdt_sw.end_node()
                 fdt_sw.end_node()
 
             fdt_sw.end_node()  # End resources

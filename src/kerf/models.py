@@ -172,6 +172,7 @@ class InstanceResources:
     memory_base: int
     memory_bytes: int
     devices: List[str]  # List of device references
+    virtio: List[str] = None  # virtio device kinds served by the host, e.g. ["net"]
     numa_nodes: Optional[List[int]] = None  # Preferred NUMA nodes
     cpu_affinity: Optional[str] = None  # "compact", "spread", "local"
     memory_policy: Optional[str] = None  # "local", "interleave", "bind"

@@ -29,6 +29,7 @@ import click
 
 from ..runtime import DeviceTreeManager
 from ..dtc.parser import DeviceTreeParser, is_dts_text
+from ..dtc.overlay import VIRTIO_IDS
 from ..models import Instance, InstanceResources
 from ..resources import (
     validate_cpu_allocation,
@@ -444,6 +445,10 @@ def dump_overlay_for_debug(
     '(comma-separated, e.g. "nvme0,0000:09:00.0"), as listed by kerf show.',
 )
 @click.option(
+    "--virtio",
+    help="Host-served virtio devices, comma-separated: net,blk,console,fs",
+)
+@click.option(
     "--input",
     "-i",
     "input_path",
@@ -473,6 +478,7 @@ def create(  # pylint: disable=too-many-arguments,too-many-positional-arguments
     memory: str,
     memory_base: Optional[str],
     devices: Optional[str],
+    virtio: Optional[str],
     input_path: Optional[str],
     enable_host_kcore: bool,
     uring: bool,
@@ -629,6 +635,10 @@ def create(  # pylint: disable=too-many-arguments,too-many-positional-arguments
 
         # Parse device list
         device_list = parse_device_list(devices)
+        virtio_kinds = [v.strip() for v in virtio.split(",") if v.strip()] if virtio else []
+        for kind in virtio_kinds:
+            if kind not in VIRTIO_IDS:
+                raise click.BadParameter(f"unknown virtio device kind '{kind}'", param_hint="--virtio")
 
         # Parse NUMA nodes (if specified)
         numa_node_list = None
@@ -722,6 +732,7 @@ def create(  # pylint: disable=too-many-arguments,too-many-positional-arguments
                 memory_base=memory_base_addr,
                 memory_bytes=memory_bytes,
                 devices=device_nodes,
+                virtio=virtio_kinds,
                 numa_nodes=numa_node_list,
                 cpu_affinity=cpu_affinity,
                 memory_policy=memory_policy,
