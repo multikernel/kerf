@@ -1,6 +1,7 @@
 [build-system]
 requires = ["poetry-core"]
-build-backend = "poetry.core.masonry.api"
+build-backend = "kerf_build"
+backend-path = ["."]
 
 [tool.poetry]
 name = "kerf-multikernel"
@@ -11,6 +12,7 @@ readme = "README.md"
 packages = [{include = "kerf", from = "src"}]
 include = [
     { path = "src/kerf/data/kerf-init", format = ["sdist", "wheel"] },
+    { path = "src/kerf/xdp/bpf/mk_xdp.o", format = ["wheel"] },
 ]
 
 [tool.poetry.dependencies]

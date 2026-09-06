@@ -3,3 +3,4 @@ __pycache__/
 # Built artifacts
 src/init/kerf-init
 src/kerf/data/kerf-init
+src/kerf/xdp/bpf/*.o
