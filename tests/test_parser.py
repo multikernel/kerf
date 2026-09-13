@@ -16,6 +16,9 @@
 Tests for kerf device tree parser.
 """
 
+import struct
+
+import libfdt
 import pytest
 from kerf.dtc.parser import DeviceTreeParser
 from kerf.dtc.extractor import InstanceExtractor
@@ -106,6 +109,54 @@ class TestDeviceTreeParser:
         assert device.name == "eth0"
         assert device.compatible == "intel,i40e"
         assert device.sriov_vfs == 8
+
+    def test_parse_kernel_pci_hierarchy_by_bdf(self):
+        """Parse PCI leaves from the live pool tree emitted by the kernel."""
+        fdt_sw = libfdt.FdtSw()
+        fdt_sw.finish_reservemap()
+        fdt_sw.begin_node("")
+        fdt_sw.property_string("compatible", "multikernel-v1")
+
+        fdt_sw.begin_node("resources")
+        fdt_sw.property("cpus", struct.pack(">QQQQ", 0, 1, 2, 3))
+        fdt_sw.property("cpus-available", struct.pack(">QQ", 2, 3))
+        fdt_sw.begin_node("memory@0")
+        fdt_sw.property("reg", struct.pack(">QQ", 0x200000000, 0x40000000))
+        fdt_sw.property_u32("numa-node-id", 0)
+        fdt_sw.end_node()
+        fdt_sw.end_node()
+
+        fdt_sw.begin_node("pci@0")
+        fdt_sw.property_string("compatible", "multikernel,pci-host-bridge")
+        fdt_sw.property_u32("linux,pci-domain", 0)
+        fdt_sw.begin_node("pci@12,0")
+        fdt_sw.property("reg", struct.pack(">IIIII", 0x9000, 0, 0, 0, 0))
+        fdt_sw.property_u32("vendor-id", 0x8086)
+        fdt_sw.property_u32("device-id", 0x10CA)
+        fdt_sw.end_node()
+        fdt_sw.begin_node("pci@3,0")
+        fdt_sw.property("reg", struct.pack(">IIIII", 0x1800, 0, 0, 0, 0))
+        fdt_sw.begin_node("pci@10,2")
+        fdt_sw.property("reg", struct.pack(">IIIII", 0x18200, 0, 0, 0, 0))
+        fdt_sw.property_u32("vendor-id", 0x8086)
+        fdt_sw.property_u32("device-id", 0x10CA)
+        fdt_sw.end_node()
+        fdt_sw.end_node()
+        fdt_sw.end_node()
+        fdt_sw.end_node()
+
+        dtb = fdt_sw.as_fdt()
+        dtb.pack()
+        devices = DeviceTreeParser().parse_dtb_from_bytes(
+            dtb.as_bytearray()
+        ).hardware.devices
+
+        assert set(devices) == {"0000:00:12.0", "0000:01:10.2"}
+        assert devices["0000:00:12.0"].pci_id == "0000:00:12.0"
+        assert devices["0000:01:10.2"].vendor_id == 0x8086
+        assert set(DeviceTreeParser().parse_devices_from_bytes(dtb.as_bytearray())) == set(
+            devices
+        )
 
     @pytest.mark.parametrize(
         ("declaration", "expected"),
@@ -208,8 +259,6 @@ class TestInstanceExtractor:
         assert len(dtb_data) > 0
 
         # Should be valid FDT with magic number
-        import struct
-
         magic = struct.unpack(">I", dtb_data[:4])[0]
         assert magic == 0xD00DFEED  # FDT magic number
 

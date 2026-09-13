@@ -109,6 +109,21 @@ class DeviceTreeParser:
         except Exception as e:
             raise ParseError(f"Failed to parse DTB from bytes: {e}") from e
 
+    def parse_devices_from_bytes(self, dtb_data: bytes) -> Dict[str, DeviceInfo]:
+        """Parse only a DTB's device inventory.
+
+        Instance trees describe their assigned memory differently from a live
+        pool, but use the same hierarchical PCI representation.  Callers that
+        only need to verify device membership can therefore avoid parsing the
+        unrelated pool metadata.
+        """
+        try:
+            self.fdt = libfdt.Fdt(dtb_data)
+            resources = self.fdt.path_offset('/resources')
+            return self._parse_devices(resources)
+        except libfdt.FdtException as e:
+            raise ParseError(f"Failed to parse devices from DTB: {e}") from e
+
     def _build_global_tree(self) -> GlobalDeviceTree:
         """Build GlobalDeviceTree from parsed FDT."""
         try:
@@ -315,31 +330,89 @@ class DeviceTreeParser:
         )
 
     def _parse_devices(self, resources_node: int) -> Dict[str, DeviceInfo]:
-        """Parse device information from resources node."""
+        """Parse flat platform devices and the kernel's PCI hierarchy."""
         devices = {}
 
         try:
             devices_node = self.fdt.subnode_offset(resources_node, 'devices')
         except libfdt.FdtException:
-            return devices
+            devices_node = -1
 
-        # Iterate through device nodes
-        offset = self.fdt.first_subnode(devices_node)
-        while offset >= 0:
-            name = self.fdt.get_name(offset)
+        if devices_node >= 0:
+            # Platform devices and legacy PCI inventories are flat here.
+            offset = self.fdt.first_subnode(devices_node)
+            while offset >= 0:
+                name = self.fdt.get_name(offset)
+                try:
+                    device_info = self._parse_device_info(offset, name)
+                    devices[name] = device_info
+                except ParseError:
+                    # Skip nodes that don't have required properties.
+                    pass
+                try:
+                    offset = self.fdt.next_subnode(offset)
+                except libfdt.FdtException:
+                    break
+
+        known_pci_ids = {
+            device.pci_id for device in devices.values() if device.pci_id
+        }
+        root = self.fdt.path_offset('/')
+        for node in self._subnodes(root):
+            compatible = self._optional_prop(node, 'compatible')
+            if compatible is None:
+                continue
             try:
-                device_info = self._parse_device_info(offset, name)
-                devices[name] = device_info
-            except ParseError:
-                # Skip nodes that don't have required properties (not valid devices)
-                pass
-            try:
-                offset = self.fdt.next_subnode(offset)
-            except libfdt.FdtException:
-                # No more subnodes
-                break
+                is_pci_root = compatible.as_str() == 'multikernel,pci-host-bridge'
+            except (AttributeError, ValueError):
+                is_pci_root = False
+            if not is_pci_root:
+                continue
+            domain = self._optional_u32(node, 'linux,pci-domain', 0)
+            self._parse_pci_bus(node, domain, devices, known_pci_ids)
 
         return devices
+
+    def _parse_pci_bus(
+        self,
+        bus_node: int,
+        domain: int,
+        devices: Dict[str, DeviceInfo],
+        known_pci_ids: set[str],
+    ) -> None:
+        """Recover canonical BDFs from hierarchical PCI ``reg`` cells."""
+        for node in self._subnodes(bus_node):
+            reg = self._optional_prop(node, 'reg')
+            if reg is None or len(reg) < 4:
+                continue
+
+            phys_hi = struct.unpack('>I', bytes(reg)[:4])[0]
+            vendor = self._optional_prop(node, 'vendor-id')
+            if vendor is None:
+                self._parse_pci_bus(node, domain, devices, known_pci_ids)
+                continue
+
+            device = self._optional_prop(node, 'device-id')
+            if device is None:
+                continue
+
+            bus = (phys_hi >> 16) & 0xff
+            devfn = (phys_hi >> 8) & 0xff
+            slot = (devfn >> 3) & 0x1f
+            function = devfn & 0x7
+            pci_id = f'{domain:04x}:{bus:02x}:{slot:02x}.{function:x}'
+            if pci_id in known_pci_ids:
+                continue
+
+            devices[pci_id] = DeviceInfo(
+                name=pci_id,
+                compatible='pci',
+                device_type='pci',
+                pci_id=pci_id,
+                vendor_id=vendor.as_uint32(),
+                device_id=device.as_uint32(),
+            )
+            known_pci_ids.add(pci_id)
 
     def _parse_device_info(self, node_offset: int, name: str) -> DeviceInfo:
         """Parse individual device information."""

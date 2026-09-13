@@ -296,10 +296,6 @@ class OverlayGenerator:
 
             fdt_sw.property_u64("memory-bytes", instance.resources.memory_bytes)
 
-            if instance.resources.devices:
-                stringlist_data = b'\0'.join(d.encode('utf-8') for d in instance.resources.devices) + b'\0'
-                fdt_sw.property("device-names", stringlist_data)
-
             if instance.resources.numa_nodes:
                 numa_data = struct.pack(
                     ">" + "I" * len(instance.resources.numa_nodes), *instance.resources.numa_nodes
@@ -340,6 +336,19 @@ class OverlayGenerator:
             fdt_sw.end_node()  # End __overlay__
             fdt_sw.end_node()  # End fragment
             fragment_id += 1
+
+            if instance.resources.devices:
+                fdt_sw.begin_node(f"fragment@{fragment_id:x}")
+                fdt_sw.property_string(
+                    "target-path", f"{self.INSTANCES_PATH}/{name}"
+                )
+                fdt_sw.begin_node("__overlay__")
+                self._device_op(
+                    fdt_sw, "device-add", sorted(instance.resources.devices)
+                )
+                fdt_sw.end_node()  # End __overlay__
+                fdt_sw.end_node()  # End fragment
+                fragment_id += 1
 
         for name in instances_to_remove:
             fdt_sw.begin_node(f"fragment@{fragment_id:x}")
