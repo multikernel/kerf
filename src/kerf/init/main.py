@@ -54,7 +54,7 @@ from ..pool_diff import ANY_NODE, PoolDiff, compute_pool_diff
 from ..devices import default_alias, is_partition, pci_node_name, split_alias
 from ..resources import get_busy_chunks_from_iomem
 from ..runtime import DeviceTreeManager
-from ..topology import cpu_numa_nodes, node_for_cpus
+from ..topology import cpu_numa_nodes, logical_to_physical, node_for_cpus
 
 
 MULTIKERNEL_MOUNT_POINT = "/sys/fs/multikernel"
@@ -333,31 +333,10 @@ def get_total_cpus_from_system() -> Optional[int]:
 
 def get_valid_apic_ids_from_system() -> Optional[set]:
     """
-    Get set of valid APIC IDs from the system via /proc/cpuinfo.
-    Returns set of valid APIC IDs or None if not available.
+    Get the physical IDs of the system's CPUs: APIC ids on x86, MPIDRs on arm64.
+    Returns the set of valid IDs or None if not available.
     """
-    try:
-        cpuinfo_path = Path('/proc/cpuinfo')
-        if not cpuinfo_path.exists():
-            return None
-
-        apic_ids = set()
-        with open(cpuinfo_path, 'r', encoding='utf-8') as f:
-            for line in f:
-                if line.startswith('apicid'):
-                    parts = line.split(':')
-                    if len(parts) == 2:
-                        try:
-                            apic_id = int(parts[1].strip())
-                            apic_ids.add(apic_id)
-                        except ValueError:
-                            pass
-
-        return apic_ids if apic_ids else None
-    except (OSError, IOError):
-        pass
-
-    return None
+    return set(logical_to_physical().values()) or None
 
 
 _NODE_SPEC = re.compile(r"^(.+)@(.*)$")
@@ -631,8 +610,8 @@ def build_baseline_from_cmdline(
     valid_apic_ids = get_valid_apic_ids_from_system()
     if valid_apic_ids is None:
         raise KernelInterfaceError(
-            "Could not read APIC IDs from /proc/cpuinfo. "
-            "Ensure the system exposes CPU topology information."
+            "Could not read the physical CPU IDs (APIC ids from /proc/cpuinfo, "
+            "or MPIDRs from /sys/devices/system/cpu on arm64)."
         )
 
     # The host stops listing a CPU in /proc/cpuinfo once the pool takes it,
