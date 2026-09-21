@@ -22,7 +22,7 @@ import platform
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional
 
 import click
 
@@ -98,6 +98,42 @@ def build_ip_param(
         "off",                # autoconf (off for static)
     ]
     return "ip=" + ":".join(parts)
+
+
+# What a spawn kernel cannot do without, per architecture. On arm64 the host
+# can only force a wedged spawn down with a stop interrupt, and that reaches
+# a CPU that has interrupts off only when the spawn runs with pseudo-NMIs
+# (it must also be built with CONFIG_ARM64_PSEUDO_NMI).
+REQUIRED_KERNEL_PARAMS = {
+    "aarch64": ("irqchip.gicv3_pseudo_nmi=1",),
+    "arm64": ("irqchip.gicv3_pseudo_nmi=1",),
+}
+
+
+def required_kernel_params(cmdline_parts: List[str], arch: Optional[str] = None) -> List[str]:
+    """
+    The parameters that must still be appended to a spawn's command line.
+
+    The kernel honors the last setting of a parameter, so one that the
+    command line sets differently is appended again and wins; one whose
+    last setting already is the required one is left alone.
+
+    Args:
+        cmdline_parts: The command line so far, as it will be joined
+        arch: Architecture to decide for instead of this machine's
+
+    Returns:
+        Parameters to append, in order
+    """
+    arch = (arch or platform.machine()).lower()
+    words = " ".join(cmdline_parts).split()
+    missing = []
+    for param in REQUIRED_KERNEL_PARAMS.get(arch, ()):
+        key = param.split("=", 1)[0] + "="
+        settings = [word for word in words if word.startswith(key)]
+        if not settings or settings[-1] != param:
+            missing.append(param)
+    return missing
 
 
 def get_kexec_file_load_syscall():
@@ -507,6 +543,13 @@ def load(  # pylint: disable=too-many-arguments,too-many-positional-arguments,to
             cmdline_parts.append(f"console={console_device}")
             if verbose:
                 click.echo(f"Console: console={console_device}")
+
+        # Last, so that it wins over anything given above
+        required = required_kernel_params(cmdline_parts)
+        if required:
+            cmdline_parts.extend(required)
+            if verbose:
+                click.echo(f"Required on this architecture: {' '.join(required)}")
 
         cmdline_str = " ".join(cmdline_parts)
 
