@@ -20,6 +20,7 @@ a machine agree on: APIC ids on x86, MPIDR affinity values on arm64.
 """
 
 import os
+import platform
 import re
 import struct
 from pathlib import Path
@@ -38,6 +39,13 @@ MADT_GICC_MPIDR = 68
 MADT_GICC_ENABLED = 1
 
 _NODE_DIR = re.compile(r"^node(\d+)$")
+
+
+def cpu_id_name() -> str:
+    """What this machine calls a physical CPU ID, for messages."""
+    if platform.machine().lower() in ("aarch64", "arm64"):
+        return "MPIDR"
+    return "APIC ID"
 
 
 def _parse_cpulist(text: str) -> List[int]:
