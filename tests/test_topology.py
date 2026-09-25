@@ -14,7 +14,10 @@
 
 """Reading the host NUMA topology out of sysfs and /proc/cpuinfo."""
 
+import pytest
+
 from kerf.topology import (
+    cpu_id_name,
     cpu_numa_nodes,
     logical_to_apic,
     logical_to_mpidr,
@@ -174,3 +177,9 @@ def test_physical_ids_are_apic_ids_on_x86(tmp_path):
     cpuinfo = _cpuinfo(tmp_path, {0: 0, 1: 2})
 
     assert logical_to_physical(cpuinfo, str(tmp_path / "none"), "") == {0: 0, 1: 2}
+
+
+@pytest.mark.parametrize("machine, name", [("x86_64", "APIC ID"), ("aarch64", "MPIDR")])
+def test_messages_name_the_physical_id_of_the_architecture(monkeypatch, machine, name):
+    monkeypatch.setattr("platform.machine", lambda: machine)
+    assert cpu_id_name() == name
