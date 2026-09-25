@@ -339,6 +339,11 @@ def get_valid_apic_ids_from_system() -> Optional[set]:
     return set(logical_to_physical().values()) or None
 
 
+def get_boot_cpu_from_system() -> Optional[int]:
+    """The physical ID of the host's boot CPU, which never joins the pool."""
+    return logical_to_physical().get(0)
+
+
 _NODE_SPEC = re.compile(r"^(.+)@(.*)$")
 
 PAGE_SIZE = 4096
@@ -628,15 +633,11 @@ def build_baseline_from_cmdline(
     # Total CPUs is based on the max APIC ID + 1 for sizing purposes
     total_cpus = max(valid_apic_ids) + 1
     # Host reserved are all valid APIC IDs not in the available list
-    available_cpus = set(cpu_list)
-    host_reserved_cpus = sorted(list(valid_apic_ids - available_cpus))
-
-    if 0 in available_cpus and len(host_reserved_cpus) == 0:
-        if verbose:
-            click.echo(f"Warning: {cpu_id_name()} 0 is in available list but no host-reserved CPUs. Moving {cpu_id_name()} 0 to host-reserved.", err=True)
-        available_cpus.discard(0)
-        host_reserved_cpus = [0]
-        cpu_list = sorted(list(available_cpus))
+    boot_cpu = get_boot_cpu_from_system()
+    if boot_cpu in cpu_list:
+        click.echo(f"Warning: {cpu_id_name()} {boot_cpu} is the host's boot CPU and stays with the host.", err=True)
+        cpu_list = [cpu for cpu in cpu_list if cpu != boot_cpu]
+    host_reserved_cpus = sorted(valid_apic_ids - set(cpu_list))
 
     requested, note = resolve_memory_nodes(requested, cpu_list, pool_cpus, pool_regions)
     if note:

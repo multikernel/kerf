@@ -374,3 +374,25 @@ def test_lent_devices_come_from_the_instance_trees(monkeypatch):
     assert set(lent) == {"pci_0000_09_00_0", "pci_0000_00_1f_2"}
     assert lent["pci_0000_09_00_0"].alias == "enp9s0"
     assert lent["pci_0000_09_00_0"].pci_id == "0000:09:00.0"
+
+
+def test_the_boot_cpu_stays_with_the_host(monkeypatch):
+    monkeypatch.setattr(main, "get_valid_apic_ids_from_system", lambda: {0, 1, 2, 3})
+
+    tree = main.build_baseline_from_cmdline("0-3", memory="512MB")
+
+    assert tree.hardware.cpus.available == [1, 2, 3]
+    assert tree.hardware.cpus.host_reserved == [0]
+
+
+def test_the_boot_cpu_is_found_by_its_own_id(monkeypatch):
+    # An arm64 server can boot on MPIDR 0x10000 and have no CPU 0 at all.
+    monkeypatch.setattr(main, "get_valid_apic_ids_from_system",
+                        lambda: {0x10000, 0x20000, 0x30000})
+    monkeypatch.setattr(main, "get_boot_cpu_from_system", lambda: 0x10000)
+
+    tree = main.build_baseline_from_cmdline("65536,131072,196608", memory="512MB")
+
+    assert tree.hardware.cpus.available == [0x20000, 0x30000]
+    assert tree.hardware.cpus.host_reserved == [0x10000]
+
