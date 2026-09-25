@@ -41,6 +41,13 @@ from kerf.models import (
     InstanceConfig,
     WorkloadType,
 )
+from kerf.init import main as init_main
+
+
+@pytest.fixture(autouse=True)
+def boot_cpu_is_zero(monkeypatch):
+    """Keep init from reading the real host's boot CPU."""
+    monkeypatch.setattr(init_main, "get_boot_cpu_from_system", lambda: 0)
 
 
 @pytest.fixture
