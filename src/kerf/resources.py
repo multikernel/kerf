@@ -26,6 +26,7 @@ from typing import List, Set, Optional, Tuple
 
 from .models import GlobalDeviceTree, PoolMemoryRegion
 from .exceptions import ResourceError
+from .topology import cpu_id_name
 
 IOMEM_PATH = "/proc/iomem"
 
@@ -273,8 +274,8 @@ def validate_cpu_allocation(
     invalid_cpus = requested_set - hardware_cpus
     if invalid_cpus:
         raise ResourceError(
-            f"Invalid APIC IDs requested: {sorted(invalid_cpus)}. "
-            f"Available APIC IDs: {sorted(hardware_cpus)}"
+            f"Invalid {cpu_id_name()}s requested: {sorted(invalid_cpus)}. "
+            f"Available {cpu_id_name()}s: {sorted(hardware_cpus)}"
         )
 
     # Check APIC IDs are available
@@ -287,10 +288,10 @@ def validate_cpu_allocation(
                 continue
             conflict_cpus = set(instance.resources.cpus) & unavailable
             if conflict_cpus:
-                conflicts.append(f"{instance.name} uses APIC IDs {sorted(conflict_cpus)}")
+                conflicts.append(f"{instance.name} uses {cpu_id_name()}s {sorted(conflict_cpus)}")
 
         conflict_msg = ", ".join(conflicts) if conflicts else "allocated to other instances"
-        raise ResourceError(f"APIC IDs {sorted(unavailable)} are not available ({conflict_msg})")
+        raise ResourceError(f"{cpu_id_name()}s {sorted(unavailable)} are not available ({conflict_msg})")
 
 
 def validate_memory_allocation(

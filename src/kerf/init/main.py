@@ -54,7 +54,7 @@ from ..pool_diff import ANY_NODE, PoolDiff, compute_pool_diff
 from ..devices import default_alias, is_partition, pci_node_name, split_alias
 from ..resources import get_busy_chunks_from_iomem
 from ..runtime import DeviceTreeManager
-from ..topology import cpu_numa_nodes, logical_to_physical, node_for_cpus
+from ..topology import cpu_id_name, cpu_numa_nodes, logical_to_physical, node_for_cpus
 
 
 MULTIKERNEL_MOUNT_POINT = "/sys/fs/multikernel"
@@ -621,8 +621,8 @@ def build_baseline_from_cmdline(
     invalid_cpus = set(cpu_list) - valid_apic_ids
     if invalid_cpus:
         raise ValueError(
-            f"Invalid APIC ID(s) specified: {sorted(invalid_cpus)}. "
-            f"Valid APIC IDs on this system: {sorted(valid_apic_ids)}"
+            f"Invalid {cpu_id_name()}(s) specified: {sorted(invalid_cpus)}. "
+            f"Valid {cpu_id_name()}s on this system: {sorted(valid_apic_ids)}"
         )
 
     # Total CPUs is based on the max APIC ID + 1 for sizing purposes
@@ -633,7 +633,7 @@ def build_baseline_from_cmdline(
 
     if 0 in available_cpus and len(host_reserved_cpus) == 0:
         if verbose:
-            click.echo("Warning: APIC ID 0 is in available list but no host-reserved CPUs. Moving APIC ID 0 to host-reserved.", err=True)
+            click.echo(f"Warning: {cpu_id_name()} 0 is in available list but no host-reserved CPUs. Moving {cpu_id_name()} 0 to host-reserved.", err=True)
         available_cpus.discard(0)
         host_reserved_cpus = [0]
         cpu_list = sorted(list(available_cpus))
@@ -644,10 +644,10 @@ def build_baseline_from_cmdline(
 
     total_bytes = sum(requested.values())
     if verbose:
-        click.echo(f"Parsed APIC ID specification: {cpus}")
-        click.echo(f"  Valid APIC IDs on system: {sorted(valid_apic_ids)}")
-        click.echo(f"  Host-reserved APIC IDs: {host_reserved_cpus}")
-        click.echo(f"  Available APIC IDs: {cpu_list}")
+        click.echo(f"Parsed {cpu_id_name()} specification: {cpus}")
+        click.echo(f"  Valid {cpu_id_name()}s on system: {sorted(valid_apic_ids)}")
+        click.echo(f"  Host-reserved {cpu_id_name()}s: {host_reserved_cpus}")
+        click.echo(f"  Available {cpu_id_name()}s: {cpu_list}")
         click.echo("Requested pool memory:")
         for node, size in sorted(requested.items()):
             click.echo(f"  node {node}: {size} bytes ({size / (1024**3):.2f} GB)")
@@ -949,7 +949,7 @@ def _dump_baseline_dts(baseline_mgr: BaselineManager, tree: GlobalDeviceTree) ->
 @click.command()
 @click.pass_context
 @click.option('--input', '-i', help='Baseline DTB to replay, as written by "kerf dump". Mutually exclusive with --cpus, --memory and --devices.')
-@click.option('--cpus', '-c', help='APIC ID specification for baseline (e.g., "128-134" or "128,130,132"), or "none" for no pool CPUs. Use physical APIC IDs, not logical CPU numbers. Mutually exclusive with --input.')
+@click.option('--cpus', '-c', help='Physical CPU IDs for baseline, the APIC ID on x86 or the MPIDR on arm64 (e.g., "128-134" or "128,130,132"), or "none" for no pool CPUs. Not logical CPU numbers. Mutually exclusive with --input.')
 @click.option('--memory', '-m', help='Pool memory: SIZE (e.g. "2GB") on the node of the requested CPUs, per-node "8GB@0,8GB@1", or "none" for no pool memory. Required with --cpus, mutually exclusive with --input.')
 @click.option('--devices', '-d', help='Host device names or PCI addresses to pool, each with an optional "=alias" the spawned kernels name the device by (comma-separated, e.g. "nvme0n1,enp9s0,0000:4f:01.0=nvme1"), or "none" for no devices. By default an NVMe keeps its controller name and a network device keeps its interface name. Mutually exclusive with --input.')
 @click.option('--dry-run', is_flag=True, help='Report the plan without applying it. Still reads the pool from the kernel, so it needs root.')
