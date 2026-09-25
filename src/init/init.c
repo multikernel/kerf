@@ -21,7 +21,6 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <signal.h>
-#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -60,22 +59,6 @@ static void log_error(const char *msg)
 {
     char buf[256];
     snprintf(buf, sizeof(buf), "ERROR: %s: %s", msg, strerror(errno));
-    log_msg(buf);
-}
-
-static inline uint64_t rdtsc(void)
-{
-    uint32_t lo, hi;
-    asm volatile("rdtsc" : "=a"(lo), "=d"(hi));
-    return ((uint64_t)hi << 32) | lo;
-}
-
-static void log_starting(void)
-{
-    char buf[64];
-    uint64_t tsc = rdtsc();
-
-    snprintf(buf, sizeof(buf), "starting at TSC %lu", tsc);
     log_msg(buf);
 }
 
@@ -354,8 +337,6 @@ int main(int argc, char *argv[])
 
     char entrypoint[MAX_ENTRYPOINT_LEN];
     char *ep_argv[MAX_ARGS];
-
-    log_starting();
 
     if (mount_filesystems() < 0) {
         log_msg("failed to mount filesystems");
