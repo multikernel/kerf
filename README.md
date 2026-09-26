@@ -152,6 +152,11 @@ kerf load --kernel=/boot/vmlinuz --initrd=/boot/initrd.img \
 # Boot a kernel instance
 kerf start web-server
 
+# Run a command inside a running instance (docker exec style)
+kerf exec web-server ls /
+kerf exec -it web-server sh
+kerf exec -u nobody web-server id
+
 # Show kernel instance information
 kerf show
 kerf show web-server
