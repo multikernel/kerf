@@ -20,6 +20,7 @@ import io
 import os
 import socket
 import subprocess
+import threading
 from pathlib import Path
 
 import pytest
@@ -102,3 +103,22 @@ def test_lost_connection():
     agent.close()
     with pytest.raises(LostConnection):
         Session(host).run(protocol.pack_open(["true"], []), io.BytesIO(), io.BytesIO())
+
+
+@needs_session
+def test_run_respects_stdin_window(agent):
+    size = 1 << 20
+    r, w = os.pipe()
+
+    def feed():
+        os.write(w, b"q" * size)
+        os.close(w)
+
+    feeder = threading.Thread(target=feed)
+    feeder.start()
+    out = io.BytesIO()
+    frame = protocol.pack_open(["wc", "-c"], build_env([], "/", None), stdin=True)
+    assert Session(agent).run(frame, out, io.BytesIO(), stdin_fd=r) == 0
+    feeder.join()
+    os.close(r)
+    assert out.getvalue().strip() == str(size).encode()

@@ -31,6 +31,7 @@ import pytest
 from kerf.exec import protocol
 
 SESSION_TEST = Path(__file__).resolve().parents[1] / "src" / "init" / "session-test"
+CHUNK = 4096
 ENV = ["PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"]
 
 pytestmark = pytest.mark.skipif(
@@ -58,7 +59,9 @@ def fixture_start():
 
 def collect(host):
     """Read frames until EXIT, ERROR or close; return what arrived."""
-    result = {"stdout": b"", "stderr": b"", "exit": None, "error": (0, ""), "started": False}
+    result = {
+        "stdout": b"", "stderr": b"", "exit": None, "error": (0, ""), "started": False, "acked": 0,
+    }
     while True:
         frame = protocol.read_frame(host)
         if frame is None:
@@ -70,6 +73,8 @@ def collect(host):
             result["stdout"] += payload
         elif ftype == protocol.STDERR:
             result["stderr"] += payload
+        elif ftype == protocol.STDIN_ACK:
+            result["acked"] += protocol.unpack_ack(payload)
         elif ftype == protocol.EXIT:
             result["exit"] = protocol.unpack_exit(payload)
             return result
@@ -239,17 +244,30 @@ def test_large_stdin_to_slow_reader(start):
     host = start()
     host.sendall(protocol.pack_open(["sh", "-c", "sleep 0.3; wc -c"], ENV, stdin=True))
 
+    credit = threading.Semaphore(protocol.STDIN_WINDOW // CHUNK)
+
     def feed():
-        chunk = b"x" * protocol.MAX_PAYLOAD
-        for _ in range(size // len(chunk)):
-            host.sendall(protocol.pack_frame(protocol.STDIN, chunk))
+        for _ in range(size // CHUNK):
+            credit.acquire()  # pylint: disable=consider-using-with
+            host.sendall(protocol.pack_frame(protocol.STDIN, b"x" * CHUNK))
         host.sendall(protocol.pack_frame(protocol.STDIN_EOF))
 
     feeder = threading.Thread(target=feed)
     feeder.start()
-    result = collect(host)
+    stdout, acked = b"", 0
+    while True:
+        ftype, payload = protocol.read_frame(host)
+        if ftype == protocol.STDIN_ACK:
+            acked += protocol.unpack_ack(payload)
+            while acked >= CHUNK:
+                acked -= CHUNK
+                credit.release()
+        elif ftype == protocol.STDOUT:
+            stdout += payload
+        elif ftype == protocol.EXIT:
+            break
     feeder.join()
-    assert result["stdout"].strip() == str(size).encode()
+    assert stdout.strip() == str(size).encode()
 
 
 def test_large_stdout_to_slow_host(start):
@@ -312,16 +330,7 @@ def test_command_closes_stdin_early(start):
     host = start()
     host.sendall(protocol.pack_open(["head", "-c", "1"], ENV, stdin=True))
 
-    def feed():
-        try:
-            for _ in range(64):
-                host.sendall(protocol.pack_frame(protocol.STDIN, b"y" * protocol.MAX_PAYLOAD))
-            host.sendall(protocol.pack_frame(protocol.STDIN_EOF))
-        except OSError:
-            pass
-
-    feeder = threading.Thread(target=feed, daemon=True)
-    feeder.start()
+    host.sendall(protocol.pack_frame(protocol.STDIN, b"y" * protocol.STDIN_WINDOW))
     result = collect(host)
     assert result["stdout"] == b"y"
     assert result["exit"] == 0
@@ -331,3 +340,92 @@ def test_binary_output(start):
     host = start()
     host.sendall(protocol.pack_open(["printf", "\\377\\000\\001"], ENV))
     assert collect(host)["stdout"] == b"\xff\x00\x01"
+
+
+def jam_stdin(host):
+    """Fill the command's stdin pipe, then park a full window in the session."""
+    host.sendall(protocol.pack_frame(protocol.STDIN, b"z" * protocol.STDIN_WINDOW))
+    acked = 0
+    while acked < protocol.STDIN_WINDOW:
+        ftype, payload = protocol.read_frame(host)
+        if ftype == protocol.STDIN_ACK:
+            acked += protocol.unpack_ack(payload)
+    host.sendall(protocol.pack_frame(protocol.STDIN, b"z" * protocol.STDIN_WINDOW))
+
+
+def test_stdin_is_acknowledged(start):
+    host = start()
+    host.sendall(protocol.pack_open(["cat"], ENV, stdin=True))
+    host.sendall(protocol.pack_frame(protocol.STDIN, b"hello\n"))
+    host.sendall(protocol.pack_frame(protocol.STDIN_EOF))
+    result = collect(host)
+    assert result["acked"] == 6
+    assert result["stdout"] == b"hello\n"
+
+
+def test_background_writer_does_not_block_exit(start):
+    host = start()
+    host.sendall(
+        protocol.pack_open(["sh", "-c", "(while :; do echo x; sleep 0.05; done) & exit 0"], ENV)
+    )
+    began = time.monotonic()
+    result = collect(host)
+    assert result["exit"] == 0
+    assert time.monotonic() - began < 2
+
+
+def test_signal_reaches_command_not_reading_stdin(start):
+    host = start()
+    host.sendall(protocol.pack_open(["sleep", "30"], ENV, stdin=True))
+    wait_started(host)
+    jam_stdin(host)
+    host.sendall(protocol.pack_signal(signal.SIGTERM))
+    assert collect(host)["exit"] == 128 + signal.SIGTERM
+
+
+def test_disconnect_while_stdin_is_stuck(start, tmp_path):
+    marker = tmp_path / "hup"
+    script = (
+        f"exec 2>/dev/null; trap 'echo hup > {marker}; exit 0' HUP; "
+        "echo ready; while :; do sleep 0.05; done"
+    )
+    host = start()
+    host.sendall(protocol.pack_open(["sh", "-c", script], ENV, stdin=True))
+    wait_started(host)
+    assert protocol.read_frame(host) == (protocol.STDOUT, b"ready\n")
+    jam_stdin(host)
+    host.shutdown(socket.SHUT_RDWR)
+    deadline = time.monotonic() + 5
+    while not marker.exists() and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert marker.read_text() == "hup\n"
+
+
+def test_stdin_beyond_window_is_a_protocol_error(start):
+    host = start()
+    host.sendall(protocol.pack_open(["sleep", "30"], ENV, stdin=True))
+    wait_started(host)
+    jam_stdin(host)
+    host.sendall(protocol.pack_frame(protocol.STDIN, b"z"))
+    try:
+        frame = protocol.read_frame(host)
+    except ConnectionResetError:
+        frame = None
+    assert frame is None
+
+
+def test_stdin_dropped_when_tty_slave_closed(start):
+    host = start()
+    script = "exec 0<&- 1>&- 2>&-; sleep 3"
+    host.sendall(protocol.pack_open(["sh", "-c", script], ENV, tty=True, stdin=True))
+    wait_started(host)
+    time.sleep(0.2)
+    host.sendall(protocol.pack_frame(protocol.STDIN, b"z" * protocol.STDIN_WINDOW))
+    acked = 0
+    deadline = time.monotonic() + 2
+    host.settimeout(2)
+    while acked < protocol.STDIN_WINDOW and time.monotonic() < deadline:
+        ftype, payload = protocol.read_frame(host)
+        if ftype == protocol.STDIN_ACK:
+            acked += protocol.unpack_ack(payload)
+    assert acked == protocol.STDIN_WINDOW

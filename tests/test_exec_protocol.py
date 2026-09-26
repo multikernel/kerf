@@ -97,3 +97,9 @@ def test_unpack_replies():
 def test_error_exit_code():
     assert protocol.error_exit_code(errno.ENOENT) == 127
     assert protocol.error_exit_code(errno.EACCES) == 126
+
+
+def test_stdin_ack():
+    assert protocol.STDIN_ACK == 21
+    assert protocol.STDIN_WINDOW == 65536
+    assert protocol.unpack_ack(struct.pack("<I", 4096)) == 4096

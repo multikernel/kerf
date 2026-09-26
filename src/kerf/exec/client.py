@@ -53,17 +53,17 @@ def build_env(extra: Sequence[str], home: str, term: Optional[str]) -> List[str]
 
 class Session:
     """One exec connection. All sends go through a single writer thread so
-    frames never interleave and the reader never blocks on a full socket."""
+    frames never interleave. Stdin is limited by the spawn's STDIN_ACK credit,
+    so the queue stays small and control frames are never stuck behind it."""
 
     def __init__(self, sock):
         self.sock = sock
-        self._queue: "queue.Queue[Optional[bytes]]" = queue.Queue(maxsize=16)
+        self._queue: "queue.Queue[Optional[bytes]]" = queue.Queue()
+        self._credit = protocol.STDIN_WINDOW
+        self._credit_cond = threading.Condition()
 
-    def send(self, frame: bytes, block: bool = True) -> None:
-        try:
-            self._queue.put(frame, block)
-        except queue.Full:
-            pass
+    def send(self, frame: Optional[bytes]) -> None:
+        self._queue.put(frame)
 
     def _writer(self) -> None:
         while True:
@@ -81,7 +81,13 @@ class Session:
             if not data:
                 self.send(protocol.pack_frame(protocol.STDIN_EOF))
                 return
-            self.send(protocol.pack_frame(protocol.STDIN, data))
+            while data:
+                with self._credit_cond:
+                    self._credit_cond.wait_for(lambda: self._credit > 0)
+                    n = min(len(data), self._credit)
+                    self._credit -= n
+                self.send(protocol.pack_frame(protocol.STDIN, data[:n]))
+                data = data[n:]
 
     def run(
         self,
@@ -113,9 +119,13 @@ class Session:
                     out = stdout if ftype == protocol.STDOUT else stderr
                     out.write(payload)
                     out.flush()
+                elif ftype == protocol.STDIN_ACK:
+                    with self._credit_cond:
+                        self._credit += protocol.unpack_ack(payload)
+                        self._credit_cond.notify()
                 elif ftype == protocol.EXIT:
                     return protocol.unpack_exit(payload)
                 elif ftype == protocol.ERROR:
                     raise RemoteError(*protocol.unpack_error(payload))
         finally:
-            self.send(None, block=False)
+            self.send(None)

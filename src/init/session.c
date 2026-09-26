@@ -31,15 +31,16 @@
 #include <sys/socket.h>
 #include <sys/wait.h>
 #include <termios.h>
+#include <time.h>
 #include <unistd.h>
 
 #include "proto.h"
 #include "session.h"
 
 /*
- * After the command exits, output still in flight is drained until every
- * stream closes or stays quiet this long, so a background process holding
- * the pty cannot keep the session open.
+ * After the command exits, output still in flight is drained for at most
+ * this long, so a background process holding the pty or pipes cannot keep
+ * the session open.
  */
 #define DRAIN_TIMEOUT_MS 100
 
@@ -81,7 +82,7 @@ static struct {
     int stdin_eof;
     size_t in_len;
     size_t rx_len;
-    unsigned char in_buf[KERF_MAX_PAYLOAD];
+    unsigned char in_buf[KERF_STDIN_WINDOW];
     unsigned char rx[KERF_HDR_LEN + KERF_MAX_PAYLOAD];
     unsigned char tx[KERF_HDR_LEN + KERF_MAX_PAYLOAD];
 } s;
@@ -394,6 +395,14 @@ static void pump(int *fd, uint16_t type)
     *fd = -1;
 }
 
+static void send_ack(size_t n)
+{
+    unsigned char payload[4];
+
+    put_le32(payload, n);
+    send_frame(KERF_STDIN_ACK, payload, sizeof(payload));
+}
+
 static void close_stdin(void)
 {
     if (s.master >= 0) {
@@ -406,6 +415,16 @@ static void close_stdin(void)
     s.in_fd = -1;
 }
 
+/* The command will never read what is buffered; acknowledge it anyway. */
+static void drop_stdin(void)
+{
+    if (s.in_len)
+        send_ack(s.in_len);
+    s.in_len = 0;
+    close(s.in_fd);
+    s.in_fd = -1;
+}
+
 static void flush_stdin(void)
 {
     ssize_t n = write(s.in_fd, s.in_buf, s.in_len);
@@ -413,26 +432,31 @@ static void flush_stdin(void)
     if (n > 0) {
         memmove(s.in_buf, s.in_buf + n, s.in_len - n);
         s.in_len -= n;
+        send_ack(n);
     } else if (n < 0 && errno != EAGAIN && errno != EINTR) {
-        /* The command closed its stdin; drop what it will never read. */
-        s.in_len = 0;
-        close(s.in_fd);
-        s.in_fd = -1;
+        drop_stdin();
+        return;
     }
+    if (s.in_len == 0 && s.stdin_eof)
+        close_stdin();
 }
 
 static void handle_frame(uint16_t type, unsigned char *p, uint32_t len)
 {
     switch (type) {
     case KERF_STDIN:
-        if (s.in_fd >= 0 && !s.stdin_eof) {
-            memcpy(s.in_buf, p, len);
-            s.in_len = len;
+        if (s.in_len + len > KERF_STDIN_WINDOW)
+            hangup();
+        if (s.in_fd < 0 || s.stdin_eof) {
+            send_ack(len);
+            break;
         }
+        memcpy(s.in_buf + s.in_len, p, len);
+        s.in_len += len;
         break;
     case KERF_STDIN_EOF:
         s.stdin_eof = 1;
-        if (s.in_fd >= 0)
+        if (s.in_fd >= 0 && s.in_len == 0)
             close_stdin();
         break;
     case KERF_RESIZE:
@@ -453,10 +477,9 @@ static void handle_frame(uint16_t type, unsigned char *p, uint32_t len)
     }
 }
 
-/* STDIN frames wait while earlier stdin is still unwritten. */
 static void process_frames(void)
 {
-    while (s.in_len == 0 && s.rx_len >= KERF_HDR_LEN) {
+    while (s.rx_len >= KERF_HDR_LEN) {
         uint32_t len = get_le32(s.rx);
         size_t total = KERF_HDR_LEN + len;
 
@@ -481,21 +504,31 @@ static void receive(void)
     process_frames();
 }
 
+static long now_ms(void)
+{
+    struct timespec ts;
+
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+}
+
 static void finish(int status) __attribute__((noreturn));
 
 static void finish(int status)
 {
     unsigned char exit_payload[2];
+    long deadline = now_ms() + DRAIN_TIMEOUT_MS;
 
     for (;;) {
         struct pollfd pfd[2] = {
             { .fd = s.out_fd, .events = POLLIN },
             { .fd = s.err_fd, .events = POLLIN },
         };
+        long left = deadline - now_ms();
 
-        if (s.out_fd < 0 && s.err_fd < 0)
+        if ((s.out_fd < 0 && s.err_fd < 0) || left <= 0)
             break;
-        if (poll(pfd, 2, DRAIN_TIMEOUT_MS) <= 0)
+        if (poll(pfd, 2, left) <= 0)
             break;
         if (pfd[0].revents)
             pump(&s.out_fd, KERF_STDOUT);
@@ -521,7 +554,7 @@ static void relay(void)
     for (;;) {
         struct pollfd pfd[5] = {
             { .fd = s.sig_fd, .events = POLLIN },
-            { .fd = s.in_len == 0 ? s.sock : -1, .events = POLLIN },
+            { .fd = s.sock, .events = POLLIN },
             { .fd = s.in_len > 0 ? s.in_fd : -1, .events = POLLOUT },
             { .fd = s.out_fd, .events = POLLIN },
             { .fd = s.err_fd, .events = POLLIN },
@@ -539,12 +572,13 @@ static void relay(void)
             pump(&s.out_fd, KERF_STDOUT);
         if (pfd[4].revents)
             pump(&s.err_fd, KERF_STDERR);
-        if (pfd[2].revents)
+        /* A pty master whose slave is gone reports POLLHUP but never drains. */
+        if (pfd[2].revents & POLLOUT)
             flush_stdin();
+        else if (pfd[2].revents)
+            drop_stdin();
         if (pfd[1].revents)
             receive();
-        else if (s.in_len == 0)
-            process_frames();
 
         if (pfd[0].revents) {
             while (read(s.sig_fd, &si, sizeof(si)) > 0)

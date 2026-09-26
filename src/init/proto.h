@@ -25,6 +25,8 @@
 #define KERF_AGENT_PORT      1023
 #define KERF_HDR_LEN         8
 #define KERF_MAX_PAYLOAD     65536
+/* Unacknowledged stdin the host may have in flight; see KERF_STDIN_ACK. */
+#define KERF_STDIN_WINDOW    65536
 
 #define KERF_OPEN            1
 #define KERF_STDIN           2
@@ -36,6 +38,7 @@
 #define KERF_STDOUT          18
 #define KERF_STDERR          19
 #define KERF_EXIT            20
+#define KERF_STDIN_ACK       21
 
 #define KERF_PROTO_VERSION   1
 #define KERF_OPEN_FIXED_LEN  24

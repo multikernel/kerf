@@ -103,11 +103,11 @@ def _install_handlers(session: Session, use_tty: bool) -> None:
     if use_tty:
         signal.signal(
             signal.SIGWINCH,
-            lambda *_: session.send(protocol.pack_resize(*_winsize(0)), block=False),
+            lambda *_: session.send(protocol.pack_resize(*_winsize(0))),
         )
         return
     for signo in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
-        signal.signal(signo, lambda num, _frame: session.send(protocol.pack_signal(num), block=False))
+        signal.signal(signo, lambda num, _frame: session.send(protocol.pack_signal(num)))
 
 
 @click.command(name="exec", context_settings={"allow_interspersed_args": False})

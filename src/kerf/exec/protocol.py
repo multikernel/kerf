@@ -23,6 +23,8 @@ from typing import List, Optional, Sequence, Tuple
 
 AGENT_PORT = 1023
 MAX_PAYLOAD = 65536
+# Unacknowledged stdin the host may have in flight; see STDIN_ACK.
+STDIN_WINDOW = 65536
 PROTOCOL_VERSION = 1
 
 OPEN = 1
@@ -35,6 +37,7 @@ ERROR = 17
 STDOUT = 18
 STDERR = 19
 EXIT = 20
+STDIN_ACK = 21
 
 FLAG_TTY = 0x1
 FLAG_STDIN = 0x2
@@ -120,6 +123,10 @@ def unpack_started(payload: bytes) -> int:
 def unpack_error(payload: bytes) -> Tuple[int, str]:
     (err,) = struct.unpack_from("<I", payload)
     return err, payload[4:].split(b"\0", 1)[0].decode(errors="replace")
+
+
+def unpack_ack(payload: bytes) -> int:
+    return struct.unpack("<I", payload)[0]
 
 
 def unpack_exit(payload: bytes) -> int:
