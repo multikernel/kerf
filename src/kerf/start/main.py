@@ -99,12 +99,12 @@ def boot_multikernel(mk_id: int) -> int:
     return result
 
 
-@click.command(name="exec")
+@click.command(name="start")
 @click.argument("name", required=False)
 @click.option("--id", type=int, help="Multikernel instance ID to boot (alternative to name)")
 @click.option("--console", "attach_console", is_flag=True, help="Attach to console after boot")
 @click.option("--verbose", "-v", is_flag=True, help="Verbose output")
-def exec_cmd(name: Optional[str], id: Optional[int], attach_console: bool, verbose: bool):
+def start_cmd(name: Optional[str], id: Optional[int], attach_console: bool, verbose: bool):
     """
     Boot a multikernel instance using the reboot syscall.
 
@@ -116,14 +116,14 @@ def exec_cmd(name: Optional[str], id: Optional[int], attach_console: bool, verbo
 
     Examples:
 
-        kerf exec web-server
-        kerf exec --id=1
-        kerf exec web-server --console
+        kerf start web-server
+        kerf start --id=1
+        kerf start web-server --console
     """
     try:
         if not name and id is None:
             click.echo("Error: Either instance name or --id must be provided", err=True)
-            click.echo("Usage: kerf exec <name>  or  kerf exec --id=<id>", err=True)
+            click.echo("Usage: kerf start <name>  or  kerf start --id=<id>", err=True)
             sys.exit(2)
 
         instance_name = None

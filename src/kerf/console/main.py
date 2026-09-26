@@ -233,7 +233,7 @@ def console(name: Optional[str], id: Optional[int], verbose: bool):
                 f"Console attachment requires the instance to be in '{InstanceState.ACTIVE.value}' state.",
                 err=True,
             )
-            click.echo(f"Start the instance with: kerf exec {instance_name}", err=True)
+            click.echo(f"Start the instance with: kerf start {instance_name}", err=True)
             sys.exit(1)
 
         if verbose:

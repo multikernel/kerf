@@ -150,7 +150,7 @@ kerf load --kernel=/boot/vmlinuz --initrd=/boot/initrd.img \
           --cmdline="root=/dev/sda1 ro" --id=1
 
 # Boot a kernel instance
-kerf exec web-server
+kerf start web-server
 
 # Show kernel instance information
 kerf show

@@ -13,9 +13,9 @@
 # limitations under the License.
 
 """
-Kernel execution subcommand implementation.
+Instance boot subcommand implementation.
 """
 
-from .main import exec_cmd
+from .main import start_cmd
 
-__all__ = ["exec_cmd"]
+__all__ = ["start_cmd"]
