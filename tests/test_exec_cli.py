@@ -16,8 +16,11 @@
 Tests for the kerf exec command.
 """
 
+import os
+import signal
 import socket
 import subprocess
+import threading
 from pathlib import Path
 from unittest.mock import patch
 
@@ -106,3 +109,37 @@ def test_by_id(agent):
     assert result.output == "x\n"
     assert result.exit_code == 0
     agent.assert_called_once_with(3, "web")
+
+
+class _Unhandled(Exception):
+    pass
+
+
+def _raise_unhandled(*_):
+    raise _Unhandled()
+
+
+@pytest.mark.skipif(not SESSION_TEST.exists(), reason="session-test not built")
+def test_tty_restored_and_143_on_sigterm(instance, agent):  # pylint: disable=unused-argument
+    previous = signal.signal(signal.SIGTERM, _raise_unhandled)
+    timer = threading.Timer(0.5, os.kill, (os.getpid(), signal.SIGTERM))
+    try:
+        with patch("kerf.exec.main.os.isatty", return_value=True), \
+             patch("kerf.exec.main.termios") as termios_mock, \
+             patch("kerf.exec.main.ttymod"):
+            timer.start()
+            result = CliRunner().invoke(main, ["exec", "-it", "web", "sleep", "10"])
+    finally:
+        timer.cancel()
+        signal.signal(signal.SIGTERM, previous)
+    assert result.exit_code == 143
+    termios_mock.tcsetattr.assert_called_once()
+
+
+def test_broken_pipe_exits_quietly(instance):  # pylint: disable=unused-argument
+    host, _ = socket.socketpair()
+    with patch("kerf.exec.main.connect_agent", return_value=host), \
+         patch("kerf.exec.main.Session.run", side_effect=BrokenPipeError):
+        result = CliRunner().invoke(main, ["exec", "web", "yes"])
+    assert result.exit_code == 141
+    assert result.exception is None or isinstance(result.exception, SystemExit)

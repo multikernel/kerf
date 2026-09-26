@@ -43,6 +43,16 @@ class ExecError(Exception):
     """kerf-side failure before the command runs."""
 
 
+class _Terminated(Exception):
+    def __init__(self, signo: int):
+        super().__init__(signo)
+        self.signo = signo
+
+
+def _terminate(signo, _frame):
+    raise _Terminated(signo)
+
+
 def _resolve_instance(name: Optional[str], instance_id: Optional[int]) -> Tuple[str, int]:
     if instance_id is None:
         instance_id = get_instance_id_from_name(name)
@@ -157,8 +167,13 @@ def exec_cmd(interactive, use_tty, env_vars, workdir, user, instance_id, args):
 
     saved = termios.tcgetattr(0) if use_tty and interactive else None
     session = Session(sock)
+    handlers = {signo: signal.getsignal(signo) for signo in (
+        signal.SIGINT, signal.SIGTERM, signal.SIGHUP, signal.SIGWINCH)}
     try:
         if saved is not None:
+            # A raw terminal must be restored however kerf exec is stopped.
+            signal.signal(signal.SIGTERM, _terminate)
+            signal.signal(signal.SIGHUP, _terminate)
             ttymod.setraw(0)
         code = session.run(
             open_frame,
@@ -176,8 +191,20 @@ def exec_cmd(interactive, use_tty, env_vars, workdir, user, instance_id, args):
     except LostConnection:
         click.echo("Error: connection to instance lost", err=True)
         code = 1
+    except _Terminated as e:
+        code = 128 + e.signo
+    except BrokenPipeError:
+        # Behave like a command killed by SIGPIPE; stdout is gone, so point it
+        # at /dev/null to keep the interpreter's final flush quiet.
+        try:
+            os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
+        except (OSError, ValueError):
+            pass
+        code = 128 + signal.SIGPIPE
     finally:
         if saved is not None:
             termios.tcsetattr(0, termios.TCSADRAIN, saved)
+        for signo, handler in handlers.items():
+            signal.signal(signo, handler)
         sock.close()
     sys.exit(code)
