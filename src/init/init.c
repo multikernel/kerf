@@ -356,7 +356,7 @@ static int open_listener(void)
         .svm_cid = VMADDR_CID_ANY,
     };
     int transport = VSOCK_TRANSPORT_MULTIKERNEL;
-    int fd = socket(AF_VSOCK, SOCK_STREAM | SOCK_CLOEXEC, 0);
+    int fd = socket(AF_VSOCK, SOCK_STREAM | SOCK_CLOEXEC | SOCK_NONBLOCK, 0);
 
     if (fd < 0) {
         log_error("exec listener socket");
