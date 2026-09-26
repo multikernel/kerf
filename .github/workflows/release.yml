@@ -7,7 +7,14 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            arch: x86_64
+          - runner: ubuntu-24.04-arm
+            arch: aarch64
+    runs-on: ${{ matrix.runner }}
     steps:
     - uses: actions/checkout@v4
 
@@ -35,30 +42,34 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y musl-tools
 
-    - name: Build sdist and wheel
+    - name: Build wheel
       run: |
-        poetry build
+        poetry build --format wheel
 
     # The build script makes the wheel interpreter and platform specific
-    # (cp311-cp311-linux_x86_64), which PyPI rejects. The only native code
+    # (cp311-cp311-linux_<arch>), which PyPI rejects. The only native code
     # is the static kerf-init, so the wheel runs on any Python 3 and libc.
     - name: Retag wheel for PyPI
+      env:
+        ARCH: ${{ matrix.arch }}
       run: |
         file src/kerf/data/kerf-init | grep -q "statically linked"
         pip install wheel auditwheel
         python -m wheel tags --remove --python-tag py3 --abi-tag none \
-          --platform-tag manylinux_2_17_x86_64.manylinux2014_x86_64.musllinux_1_1_x86_64 \
+          --platform-tag "manylinux_2_17_$ARCH.manylinux2014_$ARCH.musllinux_1_1_$ARCH" \
           dist/*.whl
         auditwheel show dist/*.whl
 
-    - name: Check the sdist builds a wheel
+    - name: Build sdist
+      if: matrix.arch == 'x86_64'
       run: |
+        poetry build --format sdist
         pip wheel --no-deps -w /tmp/sdist-wheel dist/*.tar.gz
 
     - name: Upload distributions
       uses: actions/upload-artifact@v4
       with:
-        name: dist
+        name: dist-${{ matrix.arch }}
         path: dist/
 
   publish:
@@ -73,7 +84,8 @@ jobs:
     - name: Download distributions
       uses: actions/download-artifact@v4
       with:
-        name: dist
+        pattern: dist-*
+        merge-multiple: true
         path: dist/
 
     - name: Publish to PyPI
@@ -88,7 +100,8 @@ jobs:
     - name: Download distributions
       uses: actions/download-artifact@v4
       with:
-        name: dist
+        pattern: dist-*
+        merge-multiple: true
         path: dist/
 
     - name: Create GitHub release
