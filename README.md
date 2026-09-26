@@ -322,7 +322,9 @@ pip install kerf-multikernel
 # Or isolated with pipx, avoiding conflicts with other packages
 pipx install kerf-multikernel
 
-# From source (recommended for development)
+# From source (recommended for development). Installing builds the
+# static kerf-init with musl-gcc (e.g. apt install musl-tools), so
+# rerunning pip install after a pull also picks up kerf-init changes.
 git clone https://github.com/multikernel/kerf.git
 cd kerf
 # Installs 'kerf' command to ~/.local/bin/kerf
