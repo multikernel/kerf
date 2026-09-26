@@ -20,16 +20,22 @@
 #define _GNU_SOURCE
 #include <errno.h>
 #include <fcntl.h>
+#include <poll.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/ioctl.h>
 #include <sys/mount.h>
+#include <sys/signalfd.h>
+#include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <termios.h>
 #include <unistd.h>
+
+#include "proto.h"
+#include "session.h"
 
 #define CMDLINE_PATH "/proc/cmdline"
 #define ENTRYPOINT_KEY "kerf.entrypoint="
@@ -39,9 +45,7 @@
 #define MAX_CONSOLE_LEN 64
 #define MAX_ARGS 64
 
-static volatile pid_t child_pid = -1;
-static volatile int child_exited = 0;
-static volatile int child_exit_status = 0;
+static pid_t child_pid = -1;
 static char console_device[MAX_CONSOLE_LEN];
 
 static void log_msg(const char *msg)
@@ -287,47 +291,129 @@ static int parse_args(char *cmdline, char **argv, int max_args)
     return argc;
 }
 
-static void sigchld_handler(int sig)
+/* musl ships no <linux/vm_sockets.h>; these mirror the kernel uapi. */
+#define SO_VM_SOCKETS_TRANSPORT     9
+#define VSOCK_TRANSPORT_MULTIKERNEL 1
+#define VMADDR_CID_ANY              0xffffffffU
+#define HOST_CID                    0
+
+struct sockaddr_vm {
+    sa_family_t svm_family;
+    unsigned short svm_reserved1;
+    unsigned int svm_port;
+    unsigned int svm_cid;
+    unsigned char svm_flags;
+    unsigned char svm_zero[3];
+};
+
+static int setup_signalfd(void)
 {
-    (void)sig;
+    sigset_t mask;
+
+    sigemptyset(&mask);
+    sigaddset(&mask, SIGCHLD);
+    sigaddset(&mask, SIGTERM);
+    sigaddset(&mask, SIGINT);
+    sigaddset(&mask, SIGHUP);
+    sigprocmask(SIG_BLOCK, &mask, NULL);
+    return signalfd(-1, &mask, SFD_CLOEXEC | SFD_NONBLOCK);
+}
+
+static void reap_children(void)
+{
     int status;
     pid_t pid;
 
     while ((pid = waitpid(-1, &status, WNOHANG)) > 0) {
         if (pid == child_pid) {
-            child_exited = 1;
-            if (WIFEXITED(status)) {
-                child_exit_status = WEXITSTATUS(status);
-            } else if (WIFSIGNALED(status)) {
-                child_exit_status = 128 + WTERMSIG(status);
-            }
+            char msg[64];
+            int code = WIFSIGNALED(status) ? 128 + WTERMSIG(status) : WEXITSTATUS(status);
+
+            snprintf(msg, sizeof(msg), "child exited with status %d", code);
+            log_msg(msg);
+            child_pid = -1;
         }
     }
 }
 
-static void forward_signal(int sig)
+static void handle_signals(int sfd)
 {
-    if (child_pid > 0) {
-        kill(child_pid, sig);
+    struct signalfd_siginfo si;
+
+    while (read(sfd, &si, sizeof(si)) == sizeof(si)) {
+        if (si.ssi_signo == SIGCHLD)
+            reap_children();
+        else if (child_pid > 0)
+            kill(child_pid, si.ssi_signo);
     }
 }
 
-static void setup_signals(void)
+static int open_listener(void)
 {
-    struct sigaction sa;
+    struct sockaddr_vm addr = {
+        .svm_family = AF_VSOCK,
+        .svm_port = KERF_AGENT_PORT,
+        .svm_cid = VMADDR_CID_ANY,
+    };
+    int transport = VSOCK_TRANSPORT_MULTIKERNEL;
+    int fd = socket(AF_VSOCK, SOCK_STREAM | SOCK_CLOEXEC, 0);
 
-    /* Handle SIGCHLD to reap zombies */
-    memset(&sa, 0, sizeof(sa));
-    sa.sa_handler = sigchld_handler;
-    sa.sa_flags = SA_RESTART | SA_NOCLDSTOP;
-    sigaction(SIGCHLD, &sa, NULL);
+    if (fd < 0) {
+        log_error("exec listener socket");
+        return -1;
+    }
+    if (setsockopt(fd, AF_VSOCK, SO_VM_SOCKETS_TRANSPORT, &transport, sizeof(transport)) < 0 ||
+        bind(fd, (struct sockaddr *)&addr, sizeof(addr)) < 0 ||
+        listen(fd, 16) < 0) {
+        log_error("exec listener");
+        close(fd);
+        return -1;
+    }
+    return fd;
+}
 
-    /* Forward termination signals to child */
-    sa.sa_handler = forward_signal;
-    sa.sa_flags = SA_RESTART;
-    sigaction(SIGTERM, &sa, NULL);
-    sigaction(SIGINT, &sa, NULL);
-    sigaction(SIGHUP, &sa, NULL);
+static void accept_session(int lfd, int sfd)
+{
+    struct sockaddr_vm peer;
+    socklen_t len = sizeof(peer);
+    int fd = accept4(lfd, (struct sockaddr *)&peer, &len, SOCK_CLOEXEC);
+    pid_t pid;
+
+    if (fd < 0)
+        return;
+
+    /* Ports up to 1023 need CAP_NET_BIND_SERVICE, so this admits host root only. */
+    if (peer.svm_cid != HOST_CID || peer.svm_port > KERF_AGENT_PORT) {
+        char msg[96];
+
+        snprintf(msg, sizeof(msg), "rejected exec from cid %u port %u",
+                 peer.svm_cid, peer.svm_port);
+        log_msg(msg);
+        close(fd);
+        return;
+    }
+
+    pid = fork();
+    if (pid == 0) {
+        close(lfd);
+        close(sfd);
+        session_run(fd);
+    }
+    if (pid < 0)
+        log_error("fork exec session");
+    close(fd);
+}
+
+/* Pipes and sockets must not land on 0-2 if the kernel gave PID 1 no console. */
+static void ensure_std_fds(void)
+{
+    int fd;
+
+    do {
+        fd = open("/dev/null", O_RDWR);
+    } while (fd >= 0 && fd <= STDERR_FILENO);
+    if (fd > STDERR_FILENO)
+        close(fd);
 }
 
 int main(int argc, char *argv[])
@@ -342,6 +428,8 @@ int main(int argc, char *argv[])
         log_msg("failed to mount filesystems");
         return 1;
     }
+
+    ensure_std_fds();
 
     if (read_entrypoint(entrypoint, sizeof(entrypoint)) < 0) {
         log_msg("failed to read entrypoint");
@@ -377,7 +465,11 @@ int main(int argc, char *argv[])
         log_msg(msg);
     }
 
-    setup_signals();
+    int sfd = setup_signalfd();
+    if (sfd < 0) {
+        log_error("signalfd");
+        return 1;
+    }
 
     child_pid = fork();
     if (child_pid < 0) {
@@ -386,7 +478,11 @@ int main(int argc, char *argv[])
     }
 
     if (child_pid == 0) {
-        /* Child process */
+        sigset_t none;
+
+        sigemptyset(&none);
+        sigprocmask(SIG_SETMASK, &none, NULL);
+        close(sfd);
         if (console_device[0] != '\0')
             setup_console(console_device);
 
@@ -395,21 +491,20 @@ int main(int argc, char *argv[])
         _exit(127);
     }
 
-    /* Parent process - stay as PID 1 forever.
-     * PID 1 must never exit or the kernel will panic.
-     * Keep reaping zombies and waiting for signals.
-     */
-    for (;;) {
-        pause();
-        if (child_exited) {
-            char msg[64];
-            snprintf(msg, sizeof(msg), "child exited with status %d",
-                     child_exit_status);
-            log_msg(msg);
-            child_exited = 0;  /* Reset for any future children */
-        }
-    }
+    int lfd = open_listener();
 
-    /* Never reached */
-    return 0;
+    /* PID 1 must never exit or the kernel will panic. */
+    for (;;) {
+        struct pollfd pfd[2] = {
+            { .fd = sfd, .events = POLLIN },
+            { .fd = lfd, .events = POLLIN },
+        };
+
+        if (poll(pfd, 2, -1) < 0)
+            continue;
+        if (pfd[0].revents)
+            handle_signals(sfd);
+        if (pfd[1].revents)
+            accept_session(lfd, sfd);
+    }
 }
