@@ -10,8 +10,16 @@ authors = ["Cong Wang"]
 readme = "README.md"
 packages = [{include = "kerf", from = "src"}]
 include = [
-    { path = "src/kerf/data/kerf-init", format = ["sdist", "wheel"] },
+    { path = "src/kerf/data/kerf-init", format = ["wheel"] },
+    { path = "Makefile", format = ["sdist"] },
+    { path = "src/init/Makefile", format = ["sdist"] },
+    { path = "src/init/*.c", format = ["sdist"] },
+    { path = "src/init/*.h", format = ["sdist"] },
 ]
+
+[tool.poetry.build]
+script = "build.py"
+generate-setup-file = false
 
 [tool.poetry.dependencies]
 python = "^3.9"
