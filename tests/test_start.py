@@ -13,5 +13,16 @@
 # limitations under the License.
 
 """
-Run a command inside a running instance.
+Tests for the kerf start command.
 """
+
+from click.testing import CliRunner
+
+from kerf.cli import main
+
+
+def test_start_is_the_boot_command():
+    result = CliRunner().invoke(main, ["start", "--help"])
+    assert result.exit_code == 0
+    assert "Boot a multikernel instance" in result.output
+    assert "kerf start web-server" in result.output

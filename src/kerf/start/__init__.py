@@ -1,4 +1,4 @@
-# Copyright 2026 Multikernel Technologies, Inc.
+# Copyright 2025 Multikernel Technologies, Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -13,5 +13,9 @@
 # limitations under the License.
 
 """
-Run a command inside a running instance.
+Instance boot subcommand implementation.
 """
+
+from .main import start_cmd
+
+__all__ = ["start_cmd"]

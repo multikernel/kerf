@@ -150,7 +150,12 @@ kerf load --kernel=/boot/vmlinuz --initrd=/boot/initrd.img \
           --cmdline="root=/dev/sda1 ro" --id=1
 
 # Boot a kernel instance
-kerf exec web-server
+kerf start web-server
+
+# Run a command inside a running instance (docker exec style)
+kerf exec web-server ls /
+kerf exec -it web-server sh
+kerf exec -u nobody web-server id
 
 # Show kernel instance information
 kerf show

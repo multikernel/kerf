@@ -1,4 +1,4 @@
-# Copyright 2025 Multikernel Technologies, Inc.
+# Copyright 2026 Multikernel Technologies, Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -13,245 +13,198 @@
 # limitations under the License.
 
 """
-Kernel execution subcommand implementation using reboot syscall with MULTIKERNEL command.
+kerf exec: run a command inside a running instance.
 """
 
-import ctypes
+import errno
 import os
-import platform
+import signal
+import socket
 import sys
+import termios
+import tty as ttymod
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Tuple
 
 import click
 
+from ..daxfs.mkdaxfs import KERF_DAXFS_MNT_DIR
 from ..models import InstanceState
-from ..utils import get_instance_id_from_name
+from ..utils import get_instance_id_from_name, get_instance_name_from_id, get_instance_status
+from . import protocol
+from .client import LostConnection, RemoteError, Session, build_env
+from .user import UserError, resolve_user
+
+SO_VM_SOCKETS_TRANSPORT = 9
+VSOCK_TRANSPORT_MULTIKERNEL = 1
 
 
-LINUX_REBOOT_MAGIC1 = 0xFEE1DEAD
-LINUX_REBOOT_MAGIC2 = 672274793  # 0x28121969
-LINUX_REBOOT_CMD_MULTIKERNEL = 0x4D4B4C49
-
-SYS_REBOOT_X86_64 = 169
-SYS_REBOOT_ARM64 = 142
-SYS_REBOOT_ARM = 88
-SYS_REBOOT_X86 = 88
-
-def get_reboot_syscall():
-    """Get the reboot syscall number for current architecture."""
-    arch = platform.machine().lower()
-    if arch in ("x86_64", "amd64"):
-        return SYS_REBOOT_X86_64
-    if arch in ("aarch64", "arm64"):
-        return SYS_REBOOT_ARM64
-    if arch.startswith("arm"):
-        return SYS_REBOOT_ARM
-    if arch in ("i386", "i686", "x86"):
-        return SYS_REBOOT_X86
-    click.echo(
-        f"Warning: Unknown architecture '{arch}', assuming x86_64 syscall number", err=True
-    )
-    return SYS_REBOOT_X86_64
+class ExecError(Exception):
+    """kerf-side failure before the command runs."""
 
 
-class MultikernelBootArgs(ctypes.Structure):
-    """Structure for multikernel boot arguments."""
-
-    _fields_ = [
-        ("mk_id", ctypes.c_int),
-    ]
+class _Terminated(Exception):
+    def __init__(self, signo: int):
+        super().__init__(signo)
+        self.signo = signo
 
 
-def boot_multikernel(mk_id: int) -> int:
-    libc = ctypes.CDLL(None, use_errno=True)
-    syscall_fn = libc.syscall
-
-    syscall_num = get_reboot_syscall()
-
-    args = MultikernelBootArgs()
-    args.mk_id = mk_id  # pylint: disable=attribute-defined-outside-init
-
-    # syscall signature: long syscall(long number, ...)
-    # reboot: long syscall(SYS_reboot, LINUX_REBOOT_MAGIC1, LINUX_REBOOT_MAGIC2,
-    #                      LINUX_REBOOT_CMD_MULTIKERNEL, &args)
-    syscall_fn.argtypes = [
-        ctypes.c_long,  # syscall number
-        ctypes.c_ulong,  # LINUX_REBOOT_MAGIC1
-        ctypes.c_ulong,  # LINUX_REBOOT_MAGIC2
-        ctypes.c_ulong,  # LINUX_REBOOT_CMD_MULTIKERNEL
-        ctypes.POINTER(MultikernelBootArgs),  # &args
-    ]
-    syscall_fn.restype = ctypes.c_long
-
-    result = syscall_fn(
-        syscall_num,
-        LINUX_REBOOT_MAGIC1,
-        LINUX_REBOOT_MAGIC2,
-        LINUX_REBOOT_CMD_MULTIKERNEL,
-        ctypes.byref(args),
-    )
-
-    if result < 0:
-        errno_value = ctypes.get_errno()
-        raise OSError(errno_value, os.strerror(errno_value))
-
-    return result
+def _terminate(signo, _frame):
+    raise _Terminated(signo)
 
 
-@click.command(name="exec")
-@click.argument("name", required=False)
-@click.option("--id", type=int, help="Multikernel instance ID to boot (alternative to name)")
-@click.option("--console", "attach_console", is_flag=True, help="Attach to console after boot")
-@click.option("--verbose", "-v", is_flag=True, help="Verbose output")
-def exec_cmd(name: Optional[str], id: Optional[int], attach_console: bool, verbose: bool):
+def _resolve_instance(name: Optional[str], instance_id: Optional[int]) -> Tuple[str, int]:
+    if instance_id is None:
+        instance_id = get_instance_id_from_name(name)
+        if instance_id is None:
+            raise ExecError(f"Instance '{name}' not found")
+    else:
+        name = get_instance_name_from_id(instance_id)
+        if name is None:
+            raise ExecError(f"Instance with ID {instance_id} not found")
+    status = get_instance_status(name)
+    if status is None or status.lower() != InstanceState.ACTIVE.value:
+        raise ExecError(
+            f"Instance '{name}' is not active (status: '{status}'). "
+            f"Start it with: kerf start {name}"
+        )
+    return name, instance_id
+
+
+def connect_agent(instance_id: int, name: str) -> socket.socket:
+    sock = socket.socket(socket.AF_VSOCK, socket.SOCK_STREAM)
+    try:
+        sock.setsockopt(socket.AF_VSOCK, SO_VM_SOCKETS_TRANSPORT, VSOCK_TRANSPORT_MULTIKERNEL)
+        # kerf-init only trusts reserved ports, which only root can bind.
+        for port in range(protocol.AGENT_PORT, 511, -1):
+            try:
+                sock.bind((socket.VMADDR_CID_ANY, port))
+                break
+            except OSError as e:
+                if e.errno == errno.EACCES:
+                    raise ExecError("kerf exec requires root") from e
+                if e.errno != errno.EADDRINUSE:
+                    raise
+        else:
+            raise ExecError("no free reserved vsock port")
+        try:
+            sock.connect((instance_id, protocol.AGENT_PORT))
+        except (ConnectionResetError, ConnectionRefusedError) as e:
+            raise ExecError(
+                f"instance '{name}' is not running kerf-init, or it has not finished booting"
+            ) from e
+        except OSError as e:
+            raise ExecError(f"cannot connect to instance '{name}': {e.strerror}") from e
+        return sock
+    except BaseException:
+        sock.close()
+        raise
+
+
+def _winsize(fd: int) -> Tuple[int, int]:
+    try:
+        size = os.get_terminal_size(fd)
+        return size.lines, size.columns
+    except OSError:
+        return 24, 80
+
+
+def _install_handlers(session: Session, use_tty: bool) -> None:
+    if use_tty:
+        signal.signal(
+            signal.SIGWINCH,
+            lambda *_: session.send(protocol.pack_resize(*_winsize(0))),
+        )
+        return
+    for signo in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
+        signal.signal(signo, lambda num, _frame: session.send(protocol.pack_signal(num)))
+
+
+@click.command(name="exec", context_settings={"allow_interspersed_args": False})
+@click.option("-i", "--interactive", is_flag=True, help="Forward stdin to the command")
+@click.option("-t", "--tty", "use_tty", is_flag=True, help="Allocate a pseudo-terminal")
+@click.option("-e", "--env", "env_vars", multiple=True, help="Set an environment variable KEY=VALUE")
+@click.option("-w", "--workdir", default="/", help="Working directory inside the instance")
+@click.option("-u", "--user", default=None, help="USER[:GROUP], by name or number")
+@click.option("--id", "instance_id", type=int, help="Instance ID (instead of a name)")
+@click.argument("args", nargs=-1, type=click.UNPROCESSED)
+def exec_cmd(interactive, use_tty, env_vars, workdir, user, instance_id, args):
     """
-    Boot a multikernel instance using the reboot syscall.
-
-    This command boots a previously loaded multikernel instance by name or ID using
-    the reboot syscall with the MULTIKERNEL command.
-
-    Use --console to immediately attach to the instance's console after boot.
-    Press Ctrl+] followed by . to detach from the console.
+    Run a command inside a running instance.
 
     Examples:
 
-        kerf exec web-server
-        kerf exec --id=1
-        kerf exec web-server --console
+        kerf exec web-server ls /
+        kerf exec -it web-server sh
+        kerf exec -u nobody --id=1 -- id
     """
+    args = list(args)
+    name = None if instance_id is not None else (args.pop(0) if args else None)
+    # Option parsing stops at NAME, so a separating "--" after it arrives here.
+    if args and args[0] == "--":
+        args.pop(0)
+    if (instance_id is None and name is None) or not args:
+        raise click.UsageError("usage: kerf exec [OPTIONS] NAME|--id N [--] COMMAND [ARG]...")
+
     try:
-        if not name and id is None:
-            click.echo("Error: Either instance name or --id must be provided", err=True)
-            click.echo("Usage: kerf exec <name>  or  kerf exec --id=<id>", err=True)
-            sys.exit(2)
+        name, instance_id = _resolve_instance(name, instance_id)
+        creds, home = None, "/root"
+        if user is not None:
+            resolved = resolve_user(Path(KERF_DAXFS_MNT_DIR) / name, user)
+            creds, home = (resolved.uid, resolved.gid, resolved.groups), resolved.home
+        env = build_env(env_vars, home, os.environ.get("TERM") if use_tty else None)
+        if use_tty and interactive and not os.isatty(0):
+            raise ExecError("the input device is not a TTY")
+        rows, cols = _winsize(0) if use_tty else (0, 0)
+        open_frame = protocol.pack_open(
+            args, env, cwd=workdir, tty=use_tty, stdin=interactive,
+            rows=rows, cols=cols, user=creds,
+        )
+        sock = connect_agent(instance_id, name)
+    except (ExecError, UserError, ValueError) as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
 
-        instance_name = None
-        instance_id = None
-
-        if name:
-            # Use name, convert to ID
-            instance_name = name
-            instance_id = get_instance_id_from_name(name)
-
-            if instance_id is None:
-                click.echo(f"Error: Instance '{name}' not found", err=True)
-                click.echo("Check available instances in /sys/fs/multikernel/instances/", err=True)
-                sys.exit(1)
-
-            if verbose:
-                click.echo(f"Instance name: {name} (ID: {instance_id})")
+    saved = termios.tcgetattr(0) if use_tty and interactive else None
+    session = Session(sock)
+    handlers = {signo: signal.getsignal(signo) for signo in (
+        signal.SIGINT, signal.SIGTERM, signal.SIGHUP, signal.SIGWINCH)}
+    try:
+        if saved is not None:
+            # A raw terminal must be restored however kerf exec is stopped.
+            signal.signal(signal.SIGTERM, _terminate)
+            signal.signal(signal.SIGHUP, _terminate)
+            ttymod.setraw(0)
+        code = session.run(
+            open_frame,
+            sys.stdout.buffer,
+            sys.stderr.buffer,
+            stdin_fd=0 if interactive else None,
+            on_started=lambda: _install_handlers(session, use_tty),
+        )
+    except RemoteError as e:
+        if e.err == errno.ENOSYS and creds is not None:
+            click.echo("Error: spawn kernel has no multiuser support (CONFIG_MULTIUSER=n)", err=True)
         else:
-            # Use ID directly, need to find name for status check
-            instance_id = id
-
-            if instance_id < 1 or instance_id > 511:
-                click.echo(f"Error: --id must be between 1 and 511 (got {instance_id})", err=True)
-                sys.exit(2)
-
-            instances_dir = Path("/sys/fs/multikernel/instances")
-            if instances_dir.exists():
-                for inst_dir in instances_dir.iterdir():
-                    if inst_dir.is_dir():
-                        found_id = get_instance_id_from_name(inst_dir.name)
-                        if found_id == instance_id:
-                            instance_name = inst_dir.name
-                            break
-
-            if not instance_name:
-                click.echo(f"Error: Instance with ID {instance_id} not found", err=True)
-                click.echo("Check available instances in /sys/fs/multikernel/instances/", err=True)
-                sys.exit(1)
-
-        status_path = Path(f"/sys/fs/multikernel/instances/{instance_name}/status")
-        if verbose:
-            click.echo(f"Checking if kernel image is loaded for instance '{instance_name}'...")
-            click.echo(f"Status file: {status_path}")
-
-        if not status_path.exists():
-            click.echo(f"Error: Instance '{instance_name}' status file not found", err=True)
-            click.echo(
-                f"Please ensure the instance exists and load a kernel image using: kerf load --id={instance_id} --kernel=<path>",
-                err=True,
-            )
-            sys.exit(1)
-
+            click.echo(f"Error: {e.message}", err=True)
+        code = protocol.error_exit_code(e.err)
+    except LostConnection:
+        click.echo("Error: connection to instance lost", err=True)
+        code = 1
+    except _Terminated as e:
+        code = 128 + e.signo
+    except BrokenPipeError:
+        # Behave like a command killed by SIGPIPE; stdout is gone, so point it
+        # at /dev/null to keep the interpreter's final flush quiet.
         try:
-            with open(status_path, "r", encoding="utf-8") as f:
-                status = f.read().strip()
-
-            status_lower = status.lower()
-            if status_lower != InstanceState.LOADED.value:
-                click.echo(
-                    f"Error: Kernel image not loaded for instance '{instance_name}' (ID: {instance_id})",
-                    err=True,
-                )
-                click.echo(
-                    f"Current status: '{status}' (expected: '{InstanceState.LOADED.value}')",
-                    err=True,
-                )
-                click.echo(
-                    f"Please load a kernel image first using: kerf load --id={instance_id} --kernel=<path>",
-                    err=True,
-                )
-                sys.exit(1)
-
-            if verbose:
-                click.echo(f"Instance status: '{status}'")
-        except (OSError, IOError) as e:
-            click.echo(f"Error: Failed to read status file: {e}", err=True)
-            click.echo(
-                f"Please ensure the instance exists and load a kernel image using: kerf load --id={instance_id} --kernel=<path>",
-                err=True,
-            )
-            sys.exit(1)
-
-        if verbose:
-            click.echo(f"✓ Kernel image found for instance '{instance_name}'")
-            click.echo(f"Instance ID to boot: {instance_id}")
-            click.echo(f"Using reboot syscall with command: 0x{LINUX_REBOOT_CMD_MULTIKERNEL:x}")
-        else:
-            click.echo(f"Booting instance '{instance_name}' (ID: {instance_id})...")
-
-        result = boot_multikernel(instance_id)
-
-        if verbose:
-            click.echo(f"✓ Boot command executed successfully (result: {result})")
-        else:
-            click.echo("✓ Boot command executed successfully")
-
-        # Attach to console if requested
-        if attach_console:
-            from ..console import run_console
-
-            console_result = run_console(instance_id, instance_name, verbose)
-            if console_result != 0:
-                sys.exit(console_result)
-
-        # Note: If successful, this syscall will reboot the system and boot the
-        # specified multikernel instance, so we may not reach this point.
-
-    except OSError as e:
-        click.echo(f"Error: reboot syscall failed: {e}", err=True)
-        if e.errno == 1:  # EPERM
-            click.echo("Note: This operation requires root privileges", err=True)
-        elif e.errno == 22:  # EINVAL
-            click.echo(
-                f"Error: Invalid arguments for instance '{instance_name}' (ID: {instance_id})",
-                err=True,
-            )
-            click.echo(
-                "The kernel may not support the MULTIKERNEL reboot command, or the instance ID is invalid.",
-                err=True,
-            )
-        elif e.errno == 3:  # ESRCH
-            click.echo("Note: Multikernel instance not found or not loaded.", err=True)
-        sys.exit(1)
-
-    except Exception as e:
-        click.echo(f"Unexpected error: {e}", err=True)
-        if verbose:
-            import traceback
-
-            traceback.print_exc()
-        sys.exit(1)
+            os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
+        except (OSError, ValueError):
+            pass
+        code = 128 + signal.SIGPIPE
+    finally:
+        if saved is not None:
+            termios.tcsetattr(0, termios.TCSADRAIN, saved)
+        for signo, handler in handlers.items():
+            signal.signal(signo, handler)
+        sock.close()
+    sys.exit(code)

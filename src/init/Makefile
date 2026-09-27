@@ -1,16 +1,19 @@
 # Makefile for kerf-init
-# Builds a statically-linked init binary using musl-gcc
+# Builds statically-linked binaries using musl-gcc
 
 CC = musl-gcc
 CFLAGS = -Wall -Wextra -Werror -O2 -static
-TARGET = kerf-init
 
-all: $(TARGET)
+all: kerf-init session-test
 
-$(TARGET): init.c
-	$(CC) $(CFLAGS) -o $@ $<
+kerf-init: init.c session.c session.h proto.h
+	$(CC) $(CFLAGS) -o $@ init.c session.c
+
+# Runs one exec session on fd 0 for tests/test_exec_session.py; not shipped.
+session-test: session_test.c session.c session.h proto.h
+	$(CC) $(CFLAGS) -o $@ session_test.c session.c
 
 clean:
-	rm -f $(TARGET)
+	rm -f kerf-init session-test
 
 .PHONY: all clean

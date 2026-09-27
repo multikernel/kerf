@@ -21,6 +21,7 @@ from .load.main import load
 from .init.main import init
 from .create.main import create
 from .update.main import update
+from .start.main import start_cmd
 from .exec.main import exec_cmd
 from .kill.main import kill_cmd
 from .unload.main import unload
@@ -45,6 +46,7 @@ main.add_command(init)
 main.add_command(load)
 main.add_command(create)
 main.add_command(update)
+main.add_command(start_cmd)
 main.add_command(exec_cmd)
 main.add_command(kill_cmd)
 main.add_command(unload)
