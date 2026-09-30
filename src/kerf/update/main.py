@@ -35,8 +35,8 @@ from ..exceptions import KernelInterfaceError, ParseError, ResourceError, Valida
 from ..init.main import spec_is_empty
 from ..models import HardwareInventory
 from ..resources import (
-    chunk_containing,
     get_instance_regions_from_iomem,
+    get_largest_free_range_from_iomem,
     validate_cpu_allocation,
     validate_memory_allocation,
 )
@@ -239,18 +239,13 @@ def update(
                     old_base = existing_instance.resources.memory_base
                     old_size = existing_instance.resources.memory_bytes
 
-                    # The overlay names an existing range, so an instance can
-                    # only grow into the chunk it already sits in.
-                    if memory_bytes > old_size:
-                        if chunk_containing(modified, old_base, memory_bytes) is None:
-                            raise ResourceError(
-                                f"Cannot grow instance '{name}' to {memory_bytes} bytes: "
-                                f"the extension leaves the pool chunk holding "
-                                f"{hex(old_base)}-{hex(old_base + old_size - 1)}"
-                            )
-                        validate_memory_allocation(
-                            modified, old_base + old_size, memory_bytes - old_size,
-                            exclude_instance=instance_node_name
+                    # The kernel adds the memory as one new region, placed
+                    # wherever a pool chunk has room for it.
+                    grow_bytes = memory_bytes - old_size
+                    if memory_bytes > old_size and grow_bytes > get_largest_free_range_from_iomem():
+                        raise ResourceError(
+                            f"Cannot grow instance '{name}' by {grow_bytes >> 20} MB: "
+                            f"no pool chunk has a free range that large"
                         )
                     memory_base_addr = old_base
                 else:

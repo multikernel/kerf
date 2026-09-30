@@ -27,6 +27,7 @@ from kerf.resources import (
     get_pool_chunks_from_iomem,
     get_busy_chunks_from_iomem,
     get_instance_regions_from_iomem,
+    get_largest_free_range_from_iomem,
     chunk_containing,
     validate_cpu_allocation,
     validate_memory_allocation,
@@ -270,6 +271,20 @@ class TestIomemPoolAccounting:
             (0x50000000, 0x4000000),
         ]
         assert get_instance_regions_from_iomem(3, "database", iomem_file) == []
+
+    def test_get_largest_free_range_from_iomem(self, iomem_file, tmp_path):
+        # Pool 0x40000000-0x7fffffff holds regions up to 0x4fffffff
+        assert get_largest_free_range_from_iomem(iomem_file) == 0x30000000
+
+        path = tmp_path / "iomem2"
+        path.write_text("\n".join([
+            "40000000-4fffffff : Multikernel Memory Pool",
+            "  41000000-41ffffff : mk-instance-1-a-region-0",
+            "  46000000-4bffffff : mk-instance-2-b-region-0",
+            "  46000000-46ffffff : daxfs",
+            "60000000-61ffffff : Multikernel Memory Pool",
+        ]) + "\n", encoding="utf-8")
+        assert get_largest_free_range_from_iomem(str(path)) == 0x4000000
 
     def test_get_memory_pool_from_iomem(self, iomem_file):
         pool = get_memory_pool_from_iomem(iomem_file)

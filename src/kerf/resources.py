@@ -107,6 +107,27 @@ def get_pool_chunks_from_iomem(iomem_path: str = IOMEM_PATH) -> List[Tuple[int, 
     return _pool_chunks(_parse_iomem_regions(iomem_path))
 
 
+def get_largest_free_range_from_iomem(iomem_path: str = IOMEM_PATH) -> int:
+    """
+    Size of the largest free range in any pool chunk.
+
+    Every region nested in a chunk counts as used. Memory added to an
+    instance is one allocation from one chunk, so this bounds how much a
+    single addition can take.
+    """
+    regions = _parse_iomem_regions(iomem_path)
+    chunks = _pool_chunks(regions)
+    children = _chunk_children(regions, chunks)
+    largest = 0
+    for chunk_base, chunk_size in chunks:
+        cursor = chunk_base
+        for _, base, end in sorted(c for c in children if c[0] == chunk_base):
+            largest = max(largest, base - cursor)
+            cursor = max(cursor, end + 1)
+        largest = max(largest, chunk_base + chunk_size - cursor)
+    return largest
+
+
 def get_busy_chunks_from_iomem(iomem_path: str = IOMEM_PATH) -> Set[int]:
     """
     Find the pool chunks that still hold an allocation.
