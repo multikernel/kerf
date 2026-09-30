@@ -45,8 +45,9 @@ def _shrink_regions(regions: List[Tuple[int, int]], remove_bytes: int) -> List[T
     """
     Whole regions to take back from an instance, newest first.
 
-    The kernel removes only whole regions, and only those added after the
-    instance was created, so the newest ones must add up to remove_bytes.
+    The kernel removes only whole regions, and refuses one holding the
+    instance's kernel image or control block, so the newest ones must add up
+    to remove_bytes.
     """
     taken, total = [], 0
     for base, size in reversed(regions):
