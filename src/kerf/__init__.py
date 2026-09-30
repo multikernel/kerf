@@ -43,7 +43,6 @@ from .resources import (
     get_allocated_memory_regions,
     chunk_containing,
     validate_cpu_allocation,
-    validate_memory_allocation,
     find_next_instance_id,
 )
 
@@ -69,6 +68,5 @@ __all__ = [
     "get_allocated_memory_regions",
     "chunk_containing",
     "validate_cpu_allocation",
-    "validate_memory_allocation",
     "find_next_instance_id",
 ]

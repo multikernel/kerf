@@ -29,7 +29,7 @@ import copy
 from typing import Optional, List, Tuple
 import click
 
-from ..create.main import parse_cpu_spec, parse_memory_base, parse_memory_spec
+from ..create.main import parse_cpu_spec, parse_memory_spec
 from ..dtc.parser import DeviceTreeParser
 from ..exceptions import KernelInterfaceError, ParseError, ResourceError, ValidationError
 from ..init.main import spec_is_empty
@@ -38,7 +38,6 @@ from ..resources import (
     get_instance_regions_from_iomem,
     get_largest_free_range_from_iomem,
     validate_cpu_allocation,
-    validate_memory_allocation,
 )
 from ..runtime import DeviceTreeManager
 from ..utils import get_instance_id_from_name
@@ -99,8 +98,6 @@ def dump_overlay_for_debug(
               help='Update CPU allocation: CPU IDs (e.g., "4-7" for range, "4,5,6,7" for list)')
 @click.option('--memory', '-m',
               help='Update memory allocation (e.g., "2GB", "2048MB")')
-@click.option('--memory-base',
-              help='Update memory base address (hex: 0x80000000 or decimal, auto-assigned if not specified with --memory)')
 @click.option('--devices', '-d',
               help='The devices the instance should hold, by alias, PCI address or node name '
                    '(comma-separated, e.g. "enp9s0,0000:0a:00.0"), or "none" for no devices')
@@ -112,7 +109,6 @@ def update(
     name: str,
     cpus: Optional[str],
     memory: Optional[str],
-    memory_base: Optional[str],
     devices: Optional[str],
     dry_run: bool,
     verbose: bool
@@ -131,11 +127,8 @@ def update(
         # Update CPUs only
         kerf update web-server --cpus=8-15
 
-        # Update memory only (auto-assign base address)
+        # Update memory only
         kerf update web-server --memory=4GB
-
-        # Update memory with specific base address
-        kerf update web-server --memory=4GB --memory-base=0x200000000
 
         # Update devices
         kerf update web-server --devices=0000:09:00.0,0000:0a:00.0
@@ -149,10 +142,6 @@ def update(
     try:
         if not cpus and not memory and devices is None:
             click.echo("Error: At least one of --cpus, --memory, or --devices must be specified", err=True)
-            sys.exit(2)
-
-        if memory_base and not memory:
-            click.echo("Error: --memory-base requires --memory", err=True)
             sys.exit(2)
 
         debug = ctx.obj.get('debug', False) if ctx and ctx.obj else False
@@ -179,14 +168,6 @@ def update(
                 click.echo(f"Error: Invalid memory specification '{memory}': {e}", err=True)
                 sys.exit(2)
 
-        memory_base_addr = None
-        if memory_base:
-            try:
-                memory_base_addr = parse_memory_base(memory_base)
-            except ValueError as e:
-                click.echo(f"Error: Invalid memory base '{memory_base}': {e}", err=True)
-                sys.exit(2)
-
         device_list = None
         if devices is not None:
             try:
@@ -199,8 +180,6 @@ def update(
 
         def update_instance_operation(current):
             """Operation function to update instance resources. Returns (old_instance, new_instance)."""
-            nonlocal memory_base_addr
-
             parser = DeviceTreeParser()
             try:
                 dtb = manager.read_instance_dtb(name)
@@ -235,29 +214,21 @@ def update(
                     validate_cpu_allocation(modified, sorted(new_cpus), exclude_instance=instance_node_name)
 
             if memory_bytes is not None:
-                if memory_base_addr is None:
-                    old_base = existing_instance.resources.memory_base
-                    old_size = existing_instance.resources.memory_bytes
+                old_size = existing_instance.resources.memory_bytes
 
-                    # The kernel adds the memory as one new region, placed
-                    # wherever a pool chunk has room for it.
-                    grow_bytes = memory_bytes - old_size
-                    if memory_bytes > old_size and grow_bytes > get_largest_free_range_from_iomem():
-                        raise ResourceError(
-                            f"Cannot grow instance '{name}' by {grow_bytes >> 20} MB: "
-                            f"no pool chunk has a free range that large"
-                        )
-                    memory_base_addr = old_base
-                else:
-                    validate_memory_allocation(
-                        modified, memory_base_addr, memory_bytes, exclude_instance=instance_node_name
+                # The kernel adds the memory as one new region, placed
+                # wherever a pool chunk has room for it.
+                grow_bytes = memory_bytes - old_size
+                if memory_bytes > old_size and grow_bytes > get_largest_free_range_from_iomem():
+                    raise ResourceError(
+                        f"Cannot grow instance '{name}' by {grow_bytes >> 20} MB: "
+                        f"no pool chunk has a free range that large"
                     )
 
             updated_instance = copy.deepcopy(existing_instance)
             if cpu_list is not None:
                 updated_instance.resources.cpus = cpu_list
             if memory_bytes is not None:
-                updated_instance.resources.memory_base = memory_base_addr
                 updated_instance.resources.memory_bytes = memory_bytes
             if device_nodes is not None:
                 updated_instance.resources.devices = device_nodes
@@ -273,7 +244,7 @@ def update(
                 if cpu_list is not None:
                     click.echo(f"  CPUs: {', '.join(map(str, new_instance.resources.cpus))}")
                 if memory_bytes is not None:
-                    click.echo(f"  Memory: {memory} at {hex(new_instance.resources.memory_base)}")
+                    click.echo(f"  Memory: {memory}")
 
                 if debug:
                     dump_overlay_for_debug(manager, name, old_instance, new_instance, suffix="_dryrun",
@@ -316,7 +287,7 @@ def update(
                 _, new_instance = update_instance_operation(current)
                 click.echo(f"  Instance ID: {new_instance.id}")
                 click.echo(f"  CPUs: {', '.join(map(str, new_instance.resources.cpus))}")
-                click.echo(f"  Memory: {new_instance.resources.memory_bytes} bytes at {hex(new_instance.resources.memory_base)}")
+                click.echo(f"  Memory: {new_instance.resources.memory_bytes} bytes")
         except ResourceError as e:
             click.echo(f"Error: Resource allocation failed: {e}", err=True)
             if verbose:

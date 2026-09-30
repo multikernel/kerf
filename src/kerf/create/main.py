@@ -32,7 +32,6 @@ from ..dtc.parser import DeviceTreeParser, is_dts_text
 from ..models import Instance, InstanceResources
 from ..resources import (
     validate_cpu_allocation,
-    validate_memory_allocation,
     get_available_cpus,
 )
 from ..exceptions import ValidationError, KernelInterfaceError, ResourceError, ParseError
@@ -303,42 +302,6 @@ def parse_memory_spec(memory_spec: str) -> int:
         ) from exc
 
 
-def _placement(instance) -> str:
-    """Name the base only when one was asked for; the kernel picks otherwise."""
-    base = instance.resources.memory_base
-    return f" at {hex(base)}" if base else ""
-
-
-def parse_memory_base(base_spec: str) -> int:
-    """
-    Parse memory base address specification.
-
-    Supports formats:
-    - "0x80000000" (hexadecimal)
-    - "2147483648" (decimal)
-
-    Args:
-        base_spec: Base address specification
-
-    Returns:
-        Base address as integer
-
-    Raises:
-        ValueError: If specification is invalid
-    """
-    base_spec = base_spec.strip()
-
-    if base_spec.startswith("0x") or base_spec.startswith("0X"):
-        try:
-            return int(base_spec, 16)
-        except ValueError as exc:
-            raise ValueError(f"Invalid hexadecimal base address '{base_spec}'") from exc
-    try:
-        return int(base_spec)
-    except ValueError as exc:
-        raise ValueError(f"Invalid base address '{base_spec}'") from exc
-
-
 def parse_device_list(device_spec: Optional[str]) -> List[str]:
     """
     Parse device specification string into list of device references.
@@ -433,11 +396,6 @@ def dump_overlay_for_debug(
     "--memory", "-m", help='Memory allocation (e.g., "2GB", "2048MB", or bytes)'
 )
 @click.option(
-    "--memory-base",
-    help="Memory base address to request (hex: 0x80000000 or decimal). "
-    "Only checked against the pool; the kernel places instance memory itself.",
-)
-@click.option(
     "--devices",
     "-d",
     help='Pool devices to assign, by alias, PCI address or node name '
@@ -449,8 +407,8 @@ def dump_overlay_for_debug(
     "input_path",
     type=click.Path(exists=True, dir_okay=False),
     help="Replay an instance dumped with 'kerf dump NAME -o FILE': its CPUs, memory "
-    "size, devices and id, unless overridden by NAME or --id. The memory base is "
-    "left to the kernel. Mutually exclusive with the resource options above.",
+    "size, devices and id, unless overridden by NAME or --id. Mutually exclusive "
+    "with the resource options above.",
 )
 @click.option(
     "--enable-host-kcore", is_flag=True, help="Enable host kcore access for this instance"
@@ -471,7 +429,6 @@ def create(  # pylint: disable=too-many-arguments,too-many-positional-arguments
     numa_nodes: Optional[str],
     memory_policy: Optional[str],
     memory: str,
-    memory_base: Optional[str],
     devices: Optional[str],
     input_path: Optional[str],
     enable_host_kcore: bool,
@@ -499,9 +456,6 @@ def create(  # pylint: disable=too-many-arguments,too-many-positional-arguments
 
         # Create instance with name after options
         kerf create --cpus=128,130,132 --memory=8GB web-server
-
-        # Create instance with specific memory base address
-        kerf create database --cpus=128-142 --memory=8GB --memory-base=0x100000000
 
         # Create instance with devices
         kerf create compute --cpus=128-142 --memory=4GB --devices=enp9s0
@@ -542,7 +496,6 @@ def create(  # pylint: disable=too-many-arguments,too-many-positional-arguments
                     ("--cpus", cpus),
                     ("--cpu-count", cpu_count),
                     ("--memory", memory),
-                    ("--memory-base", memory_base),
                     ("--devices", devices),
                     ("--numa-nodes", numa_nodes),
                     ("--memory-policy", memory_policy),
@@ -618,15 +571,6 @@ def create(  # pylint: disable=too-many-arguments,too-many-positional-arguments
             click.echo(f"Error: Invalid memory specification '{memory}': {e}", err=True)
             sys.exit(2)
 
-        # Parse memory base (if specified)
-        memory_base_addr = None
-        if memory_base:
-            try:
-                memory_base_addr = parse_memory_base(memory_base)
-            except ValueError as e:
-                click.echo(f"Error: Invalid memory base '{memory_base}': {e}", err=True)
-                sys.exit(2)
-
         # Parse device list
         device_list = parse_device_list(devices)
 
@@ -658,8 +602,6 @@ def create(  # pylint: disable=too-many-arguments,too-many-positional-arguments
         # Define operation to create instance
         def create_instance_operation(current):
             """Operation function to create instance in device tree."""
-            nonlocal memory_base_addr  # Allow modification of outer scope variable
-
             if manager.has_instance(name):
                 raise ResourceError(f"Instance '{name}' already exists")
             if name in current.instances:
@@ -701,13 +643,6 @@ def create(  # pylint: disable=too-many-arguments,too-many-positional-arguments
             # Validate CPU allocation (against baseline and existing instances)
             validate_cpu_allocation(modified, cpu_list)
 
-            # The kernel places instance memory itself; a base is only ever
-            # a caller's request, so it is all there is to validate.
-            if memory_base_addr is None:
-                memory_base_addr = 0
-            else:
-                validate_memory_allocation(modified, memory_base_addr, memory_bytes)
-
             device_nodes = []
             for ref in device_list:
                 node = modified.hardware.find_device(ref)
@@ -719,7 +654,7 @@ def create(  # pylint: disable=too-many-arguments,too-many-positional-arguments
             uring_enabled = uring or uring_sq_entries is not None or uring_cq_entries is not None or uring_shim_pages is not None
             resources = InstanceResources(
                 cpus=cpu_list,
-                memory_base=memory_base_addr,
+                memory_base=0,
                 memory_bytes=memory_bytes,
                 devices=device_nodes,
                 numa_nodes=numa_node_list,
@@ -766,7 +701,7 @@ def create(  # pylint: disable=too-many-arguments,too-many-positional-arguments
                     click.echo(
                         f"  NUMA Nodes: {', '.join(map(str, instance.resources.numa_nodes))}"
                     )
-                click.echo(f"  Memory: {memory}{_placement(instance)}")
+                click.echo(f"  Memory: {memory}")
                 if instance.resources.memory_policy:
                     click.echo(f"  Memory Policy: {instance.resources.memory_policy}")
                 if instance.resources.devices:
@@ -805,7 +740,7 @@ def create(  # pylint: disable=too-many-arguments,too-many-positional-arguments
                 if instance.resources.numa_nodes:
                     numa_str = ", ".join(map(str, instance.resources.numa_nodes))
                     click.echo(f"  NUMA Nodes: {numa_str}")
-                click.echo(f"  Memory: {memory}{_placement(instance)}")
+                click.echo(f"  Memory: {memory}")
                 if instance.resources.memory_policy:
                     click.echo(f"  Memory Policy: {instance.resources.memory_policy}")
                 if instance.resources.devices:

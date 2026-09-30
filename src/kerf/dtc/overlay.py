@@ -29,17 +29,6 @@ from ..models import GlobalDeviceTree
 from ..pool_diff import ANY_NODE, PoolDiff
 from .cells import pack_cpu_id, pack_cpu_ids
 
-Range = Optional[Tuple[int, int]]
-
-
-def _memory_ranges(old_base: int, old_size: int, new_base: int, new_size: int) -> Tuple[Range, Range]:
-    """Ranges to take back from and to hand to an instance whose memory changed."""
-    if old_base != new_base:
-        return (old_base, old_size), (new_base, new_size)
-    if new_size > old_size:
-        return None, (old_base + old_size, new_size - old_size)
-    return None, None
-
 
 def _shrink_regions(regions: List[Tuple[int, int]], remove_bytes: int) -> List[Tuple[int, int]]:
     """
@@ -150,16 +139,13 @@ class OverlayGenerator:
         cpus_to_remove = sorted(old_cpus - new_cpus)
         cpus_to_add = sorted(new_cpus - old_cpus)
 
-        old_base = old_instance.resources.memory_base
         old_size = old_instance.resources.memory_bytes
-        new_base = new_instance.resources.memory_base
         new_size = new_instance.resources.memory_bytes
-        if new_base == old_base and new_size < old_size:
+        memory_to_remove, memory_to_add = [], None
+        if new_size < old_size:
             memory_to_remove = _shrink_regions(memory_regions or [], old_size - new_size)
-            memory_to_add = None
-        else:
-            removed, memory_to_add = _memory_ranges(old_base, old_size, new_base, new_size)
-            memory_to_remove = [removed] if removed else []
+        elif new_size > old_size:
+            memory_to_add = (old_instance.resources.memory_base + old_size, new_size - old_size)
 
         numa_node = None
         if new_instance.resources.numa_nodes:

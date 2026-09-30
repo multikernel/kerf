@@ -334,58 +334,6 @@ def validate_cpu_allocation(
         raise ResourceError(f"APIC IDs {sorted(unavailable)} are not available ({conflict_msg})")
 
 
-def validate_memory_allocation(
-    tree: GlobalDeviceTree,
-    memory_base: int,
-    memory_bytes: int,
-    exclude_instance: Optional[str] = None,
-) -> None:
-    """
-    Validate that memory region is available for allocation.
-
-    Args:
-        tree: GlobalDeviceTree to analyze
-        memory_base: Base address of memory region
-        memory_bytes: Size of memory region
-        exclude_instance: Instance name to exclude from conflict check
-                         (for update operations)
-
-    Raises:
-        ResourceError: If the region is misaligned, leaves the pool chunk that
-                       holds it, or conflicts with another instance
-    """
-    if memory_base % 0x1000 != 0:
-        raise ResourceError(f"Memory base {hex(memory_base)} is not 4KB-aligned")
-
-    memory_end = memory_base + memory_bytes
-
-    # The pool is a list of chunks, so a region has to sit inside one of them;
-    # spanning two chunks means spanning the host memory between them.
-    chunks = tree.hardware.memory.regions
-    if chunks and chunk_containing(tree, memory_base, memory_bytes) is None:
-        listed = ", ".join(f"{hex(c.base)}-{hex(c.base + c.size - 1)}" for c in chunks)
-        raise ResourceError(
-            f"Memory region {hex(memory_base)}-{hex(memory_end)} does not fit in "
-            f"any pool chunk ({listed})"
-        )
-
-    for instance in tree.instances.values():
-        if instance.name == exclude_instance:
-            continue
-
-        inst_base = instance.resources.memory_base
-        if not inst_base:
-            continue
-        inst_end = inst_base + instance.resources.memory_bytes
-
-        if not (memory_end <= inst_base or memory_base >= inst_end):
-            raise ResourceError(
-                f"Memory region {hex(memory_base)}-{hex(memory_end)} "
-                f"overlaps with instance '{instance.name}' "
-                f"({hex(inst_base)}-{hex(inst_end)})"
-            )
-
-
 def find_next_instance_id(tree: GlobalDeviceTree) -> int:
     """
     Find next available instance ID.

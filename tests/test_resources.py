@@ -30,7 +30,6 @@ from kerf.resources import (
     get_largest_free_range_from_iomem,
     chunk_containing,
     validate_cpu_allocation,
-    validate_memory_allocation,
     find_next_instance_id,
 )
 from kerf.exceptions import ResourceError
@@ -136,55 +135,6 @@ class TestMemoryAllocation:
         assert chunk_containing(tree, 0x100000000, 1024**3) is not None
         assert chunk_containing(tree, 0x200000000, 1024**3) is not None
         assert chunk_containing(tree, 0x1C0000000, 1024**3) is None
-
-    def test_validate_memory_allocation_success(self, sample_tree):
-        """Test successful memory allocation validation."""
-        # Use a region that's not allocated (after database region)
-        # database uses 0x100000000 + 8GB = 0x300000000
-        memory_base = 0x300000000
-        memory_bytes = 1024**3  # 1GB
-
-        # Should not raise
-        validate_memory_allocation(sample_tree, memory_base, memory_bytes)
-
-    def test_validate_memory_allocation_overlap(self, sample_tree):
-        """Test memory allocation overlap detection."""
-        # Use same base as web-server
-        memory_base = 0x80000000
-        memory_bytes = 1024**3
-
-        with pytest.raises(ResourceError, match="overlaps with instance"):
-            validate_memory_allocation(sample_tree, memory_base, memory_bytes)
-
-    def test_validate_memory_allocation_out_of_pool(self, sample_tree):
-        """Test memory allocation outside every pool chunk."""
-        # Use base before the only chunk
-        memory_base = 0x10000000
-        memory_bytes = 1024**3
-
-        with pytest.raises(ResourceError, match="does not fit in any pool chunk"):
-            validate_memory_allocation(sample_tree, memory_base, memory_bytes)
-
-    def test_validate_memory_allocation_misaligned(self, sample_tree):
-        """Test memory allocation with misaligned base."""
-        # Use misaligned base
-        memory_base = 0x200000001  # Not 4KB aligned
-        memory_bytes = 1024**3
-
-        with pytest.raises(ResourceError, match="not 4KB-aligned"):
-            validate_memory_allocation(sample_tree, memory_base, memory_bytes)
-
-    def test_validate_memory_allocation_with_exclusion(self, sample_tree):
-        """Test memory allocation validation with excluded instance."""
-        # Use same base as web-server, but exclude web-server
-        memory_base = 0x80000000
-        memory_bytes = 1024**3
-
-        # Should not raise because web-server is excluded
-        validate_memory_allocation(
-            sample_tree, memory_base, memory_bytes, exclude_instance="web-server"
-        )
-
 
 class TestInstanceID:
     """Test instance ID allocation."""
