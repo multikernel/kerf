@@ -149,6 +149,11 @@ kerf create database --cpu-count=8 --memory=16GB
 kerf load --kernel=/boot/vmlinuz --initrd=/boot/initrd.img \
           --cmdline="root=/dev/sda1 ro" --id=1
 
+# Sign a spawn kernel where the signing key is kept, not on the host;
+# the host kernel must trust the certificate, for example as a MOK
+kerf sign /boot/vmlinuz -o vmlinux.signed --key signing_key.pem --cert signing_cert.pem
+kerf load --kernel=vmlinux.signed --id=1
+
 # Boot a kernel instance
 kerf start web-server
 
@@ -310,6 +315,7 @@ The kernel exposes a filesystem interface (mounted at `/sys/fs/multikernel/`) th
 [tool.poetry.dependencies]
 python = "^3.8"
 pylibfdt = "^1.7.0"      # Device tree parsing (from dtc project)
+cryptography = ">=3.1"   # Signing spawn kernels (kerf sign)
 ```
 
 ### Installation
