@@ -18,8 +18,10 @@ import copy
 import struct
 
 import libfdt
+import pytest
 
 from kerf.dtc.overlay import OverlayGenerator
+from kerf.exceptions import ResourceError
 from kerf.models import GlobalDeviceTree, PoolMemoryRegion
 from kerf.pool_diff import PoolDiff
 
@@ -118,15 +120,42 @@ def test_update_overlay_pins_new_resources_to_the_instance_node(sample_instances
     assert fdt.getprop(mem, "numa-node-id").as_uint32() == 1
 
 
-def test_update_overlay_shrink_names_memory_items(sample_instances):
-    old = sample_instances["database"]
-    new = _grown(old, old.resources.cpus[:-1], old.resources.memory_bytes - GB)
-    fdt, ov = _ov(OverlayGenerator().generate_update_overlay("database", old, new))
-
+def _removed(fdt, ov):
     remove = fdt.subnode_offset(ov, "memory-remove")
-    reg = bytes(fdt.getprop(fdt.subnode_offset(remove, "memory@0"), "reg"))
-    assert struct.unpack(">QQ", reg) == (
-        old.resources.memory_base + new.resources.memory_bytes, GB)
+    return [struct.unpack(">QQ", bytes(fdt.getprop(item, "reg")))
+            for item in _walk(fdt, remove) if item != remove]
+
+
+def test_update_overlay_shrink_removes_the_newest_region(sample_instances):
+    old = sample_instances["database"]
+    base = old.resources.memory_base
+    regions = [(base, old.resources.memory_bytes - GB), (0x900000000, GB)]
+    new = _grown(old, old.resources.cpus[:-1], old.resources.memory_bytes - GB)
+    fdt, ov = _ov(OverlayGenerator().generate_update_overlay("database", old, new,
+                                                             memory_regions=regions))
+
+    assert _removed(fdt, ov) == [(0x900000000, GB)]
+
+
+def test_update_overlay_shrink_removes_several_regions(sample_instances):
+    old = sample_instances["database"]
+    base = old.resources.memory_base
+    rest = old.resources.memory_bytes - 2 * GB
+    regions = [(base, rest), (0x900000000, GB), (0xa00000000, GB)]
+    new = _grown(old, old.resources.cpus, rest)
+    fdt, ov = _ov(OverlayGenerator().generate_update_overlay("database", old, new,
+                                                             memory_regions=regions))
+
+    assert _removed(fdt, ov) == [(0xa00000000, GB), (0x900000000, GB)]
+
+
+def test_update_overlay_shrink_needs_whole_regions(sample_instances):
+    old = sample_instances["database"]
+    regions = [(old.resources.memory_base, old.resources.memory_bytes)]
+    new = _grown(old, old.resources.cpus, old.resources.memory_bytes - GB)
+
+    with pytest.raises(ResourceError, match="whole regions"):
+        OverlayGenerator().generate_update_overlay("database", old, new, memory_regions=regions)
 
 
 def test_create_overlay_targets_the_instance_namespace(sample_hardware, sample_instances):

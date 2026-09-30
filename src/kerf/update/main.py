@@ -26,7 +26,7 @@ clean resource migration:
 
 import sys
 import copy
-from typing import Optional, List
+from typing import Optional, List, Tuple
 import click
 
 from ..create.main import parse_cpu_spec, parse_memory_base, parse_memory_spec
@@ -36,10 +36,20 @@ from ..init.main import spec_is_empty
 from ..models import HardwareInventory
 from ..resources import (
     chunk_containing,
+    get_instance_regions_from_iomem,
     validate_cpu_allocation,
     validate_memory_allocation,
 )
 from ..runtime import DeviceTreeManager
+from ..utils import get_instance_id_from_name
+
+
+def instance_memory_regions(name: str) -> List[Tuple[int, int]]:
+    """The instance's memory regions, oldest first, as the kernel lists them."""
+    instance_id = get_instance_id_from_name(name)
+    if instance_id is None:
+        return []
+    return get_instance_regions_from_iomem(instance_id, name)
 
 
 def parse_device_request(spec: str) -> List[str]:
@@ -64,7 +74,7 @@ def dump_overlay_for_debug(
 ) -> None:
     """Dump overlay DTS source to stdout for debugging when --debug is enabled."""
     dtbo_data = manager.overlay_gen.generate_update_overlay(instance_name, old_instance, new_instance,
-                                                            pci_ids)
+                                                            pci_ids, instance_memory_regions(instance_name))
 
     try:
         import libfdt
@@ -296,7 +306,7 @@ def update(
             def apply_update_operation(current):
                 old_instance, new_instance = update_instance_operation(current)
                 dtbo_data = manager.overlay_gen.generate_update_overlay(name, old_instance, new_instance,
-                                                                        pci_ids)
+                                                                        pci_ids, instance_memory_regions(name))
                 return dtbo_data
 
             with manager.lock():

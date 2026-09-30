@@ -77,6 +77,26 @@ def _chunk_children(regions: List[Tuple[int, int, str]],
     return children
 
 
+def get_instance_regions_from_iomem(instance_id: int, name: str,
+                                    iomem_path: str = IOMEM_PATH) -> List[Tuple[int, int]]:
+    """
+    List an instance's memory regions, oldest first.
+
+    The kernel names each region mk-instance-<id>-<name>-region-<n> in
+    /proc/iomem, numbering them in the order they were added.
+
+    Returns:
+        (base_address, size_bytes) tuples
+    """
+    pattern = re.compile(rf"mk-instance-{instance_id}-{re.escape(name)}-region-(\d+)$")
+    found = []
+    for base, end, region_name in _parse_iomem_regions(iomem_path):
+        match = pattern.fullmatch(region_name)
+        if match:
+            found.append((int(match.group(1)), base, end - base + 1))
+    return [(base, size) for _, base, size in sorted(found)]
+
+
 def get_pool_chunks_from_iomem(iomem_path: str = IOMEM_PATH) -> List[Tuple[int, int]]:
     """
     List every multikernel pool chunk registered in /proc/iomem.

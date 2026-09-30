@@ -26,6 +26,7 @@ from kerf.resources import (
     get_pool_allocated_bytes,
     get_pool_chunks_from_iomem,
     get_busy_chunks_from_iomem,
+    get_instance_regions_from_iomem,
     chunk_containing,
     validate_cpu_allocation,
     validate_memory_allocation,
@@ -254,6 +255,21 @@ class TestIomemPoolAccounting:
         path = tmp_path / "iomem"
         path.write_text(self.SAMPLE_IOMEM + "\n", encoding="utf-8")
         return str(path)
+
+    def test_get_instance_regions_from_iomem(self, tmp_path):
+        path = tmp_path / "iomem"
+        path.write_text(self.SAMPLE_IOMEM + "\n" + "\n".join([
+            "  50000000-53ffffff : mk-instance-2-database-region-2",
+            "  54000000-57ffffff : mk-instance-2-database-region-1",
+            "  58000000-5bffffff : mk-instance-12-database-region-3",
+        ]) + "\n", encoding="utf-8")
+        iomem_file = str(path)
+        assert get_instance_regions_from_iomem(2, "database", iomem_file) == [
+            (0x44000000, 0x8000000),
+            (0x54000000, 0x4000000),
+            (0x50000000, 0x4000000),
+        ]
+        assert get_instance_regions_from_iomem(3, "database", iomem_file) == []
 
     def test_get_memory_pool_from_iomem(self, iomem_file):
         pool = get_memory_pool_from_iomem(iomem_file)

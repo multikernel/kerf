@@ -20,10 +20,11 @@ overlays (DTBO) that represent incremental changes to the device tree state.
 """
 
 import struct
-from typing import Dict, Optional, Set, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 
 import libfdt
 
+from ..exceptions import ResourceError
 from ..models import GlobalDeviceTree
 from ..pool_diff import ANY_NODE, PoolDiff
 from .cells import pack_cpu_id, pack_cpu_ids
@@ -37,9 +38,29 @@ def _memory_ranges(old_base: int, old_size: int, new_base: int, new_size: int) -
         return (old_base, old_size), (new_base, new_size)
     if new_size > old_size:
         return None, (old_base + old_size, new_size - old_size)
-    if new_size < old_size:
-        return (old_base + new_size, old_size - new_size), None
     return None, None
+
+
+def _shrink_regions(regions: List[Tuple[int, int]], remove_bytes: int) -> List[Tuple[int, int]]:
+    """
+    Whole regions to take back from an instance, newest first.
+
+    The kernel removes only whole regions, and only those added after the
+    instance was created, so the newest ones must add up to remove_bytes.
+    """
+    taken, total = [], 0
+    for base, size in reversed(regions):
+        if total >= remove_bytes:
+            break
+        taken.append((base, size))
+        total += size
+    if total != remove_bytes:
+        sizes = ", ".join(f"{size >> 20} MB" for _, size in reversed(regions))
+        raise ResourceError(
+            f"Cannot shrink by {remove_bytes >> 20} MB: memory leaves an instance "
+            f"in whole regions, newest first (regions: {sizes or 'none'})"
+        )
+    return taken
 
 
 class OverlayGenerator:
@@ -97,7 +118,8 @@ class OverlayGenerator:
         return self._create_overlay_dtb({}, {}, {instance_name})
 
     def generate_update_overlay(self, instance_name: str, old_instance, new_instance,
-                                pci_ids: Optional[Dict[str, str]] = None) -> bytes:
+                                pci_ids: Optional[Dict[str, str]] = None,
+                                memory_regions: Optional[List[Tuple[int, int]]] = None) -> bytes:
         """
         Generate resource update overlay for an existing instance.
 
@@ -110,6 +132,8 @@ class OverlayGenerator:
             old_instance: Current instance state
             new_instance: New instance state
             pci_ids: PCI address of each device, by the node name the instances use
+            memory_regions: The instance's memory regions, oldest first, which
+                shrinking takes whole regions from
 
         Returns:
             DTBO blob as bytes containing resource update operations
@@ -125,12 +149,16 @@ class OverlayGenerator:
         cpus_to_remove = sorted(old_cpus - new_cpus)
         cpus_to_add = sorted(new_cpus - old_cpus)
 
-        memory_to_remove, memory_to_add = _memory_ranges(
-            old_instance.resources.memory_base,
-            old_instance.resources.memory_bytes,
-            new_instance.resources.memory_base,
-            new_instance.resources.memory_bytes,
-        )
+        old_base = old_instance.resources.memory_base
+        old_size = old_instance.resources.memory_bytes
+        new_base = new_instance.resources.memory_base
+        new_size = new_instance.resources.memory_bytes
+        if new_base == old_base and new_size < old_size:
+            memory_to_remove = _shrink_regions(memory_regions or [], old_size - new_size)
+            memory_to_add = None
+        else:
+            removed, memory_to_add = _memory_ranges(old_base, old_size, new_base, new_size)
+            memory_to_remove = [removed] if removed else []
 
         numa_node = None
         if new_instance.resources.numa_nodes:
@@ -149,7 +177,8 @@ class OverlayGenerator:
 
         if memory_to_remove:
             fdt_sw.begin_node("memory-remove")
-            self._memory_item(fdt_sw, memory_to_remove)
+            for idx, region in enumerate(memory_to_remove):
+                self._memory_item(fdt_sw, region, index=idx)
             fdt_sw.end_node()
 
         if memory_to_add:
@@ -225,10 +254,10 @@ class OverlayGenerator:
         dtb.pack()
         return dtb.as_bytearray()
 
-    def _memory_item(self, fdt_sw, region, numa_node=None):
-        """Write a memory@0 item naming an existing range."""
+    def _memory_item(self, fdt_sw, region, numa_node=None, index=0):
+        """Write a memory@<index> item naming an existing range."""
         base, size = region
-        fdt_sw.begin_node("memory@0")
+        fdt_sw.begin_node(f"memory@{index}")
         fdt_sw.property("reg", struct.pack(">QQ", base, size))
         if numa_node is not None:
             fdt_sw.property_u32("numa-node-id", numa_node)
