@@ -17,6 +17,7 @@ Kernel loading subcommand implementation using kexec_file_load syscall.
 """
 
 import ctypes
+import errno
 import os
 import platform
 import sys
@@ -32,6 +33,7 @@ from ..metadata import (
     save_instance_metadata,
 )
 from ..utils import get_instance_id_from_name, get_instance_name_from_id
+from ..signature import kexec_signatures_enforced
 from ..vmlinuz import BZIMAGE_HEADER_SIZE, VmlinuzError, is_bzimage, open_kernel_fd
 
 
@@ -521,6 +523,12 @@ def load(  # pylint: disable=too-many-arguments,too-many-positional-arguments,to
                 kernel_is_bzimage = is_bzimage(f.read(BZIMAGE_HEADER_SIZE))
             if kernel_is_bzimage and verbose:
                 click.echo("bzImage detected, extracting embedded vmlinux")
+            if kernel_is_bzimage and kexec_signatures_enforced():
+                click.echo(
+                    "Warning: this host enforces kernel signatures, and a bzImage is "
+                    "loaded as its extracted, unsigned vmlinux. Sign it with 'kerf sign'.",
+                    err=True,
+                )
             kernel_fd = open_kernel_fd(kernel_path)
         except VmlinuzError as e:
             click.echo(f"Error: {e}", err=True)
@@ -583,8 +591,24 @@ def load(  # pylint: disable=too-many-arguments,too-many-positional-arguments,to
 
         except OSError as e:
             click.echo(f"Error: kexec_file_load failed: {e}", err=True)
-            if e.errno == 1:  # EPERM
+            if e.errno == errno.EPERM and os.geteuid() == 0:
+                click.echo(
+                    "Note: Refused by kernel lockdown; the kernel image must be signed "
+                    "(see 'kerf sign').", err=True
+                )
+            elif e.errno == 1:  # EPERM
                 click.echo("Note: This operation requires root privileges", err=True)
+            elif e.errno == errno.ENODATA:
+                click.echo(
+                    "Note: The kernel image is not signed and this host requires "
+                    "signatures. Sign it with 'kerf sign'.", err=True
+                )
+            elif e.errno in (errno.ENOKEY, errno.EKEYREJECTED, errno.EKEYEXPIRED,
+                             errno.EKEYREVOKED, errno.EBADMSG):
+                click.echo(
+                    "Note: The kernel signature was rejected. The signing certificate "
+                    "must be trusted by this host (for example enrolled as a MOK).", err=True
+                )
             elif e.errno == 16:  # EBUSY
                 click.echo(
                     f"Note: Instance '{instance_name}' already has a kernel loaded. "

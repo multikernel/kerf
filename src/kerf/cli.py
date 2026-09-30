@@ -29,6 +29,7 @@ from .delete.main import delete
 from .show.main import show
 from .dump.main import dump
 from .console.main import console
+from .sign.main import sign
 
 
 @click.group()
@@ -54,6 +55,7 @@ main.add_command(delete)
 main.add_command(show)
 main.add_command(dump)
 main.add_command(console)
+main.add_command(sign)
 
 
 if __name__ == "__main__":
