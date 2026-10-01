@@ -54,7 +54,7 @@ from ..pool_diff import ANY_NODE, PoolDiff, compute_pool_diff
 from ..devices import default_alias, is_partition, pci_node_name, split_alias
 from ..resources import get_busy_chunks_from_iomem
 from ..runtime import DeviceTreeManager
-from ..topology import cpu_numa_nodes, node_for_cpus
+from ..topology import cpu_id_name, cpu_numa_nodes, logical_to_physical, node_for_cpus
 
 
 MULTIKERNEL_MOUNT_POINT = "/sys/fs/multikernel"
@@ -333,31 +333,15 @@ def get_total_cpus_from_system() -> Optional[int]:
 
 def get_valid_apic_ids_from_system() -> Optional[set]:
     """
-    Get set of valid APIC IDs from the system via /proc/cpuinfo.
-    Returns set of valid APIC IDs or None if not available.
+    Get the physical IDs of the system's CPUs: APIC ids on x86, MPIDRs on arm64.
+    Returns the set of valid IDs or None if not available.
     """
-    try:
-        cpuinfo_path = Path('/proc/cpuinfo')
-        if not cpuinfo_path.exists():
-            return None
+    return set(logical_to_physical().values()) or None
 
-        apic_ids = set()
-        with open(cpuinfo_path, 'r', encoding='utf-8') as f:
-            for line in f:
-                if line.startswith('apicid'):
-                    parts = line.split(':')
-                    if len(parts) == 2:
-                        try:
-                            apic_id = int(parts[1].strip())
-                            apic_ids.add(apic_id)
-                        except ValueError:
-                            pass
 
-        return apic_ids if apic_ids else None
-    except (OSError, IOError):
-        pass
-
-    return None
+def get_boot_cpu_from_system() -> Optional[int]:
+    """The physical ID of the host's boot CPU, which never joins the pool."""
+    return logical_to_physical().get(0)
 
 
 _NODE_SPEC = re.compile(r"^(.+)@(.*)$")
@@ -631,8 +615,8 @@ def build_baseline_from_cmdline(
     valid_apic_ids = get_valid_apic_ids_from_system()
     if valid_apic_ids is None:
         raise KernelInterfaceError(
-            "Could not read APIC IDs from /proc/cpuinfo. "
-            "Ensure the system exposes CPU topology information."
+            "Could not read the physical CPU IDs (APIC ids from /proc/cpuinfo, "
+            "or MPIDRs from /sys/devices/system/cpu on arm64)."
         )
 
     # The host stops listing a CPU in /proc/cpuinfo once the pool takes it,
@@ -642,22 +626,18 @@ def build_baseline_from_cmdline(
     invalid_cpus = set(cpu_list) - valid_apic_ids
     if invalid_cpus:
         raise ValueError(
-            f"Invalid APIC ID(s) specified: {sorted(invalid_cpus)}. "
-            f"Valid APIC IDs on this system: {sorted(valid_apic_ids)}"
+            f"Invalid {cpu_id_name()}(s) specified: {sorted(invalid_cpus)}. "
+            f"Valid {cpu_id_name()}s on this system: {sorted(valid_apic_ids)}"
         )
 
     # Total CPUs is based on the max APIC ID + 1 for sizing purposes
     total_cpus = max(valid_apic_ids) + 1
     # Host reserved are all valid APIC IDs not in the available list
-    available_cpus = set(cpu_list)
-    host_reserved_cpus = sorted(list(valid_apic_ids - available_cpus))
-
-    if 0 in available_cpus and len(host_reserved_cpus) == 0:
-        if verbose:
-            click.echo("Warning: APIC ID 0 is in available list but no host-reserved CPUs. Moving APIC ID 0 to host-reserved.", err=True)
-        available_cpus.discard(0)
-        host_reserved_cpus = [0]
-        cpu_list = sorted(list(available_cpus))
+    boot_cpu = get_boot_cpu_from_system()
+    if boot_cpu in cpu_list:
+        click.echo(f"Warning: {cpu_id_name()} {boot_cpu} is the host's boot CPU and stays with the host.", err=True)
+        cpu_list = [cpu for cpu in cpu_list if cpu != boot_cpu]
+    host_reserved_cpus = sorted(valid_apic_ids - set(cpu_list))
 
     requested, note = resolve_memory_nodes(requested, cpu_list, pool_cpus, pool_regions)
     if note:
@@ -665,10 +645,10 @@ def build_baseline_from_cmdline(
 
     total_bytes = sum(requested.values())
     if verbose:
-        click.echo(f"Parsed APIC ID specification: {cpus}")
-        click.echo(f"  Valid APIC IDs on system: {sorted(valid_apic_ids)}")
-        click.echo(f"  Host-reserved APIC IDs: {host_reserved_cpus}")
-        click.echo(f"  Available APIC IDs: {cpu_list}")
+        click.echo(f"Parsed {cpu_id_name()} specification: {cpus}")
+        click.echo(f"  Valid {cpu_id_name()}s on system: {sorted(valid_apic_ids)}")
+        click.echo(f"  Host-reserved {cpu_id_name()}s: {host_reserved_cpus}")
+        click.echo(f"  Available {cpu_id_name()}s: {cpu_list}")
         click.echo("Requested pool memory:")
         for node, size in sorted(requested.items()):
             click.echo(f"  node {node}: {size} bytes ({size / (1024**3):.2f} GB)")
@@ -970,7 +950,7 @@ def _dump_baseline_dts(baseline_mgr: BaselineManager, tree: GlobalDeviceTree) ->
 @click.command()
 @click.pass_context
 @click.option('--input', '-i', help='Baseline DTB to replay, as written by "kerf dump". Mutually exclusive with --cpus, --memory and --devices.')
-@click.option('--cpus', '-c', help='APIC ID specification for baseline (e.g., "128-134" or "128,130,132"), or "none" for no pool CPUs. Use physical APIC IDs, not logical CPU numbers. Mutually exclusive with --input.')
+@click.option('--cpus', '-c', help='Physical CPU IDs for baseline, the APIC ID on x86 or the MPIDR on arm64 (e.g., "128-134" or "128,130,132"), or "none" for no pool CPUs. Not logical CPU numbers. Mutually exclusive with --input.')
 @click.option('--memory', '-m', help='Pool memory: SIZE (e.g. "2GB") on the node of the requested CPUs, per-node "8GB@0,8GB@1", or "none" for no pool memory. Required with --cpus, mutually exclusive with --input.')
 @click.option('--devices', '-d', help='Host device names or PCI addresses to pool, each with an optional "=alias" the spawned kernels name the device by (comma-separated, e.g. "nvme0n1,enp9s0,0000:4f:01.0=nvme1"), or "none" for no devices. By default an NVMe keeps its controller name and a network device keeps its interface name. Mutually exclusive with --input.')
 @click.option('--dry-run', is_flag=True, help='Report the plan without applying it. Still reads the pool from the kernel, so it needs root.')
