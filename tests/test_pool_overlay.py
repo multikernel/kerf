@@ -24,6 +24,7 @@ from kerf.dtc.overlay import OverlayGenerator
 from kerf.exceptions import ResourceError
 from kerf.models import GlobalDeviceTree, PoolMemoryRegion
 from kerf.pool_diff import PoolDiff
+from kerf.update import main as update_main
 
 GB = 1 << 30
 MISSING = -libfdt.FDT_ERR_NOTFOUND
@@ -95,7 +96,8 @@ def test_pool_overlay_omits_empty_ops():
 def test_update_overlay_targets_the_instance_path(sample_instances):
     old = sample_instances["database"]
     new = _grown(old, old.resources.cpus + [16], old.resources.memory_bytes + GB)
-    fdt, ov = _ov(OverlayGenerator().generate_update_overlay("database", old, new))
+    fdt, ov = _ov(OverlayGenerator().generate_update_overlay("database", old, new,
+                                                             memory_add_base=0x140000000))
 
     assert fdt.getprop(fdt.path_offset("/fragment@0"), "target-path").as_str() == "/instances/database"
     for offset in _walk(fdt):
@@ -103,14 +105,15 @@ def test_update_overlay_targets_the_instance_path(sample_instances):
 
     add = fdt.subnode_offset(ov, "memory-add")
     reg = bytes(fdt.getprop(fdt.subnode_offset(add, "memory@0"), "reg"))
-    assert struct.unpack(">QQ", reg) == (old.resources.memory_base + old.resources.memory_bytes, GB)
+    assert struct.unpack(">QQ", reg) == (0x140000000, GB)
     assert fdt.subnode_offset(add, "region@0", quiet=[libfdt.FDT_ERR_NOTFOUND]) == MISSING
 
 
 def test_update_overlay_pins_new_resources_to_the_instance_node(sample_instances):
     old = sample_instances["database"]
     new = _grown(old, old.resources.cpus + [16], old.resources.memory_bytes + GB, numa_nodes=[1])
-    fdt, ov = _ov(OverlayGenerator().generate_update_overlay("database", old, new))
+    fdt, ov = _ov(OverlayGenerator().generate_update_overlay("database", old, new,
+                                                             memory_add_base=0x140000000))
 
     cpu = fdt.subnode_offset(fdt.subnode_offset(ov, "cpu-add"), "cpu@16")
     assert fdt.getprop(cpu, "numa-node-id").as_uint32() == 1
@@ -118,6 +121,32 @@ def test_update_overlay_pins_new_resources_to_the_instance_node(sample_instances
 
     mem = fdt.subnode_offset(fdt.subnode_offset(ov, "memory-add"), "memory@0")
     assert fdt.getprop(mem, "numa-node-id").as_uint32() == 1
+
+
+def test_update_overlay_grow_needs_a_base(sample_instances):
+    old = sample_instances["database"]
+    new = _grown(old, old.resources.cpus, old.resources.memory_bytes + GB)
+    with pytest.raises(ResourceError):
+        OverlayGenerator().generate_update_overlay("database", old, new)
+
+
+def test_update_grow_goes_where_the_pool_has_room(sample_instances, monkeypatch):
+    old = sample_instances["database"]
+    monkeypatch.setattr(update_main, "find_free_range_from_iomem", lambda size: 0x140000000)
+    new = _grown(old, old.resources.cpus, old.resources.memory_bytes + GB)
+    assert update_main.memory_add_base("database", old, new) == 0x140000000
+    assert update_main.memory_add_base("database", old, old) is None
+
+
+def test_update_grow_refuses_a_size_the_kernel_cannot_add(sample_instances, monkeypatch):
+    old = sample_instances["database"]
+    monkeypatch.setattr(update_main, "find_free_range_from_iomem", lambda size: None)
+    unaligned = _grown(old, old.resources.cpus, old.resources.memory_bytes + (130 << 20))
+    with pytest.raises(ResourceError, match="multiples of 4 MB"):
+        update_main.memory_add_base("database", old, unaligned)
+    too_big = _grown(old, old.resources.cpus, old.resources.memory_bytes + GB)
+    with pytest.raises(ResourceError, match="no pool chunk"):
+        update_main.memory_add_base("database", old, too_big)
 
 
 def _removed(fdt, ov):

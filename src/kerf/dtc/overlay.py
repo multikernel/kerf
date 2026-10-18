@@ -109,7 +109,8 @@ class OverlayGenerator:
 
     def generate_update_overlay(self, instance_name: str, old_instance, new_instance,
                                 pci_ids: Optional[Dict[str, str]] = None,
-                                memory_regions: Optional[List[Tuple[int, int]]] = None) -> bytes:
+                                memory_regions: Optional[List[Tuple[int, int]]] = None,
+                                memory_add_base: Optional[int] = None) -> bytes:
         """
         Generate resource update overlay for an existing instance.
 
@@ -124,6 +125,8 @@ class OverlayGenerator:
             pci_ids: PCI address of each device, by the node name the instances use
             memory_regions: The instance's memory regions, oldest first, which
                 shrinking takes whole regions from
+            memory_add_base: Where the memory a grow adds goes, a free pool
+                range the kernel takes as named
 
         Returns:
             DTBO blob as bytes containing resource update operations
@@ -145,7 +148,9 @@ class OverlayGenerator:
         if new_size < old_size:
             memory_to_remove = _shrink_regions(memory_regions or [], old_size - new_size)
         elif new_size > old_size:
-            memory_to_add = (old_instance.resources.memory_base + old_size, new_size - old_size)
+            if memory_add_base is None:
+                raise ResourceError(f"Growing instance '{instance_name}' needs a base for the new memory")
+            memory_to_add = (memory_add_base, new_size - old_size)
 
         numa_node = None
         if new_instance.resources.numa_nodes:

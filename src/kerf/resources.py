@@ -107,25 +107,41 @@ def get_pool_chunks_from_iomem(iomem_path: str = IOMEM_PATH) -> List[Tuple[int, 
     return _pool_chunks(_parse_iomem_regions(iomem_path))
 
 
-def get_largest_free_range_from_iomem(iomem_path: str = IOMEM_PATH) -> int:
-    """
-    Size of the largest free range in any pool chunk.
+# A spawn kernel adds memory in whole MAX_PAGE_ORDER blocks, 4 MB on x86
+MEMORY_ADD_ALIGN = 4 << 20
 
-    Every region nested in a chunk counts as used. Memory added to an
-    instance is one allocation from one chunk, so this bounds how much a
-    single addition can take.
+
+def find_free_range_from_iomem(size: int, align: int = MEMORY_ADD_ALIGN,
+                               iomem_path: str = IOMEM_PATH) -> Optional[int]:
+    """
+    Pick where memory added to an instance goes.
+
+    The kernel adds exactly the range an overlay names, inside one pool
+    chunk, and the instance's kernel takes it in aligned blocks. Every
+    region nested in a chunk counts as used. The highest free range is
+    picked: a kernel pads the end of its boot RAM to 64 MB in its resource
+    tree and cannot add memory that overlaps the padding, and the kernel
+    places boot RAM from the bottom of the pool.
+
+    Returns:
+        The base address of the range, or None when no chunk has room
     """
     regions = _parse_iomem_regions(iomem_path)
     chunks = _pool_chunks(regions)
     children = _chunk_children(regions, chunks)
-    largest = 0
+    best = None
     for chunk_base, chunk_size in chunks:
         cursor = chunk_base
+        gaps = []
         for _, base, end in sorted(c for c in children if c[0] == chunk_base):
-            largest = max(largest, base - cursor)
+            gaps.append((cursor, base))
             cursor = max(cursor, end + 1)
-        largest = max(largest, chunk_base + chunk_size - cursor)
-    return largest
+        gaps.append((cursor, chunk_base + chunk_size))
+        for start, end in gaps:
+            base = (end - size) // align * align
+            if base >= start and (best is None or base > best):
+                best = base
+    return best
 
 
 def get_busy_chunks_from_iomem(iomem_path: str = IOMEM_PATH) -> Set[int]:

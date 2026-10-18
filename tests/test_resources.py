@@ -27,7 +27,7 @@ from kerf.resources import (
     get_pool_chunks_from_iomem,
     get_busy_chunks_from_iomem,
     get_instance_regions_from_iomem,
-    get_largest_free_range_from_iomem,
+    find_free_range_from_iomem,
     chunk_containing,
     validate_cpu_allocation,
     find_next_instance_id,
@@ -222,9 +222,10 @@ class TestIomemPoolAccounting:
         ]
         assert get_instance_regions_from_iomem(3, "database", iomem_file) == []
 
-    def test_get_largest_free_range_from_iomem(self, iomem_file, tmp_path):
+    def test_find_free_range_from_iomem(self, iomem_file, tmp_path):
         # Pool 0x40000000-0x7fffffff holds regions up to 0x4fffffff
-        assert get_largest_free_range_from_iomem(iomem_file) == 0x30000000
+        assert find_free_range_from_iomem(0x30000000, iomem_path=iomem_file) == 0x50000000
+        assert find_free_range_from_iomem(0x30000001, iomem_path=iomem_file) is None
 
         path = tmp_path / "iomem2"
         path.write_text("\n".join([
@@ -234,7 +235,14 @@ class TestIomemPoolAccounting:
             "  46000000-46ffffff : daxfs",
             "60000000-61ffffff : Multikernel Memory Pool",
         ]) + "\n", encoding="utf-8")
-        assert get_largest_free_range_from_iomem(str(path)) == 0x4000000
+        iomem2 = str(path)
+        # The highest room wins, aligned down to 4 MB
+        assert find_free_range_from_iomem(0x100000, iomem_path=iomem2) == 0x61c00000
+        assert find_free_range_from_iomem(0x2000000, iomem_path=iomem2) == 0x60000000
+        assert find_free_range_from_iomem(0x4000000, iomem_path=iomem2) == 0x4c000000
+        assert find_free_range_from_iomem(0x4000001, iomem_path=iomem2) is None
+        # Unaligned, the range ends at the top of the room
+        assert find_free_range_from_iomem(0x3f00000, align=0x1000, iomem_path=iomem2) == 0x4c100000
 
     def test_get_memory_pool_from_iomem(self, iomem_file):
         pool = get_memory_pool_from_iomem(iomem_file)

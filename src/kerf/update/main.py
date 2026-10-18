@@ -35,8 +35,9 @@ from ..exceptions import KernelInterfaceError, ParseError, ResourceError, Valida
 from ..init.main import spec_is_empty
 from ..models import HardwareInventory
 from ..resources import (
+    MEMORY_ADD_ALIGN,
+    find_free_range_from_iomem,
     get_instance_regions_from_iomem,
-    get_largest_free_range_from_iomem,
     validate_cpu_allocation,
 )
 from ..runtime import DeviceTreeManager
@@ -63,6 +64,25 @@ def parse_device_request(spec: str) -> List[str]:
     return [d.strip() for d in spec.split(',') if d.strip()]
 
 
+def memory_add_base(name: str, old_instance, new_instance) -> Optional[int]:
+    """Where the memory growing an instance adds goes, or None when it does not grow."""
+    grow_bytes = new_instance.resources.memory_bytes - old_instance.resources.memory_bytes
+    if grow_bytes <= 0:
+        return None
+    if grow_bytes % MEMORY_ADD_ALIGN:
+        raise ResourceError(
+            f"Cannot grow instance '{name}' by {grow_bytes / (1 << 20):g} MB: "
+            f"memory is added in multiples of {MEMORY_ADD_ALIGN >> 20} MB"
+        )
+    base = find_free_range_from_iomem(grow_bytes)
+    if base is None:
+        raise ResourceError(
+            f"Cannot grow instance '{name}' by {grow_bytes >> 20} MB: "
+            f"no pool chunk has a free range that large"
+        )
+    return base
+
+
 def dump_overlay_for_debug(
     manager: DeviceTreeManager,
     instance_name: str,
@@ -72,8 +92,9 @@ def dump_overlay_for_debug(
     pci_ids=None,
 ) -> None:
     """Dump overlay DTS source to stdout for debugging when --debug is enabled."""
-    dtbo_data = manager.overlay_gen.generate_update_overlay(instance_name, old_instance, new_instance,
-                                                            pci_ids, instance_memory_regions(instance_name))
+    dtbo_data = manager.overlay_gen.generate_update_overlay(
+        instance_name, old_instance, new_instance, pci_ids, instance_memory_regions(instance_name),
+        memory_add_base(instance_name, old_instance, new_instance))
 
     try:
         import libfdt
@@ -213,18 +234,6 @@ def update(
                 if new_cpus:
                     validate_cpu_allocation(modified, sorted(new_cpus), exclude_instance=instance_node_name)
 
-            if memory_bytes is not None:
-                old_size = existing_instance.resources.memory_bytes
-
-                # The kernel adds the memory as one new region, placed
-                # wherever a pool chunk has room for it.
-                grow_bytes = memory_bytes - old_size
-                if memory_bytes > old_size and grow_bytes > get_largest_free_range_from_iomem():
-                    raise ResourceError(
-                        f"Cannot grow instance '{name}' by {grow_bytes >> 20} MB: "
-                        f"no pool chunk has a free range that large"
-                    )
-
             updated_instance = copy.deepcopy(existing_instance)
             if cpu_list is not None:
                 updated_instance.resources.cpus = cpu_list
@@ -233,6 +242,7 @@ def update(
             if device_nodes is not None:
                 updated_instance.resources.devices = device_nodes
 
+            memory_add_base(name, existing_instance, updated_instance)
             return (existing_instance, updated_instance)
 
         if dry_run:
@@ -271,8 +281,9 @@ def update(
 
             def apply_update_operation(current):
                 old_instance, new_instance = update_instance_operation(current)
-                dtbo_data = manager.overlay_gen.generate_update_overlay(name, old_instance, new_instance,
-                                                                        pci_ids, instance_memory_regions(name))
+                dtbo_data = manager.overlay_gen.generate_update_overlay(
+                    name, old_instance, new_instance, pci_ids, instance_memory_regions(name),
+                    memory_add_base(name, old_instance, new_instance))
                 return dtbo_data
 
             with manager.lock():
