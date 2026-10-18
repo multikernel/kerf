@@ -35,8 +35,8 @@ from ..exceptions import KernelInterfaceError, ParseError, ResourceError, Valida
 from ..init.main import spec_is_empty
 from ..models import HardwareInventory
 from ..resources import (
-    MEMORY_ADD_ALIGN,
     find_free_range_from_iomem,
+    get_memory_granule,
     get_instance_regions_from_iomem,
     validate_cpu_allocation,
 )
@@ -69,12 +69,13 @@ def memory_add_base(name: str, old_instance, new_instance) -> Optional[int]:
     grow_bytes = new_instance.resources.memory_bytes - old_instance.resources.memory_bytes
     if grow_bytes <= 0:
         return None
-    if grow_bytes % MEMORY_ADD_ALIGN:
+    granule = get_memory_granule()
+    if grow_bytes % granule:
         raise ResourceError(
             f"Cannot grow instance '{name}' by {grow_bytes / (1 << 20):g} MB: "
-            f"memory is added in multiples of {MEMORY_ADD_ALIGN >> 20} MB"
+            f"memory is added in multiples of {granule / (1 << 20):g} MB"
         )
-    base = find_free_range_from_iomem(grow_bytes)
+    base = find_free_range_from_iomem(grow_bytes, granule)
     if base is None:
         raise ResourceError(
             f"Cannot grow instance '{name}' by {grow_bytes >> 20} MB: "

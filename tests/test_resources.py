@@ -16,6 +16,7 @@
 Tests for kerf resource allocation utilities.
 """
 
+import libfdt
 import pytest
 from kerf.resources import (
     get_available_cpus,
@@ -28,6 +29,7 @@ from kerf.resources import (
     get_busy_chunks_from_iomem,
     get_instance_regions_from_iomem,
     find_free_range_from_iomem,
+    get_memory_granule,
     chunk_containing,
     validate_cpu_allocation,
     find_next_instance_id,
@@ -224,8 +226,8 @@ class TestIomemPoolAccounting:
 
     def test_find_free_range_from_iomem(self, iomem_file, tmp_path):
         # Pool 0x40000000-0x7fffffff holds regions up to 0x4fffffff
-        assert find_free_range_from_iomem(0x30000000, iomem_path=iomem_file) == 0x50000000
-        assert find_free_range_from_iomem(0x30000001, iomem_path=iomem_file) is None
+        assert find_free_range_from_iomem(0x30000000, 4 << 20, iomem_path=iomem_file) == 0x50000000
+        assert find_free_range_from_iomem(0x30000001, 4 << 20, iomem_path=iomem_file) is None
 
         path = tmp_path / "iomem2"
         path.write_text("\n".join([
@@ -237,12 +239,29 @@ class TestIomemPoolAccounting:
         ]) + "\n", encoding="utf-8")
         iomem2 = str(path)
         # The highest room wins, aligned down to 4 MB
-        assert find_free_range_from_iomem(0x100000, iomem_path=iomem2) == 0x61c00000
-        assert find_free_range_from_iomem(0x2000000, iomem_path=iomem2) == 0x60000000
-        assert find_free_range_from_iomem(0x4000000, iomem_path=iomem2) == 0x4c000000
-        assert find_free_range_from_iomem(0x4000001, iomem_path=iomem2) is None
+        assert find_free_range_from_iomem(0x100000, 4 << 20, iomem_path=iomem2) == 0x61c00000
+        assert find_free_range_from_iomem(0x2000000, 4 << 20, iomem_path=iomem2) == 0x60000000
+        assert find_free_range_from_iomem(0x4000000, 4 << 20, iomem_path=iomem2) == 0x4c000000
+        assert find_free_range_from_iomem(0x4000001, 4 << 20, iomem_path=iomem2) is None
         # Unaligned, the range ends at the top of the room
-        assert find_free_range_from_iomem(0x3f00000, align=0x1000, iomem_path=iomem2) == 0x4c100000
+        assert find_free_range_from_iomem(0x3f00000, 0x1000, iomem_path=iomem2) == 0x4c100000
+
+    def test_get_memory_granule(self, tmp_path):
+        sw = libfdt.FdtSw()
+        sw.finish_reservemap()
+        sw.begin_node("")
+        sw.property_u64("memory-granule", 4 << 20)
+        sw.end_node()
+        tree = tmp_path / "device_tree"
+        tree.write_bytes(bytes(sw.as_fdt().as_bytearray()))
+        blocks = tmp_path / "block_size_bytes"
+        blocks.write_text("8000000\n", encoding="utf-8")
+
+        assert get_memory_granule(str(tree), str(blocks)) == 4 << 20
+        # A kernel that publishes nothing takes whole memory blocks
+        tree.write_bytes(b"")
+        assert get_memory_granule(str(tree), str(blocks)) == 128 << 20
+        assert get_memory_granule(str(tree), str(tmp_path / "none")) == 128 << 20
 
     def test_get_memory_pool_from_iomem(self, iomem_file):
         pool = get_memory_pool_from_iomem(iomem_file)

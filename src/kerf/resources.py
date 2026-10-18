@@ -24,6 +24,8 @@ import re
 from pathlib import Path
 from typing import List, Set, Optional, Tuple
 
+import libfdt
+
 from .models import GlobalDeviceTree, PoolMemoryRegion
 from .exceptions import ResourceError
 
@@ -107,11 +109,37 @@ def get_pool_chunks_from_iomem(iomem_path: str = IOMEM_PATH) -> List[Tuple[int, 
     return _pool_chunks(_parse_iomem_regions(iomem_path))
 
 
-# A spawn kernel adds memory in whole MAX_PAGE_ORDER blocks, 4 MB on x86
-MEMORY_ADD_ALIGN = 4 << 20
+DEVICE_TREE_PATH = "/sys/fs/multikernel/device_tree"
+MEMORY_BLOCK_SIZE_PATH = "/sys/devices/system/memory/block_size_bytes"
+MEMORY_BLOCK_SIZE_FALLBACK = 128 << 20
 
 
-def find_free_range_from_iomem(size: int, align: int = MEMORY_ADD_ALIGN,
+def get_memory_granule(tree_path: str = DEVICE_TREE_PATH,
+                       block_size_path: str = MEMORY_BLOCK_SIZE_PATH) -> int:
+    """
+    The unit memory added to an instance comes in: its base and size are
+    multiples of it.
+
+    The kernel publishes the unit memory moves into or out of it in, in its
+    own device tree, and an instance's kernel is taken to use the same. A
+    kernel that publishes nothing takes memory in whole memory blocks only.
+    """
+    try:
+        with open(tree_path, "rb") as f:
+            fdt = libfdt.Fdt(f.read())
+        granule = fdt.getprop(0, "memory-granule").as_uint64()
+        if granule and not granule & (granule - 1):
+            return granule
+    except (OSError, libfdt.FdtException):
+        pass
+    try:
+        with open(block_size_path, encoding="utf-8") as f:
+            return int(f.read().strip(), 16)
+    except (OSError, ValueError):
+        return MEMORY_BLOCK_SIZE_FALLBACK
+
+
+def find_free_range_from_iomem(size: int, align: int,
                                iomem_path: str = IOMEM_PATH) -> Optional[int]:
     """
     Pick where memory added to an instance goes.

@@ -132,7 +132,8 @@ def test_update_overlay_grow_needs_a_base(sample_instances):
 
 def test_update_grow_goes_where_the_pool_has_room(sample_instances, monkeypatch):
     old = sample_instances["database"]
-    monkeypatch.setattr(update_main, "find_free_range_from_iomem", lambda size: 0x140000000)
+    monkeypatch.setattr(update_main, "get_memory_granule", lambda: 4 << 20)
+    monkeypatch.setattr(update_main, "find_free_range_from_iomem", lambda size, align: 0x140000000)
     new = _grown(old, old.resources.cpus, old.resources.memory_bytes + GB)
     assert update_main.memory_add_base("database", old, new) == 0x140000000
     assert update_main.memory_add_base("database", old, old) is None
@@ -140,7 +141,8 @@ def test_update_grow_goes_where_the_pool_has_room(sample_instances, monkeypatch)
 
 def test_update_grow_refuses_a_size_the_kernel_cannot_add(sample_instances, monkeypatch):
     old = sample_instances["database"]
-    monkeypatch.setattr(update_main, "find_free_range_from_iomem", lambda size: None)
+    monkeypatch.setattr(update_main, "get_memory_granule", lambda: 4 << 20)
+    monkeypatch.setattr(update_main, "find_free_range_from_iomem", lambda size, align: None)
     unaligned = _grown(old, old.resources.cpus, old.resources.memory_bytes + (130 << 20))
     with pytest.raises(ResourceError, match="multiples of 4 MB"):
         update_main.memory_add_base("database", old, unaligned)
