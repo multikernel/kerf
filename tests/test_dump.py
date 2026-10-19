@@ -113,7 +113,7 @@ def test_dump_dts_on_a_tty_is_fine(monkeypatch):
 
 
 def test_instance_dtb_with_host_bridge_nodes_parses_and_renders():
-    """The kernel now emits /aliases and pci@N host-bridge nodes alongside
+    """The kernel now emits /aliases and pci@D,B host-bridge nodes alongside
     /resources; dump parsing and DTS rendering must take them in stride."""
     import struct
     import libfdt
@@ -141,14 +141,14 @@ def test_instance_dtb_with_host_bridge_nodes_parses_and_renders():
     sw.begin_node("aliases")
     sw.property_string("nvme0", "/resources/devices/pci_0000_50_00_0")
     sw.end_node()
-    sw.begin_node("pci@4f")
+    sw.begin_node("pci@0,50")
     sw.property_string("compatible", "multikernel,pci-host-bridge")
     sw.property_string("device_type", "pci")
     sw.property_u32("#address-cells", 3)
     sw.property_u32("#size-cells", 2)
     sw.property_u32("linux,pci-domain", 0)
-    sw.property("bus-range", struct.pack(">II", 0x4F, 0x50))
-    sw.property("reg", struct.pack(">IIII", 0, 0xE04F0000, 0, 0x200000))
+    sw.property("bus-range", struct.pack(">II", 0x50, 0x50))
+    sw.property("reg", struct.pack(">IIII", 0, 0xE0500000, 0, 0x100000))
     sw.property("ranges", struct.pack(">7I", 0x02000000, 0, 0xB0000000,
                                       0, 0xB0000000, 0, 0x10000000))
     sw.end_node()
@@ -163,7 +163,7 @@ def test_instance_dtb_with_host_bridge_nodes_parses_and_renders():
     assert instance.resources.devices == ["pci_0000_50_00_0"]
 
     text = DeviceTreeParser().dts_from_dtb(data)
-    assert "pci@4f {" in text
+    assert "pci@0,50 {" in text
     assert "multikernel,pci-host-bridge" in text
     assert "bus-range" in text
     assert "nvme0" in text

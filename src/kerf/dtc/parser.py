@@ -350,10 +350,11 @@ class DeviceTreeParser:
         """
         PCI devices under the host-bridge nodes, keyed by node offset.
 
-        The kernel describes a device under the bus it sits on, in the
-        devicetree PCI bus binding: a bridge is recursed into, a leaf
-        carries vendor-id, and the unit address in reg names the bus,
-        device and function.
+        The kernel describes each bus that holds a device as a root bus
+        of its own, in the devicetree PCI bus binding: a leaf carries
+        vendor-id, and the unit address in reg names the bus, device and
+        function. Trees from kernels that still described the bridges on
+        the way down are walked through them.
         """
         found = {}
         for bridge in self._subnodes(0):
