@@ -223,7 +223,13 @@ def kexec_file_load(
 @click.option("--netmask", default="255.255.255.0", help="Network mask (default: 255.255.255.0)")
 @click.option("--nic", help="Network interface name (e.g., eth0)")
 @click.option("--hostname", help="Hostname for spawn kernel")
-@click.option("--console", "console_device", help="Console device (e.g., mktty0)")
+@click.option(
+    "--console",
+    "console_device",
+    default="mktty0",
+    show_default=True,
+    help="Console device, ignored when --cmdline already sets console=",
+)
 @click.option("--verbose", "-v", is_flag=True, help="Verbose output")
 def load(  # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     ctx: click.Context,
@@ -290,9 +296,9 @@ def load(  # pylint: disable=too-many-arguments,too-many-positional-arguments,to
         kerf load web-server --kernel=/boot/vmlinuz --image=nginx:latest \\
                  --ip=dhcp --nic=eth0
 
-        # Load with console enabled
+        # Load with no console
         kerf load web-server --kernel=/boot/vmlinuz --image=nginx:latest \\
-                 --console=mktty0
+                 --console=ttynull
     """
     try:
         if not name and id is None:
@@ -504,8 +510,8 @@ def load(  # pylint: disable=too-many-arguments,too-many-positional-arguments,to
             if verbose:
                 click.echo(f"Network config: {ip_param}")
 
-        # Add console device if specified
-        if console_device:
+        user_console = cmdline and any(arg.startswith("console=") for arg in cmdline.split())
+        if not user_console:
             cmdline_parts.append(f"console={console_device}")
             if verbose:
                 click.echo(f"Console: console={console_device}")
