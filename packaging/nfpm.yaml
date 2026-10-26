@@ -9,8 +9,11 @@ homepage: https://github.com/multikernel/kerf
 license: Apache-2.0
 
 contents:
-  - src: ./src/kerf/
-    dst: /usr/lib/kerf/kerf/
+  - dst: /usr/lib/kerf
+    type: dir
+  - src: ./src/kerf
+    dst: /usr/lib/kerf/kerf
+    type: tree
   - src: ./packaging/kerf
     dst: /usr/bin/kerf
     file_info:
