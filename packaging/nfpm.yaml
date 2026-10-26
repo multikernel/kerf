@@ -1,0 +1,41 @@
+name: kerf
+arch: amd64
+platform: linux
+version: ${VERSION}
+maintainer: Cong Wang <xiyou.wangcong@gmail.com>
+description: Multikernel Management CLI tool
+vendor: Multikernel Technologies, Inc.
+homepage: https://github.com/multikernel/kerf
+license: Apache-2.0
+
+contents:
+  - src: ./src/kerf/
+    dst: /usr/lib/kerf/kerf/
+  - src: ./packaging/kerf
+    dst: /usr/bin/kerf
+    file_info:
+      mode: 0755
+  - src: ./LICENSE
+    dst: /usr/share/doc/kerf/LICENSE
+
+scripts:
+  postinstall: ./packaging/postinstall.sh
+  preremove: ./packaging/preremove.sh
+
+overrides:
+  deb:
+    depends:
+      - python3 (>= 3.9)
+      - python3-click (>= 8.0)
+      - python3-yaml (>= 6.0)
+      - python3-pyudev (>= 0.24)
+      - python3-cryptography (>= 3.1)
+      - python3-libfdt (>= 1.7.0)
+  rpm:
+    depends:
+      - python3 >= 3.9
+      - python3-click >= 8.0
+      - python3-pyyaml >= 6.0
+      - python3-pyudev >= 0.24
+      - python3-cryptography >= 3.1
+      - python3-libfdt >= 1.7.0
