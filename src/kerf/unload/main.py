@@ -63,14 +63,14 @@ def _cleanup_load_resources(instance_name: str, _instance_id: int, verbose: bool
 
 # KEXEC flags definitions
 KEXEC_FILE_UNLOAD = 0x00000001
-KEXEC_MULTIKERNEL = 0x00000010
-KEXEC_MK_ID_MASK = 0x0000FFE0
-KEXEC_MK_ID_SHIFT = 5
+KEXEC_FILE_MULTIKERNEL = 0x80000000
+KEXEC_FILE_MK_ID_MASK = 0x7FFF0000
+KEXEC_FILE_MK_ID_SHIFT = 16
 
 
-def KEXEC_MK_ID(id: int) -> int:  # pylint: disable=invalid-name
-    """Generate KEXEC_MK_ID flag value from kernel ID."""
-    return (id << KEXEC_MK_ID_SHIFT) & KEXEC_MK_ID_MASK
+def KEXEC_FILE_MK_ID(id: int) -> int:  # pylint: disable=invalid-name
+    """Generate KEXEC_FILE_MK_ID flag value from kernel ID."""
+    return (id << KEXEC_FILE_MK_ID_SHIFT) & KEXEC_FILE_MK_ID_MASK
 
 
 # Syscall numbers (architecture-dependent)
@@ -133,7 +133,10 @@ def kexec_file_unload(flags: int, debug: bool = False) -> int:
             err=True,
         )
         click.echo(
-            f"DEBUG: KEXEC_FILE_UNLOAD=0x{KEXEC_FILE_UNLOAD:x}, KEXEC_MULTIKERNEL=0x{KEXEC_MULTIKERNEL:x}, KEXEC_MK_ID_MASK=0x{KEXEC_MK_ID_MASK:x}, KEXEC_MK_ID_SHIFT={KEXEC_MK_ID_SHIFT}",
+            f"DEBUG: KEXEC_FILE_UNLOAD=0x{KEXEC_FILE_UNLOAD:x}, "
+            f"KEXEC_FILE_MULTIKERNEL=0x{KEXEC_FILE_MULTIKERNEL:x}, "
+            f"KEXEC_FILE_MK_ID_MASK=0x{KEXEC_FILE_MK_ID_MASK:x}, "
+            f"KEXEC_FILE_MK_ID_SHIFT={KEXEC_FILE_MK_ID_SHIFT}",
             err=True,
         )
         click.echo("DEBUG: cmdline_ptr=NULL (unload operation)", err=True)
@@ -260,13 +263,15 @@ def unload(ctx: click.Context, name: Optional[str], id: Optional[int], verbose: 
             click.echo("Please ensure the instance exists", err=True)
             sys.exit(1)
 
-        mk_id_flags = KEXEC_MK_ID(instance_id)
-        flags = KEXEC_FILE_UNLOAD | KEXEC_MULTIKERNEL | mk_id_flags
+        mk_id_flags = KEXEC_FILE_MK_ID(instance_id)
+        flags = KEXEC_FILE_UNLOAD | KEXEC_FILE_MULTIKERNEL | mk_id_flags
 
         if verbose:
             click.echo(f"Unloading kernel for instance '{instance_name}' (ID: {instance_id})...")
             click.echo(
-                f"Flags: KEXEC_FILE_UNLOAD=0x{KEXEC_FILE_UNLOAD:x}, KEXEC_MULTIKERNEL=0x{KEXEC_MULTIKERNEL:x}, KEXEC_MK_ID({instance_id})=0x{mk_id_flags:x}, combined=0x{flags:x}"
+                f"Flags: KEXEC_FILE_UNLOAD=0x{KEXEC_FILE_UNLOAD:x}, "
+                f"KEXEC_FILE_MULTIKERNEL=0x{KEXEC_FILE_MULTIKERNEL:x}, "
+                f"KEXEC_FILE_MK_ID({instance_id})=0x{mk_id_flags:x}, combined=0x{flags:x}"
             )
             click.echo("Calling kexec_file_load syscall with KEXEC_FILE_UNLOAD flag...")
         else:

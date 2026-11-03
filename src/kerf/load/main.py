@@ -40,14 +40,14 @@ from ..vmlinuz import BZIMAGE_HEADER_SIZE, VmlinuzError, is_bzimage, open_kernel
 # KEXEC flags definitions
 KEXEC_FILE_NO_INITRAMFS = 0x00000004
 KEXEC_FILE_DEBUG = 0x00000008
-KEXEC_MULTIKERNEL = 0x00000010
-KEXEC_MK_ID_MASK = 0x0000FFE0
-KEXEC_MK_ID_SHIFT = 5
+KEXEC_FILE_MULTIKERNEL = 0x80000000
+KEXEC_FILE_MK_ID_MASK = 0x7FFF0000
+KEXEC_FILE_MK_ID_SHIFT = 16
 
 
-def KEXEC_MK_ID(id: int) -> int:  # pylint: disable=invalid-name
-    """Generate KEXEC_MK_ID flag value from kernel ID."""
-    return (id << KEXEC_MK_ID_SHIFT) & KEXEC_MK_ID_MASK
+def KEXEC_FILE_MK_ID(id: int) -> int:  # pylint: disable=invalid-name
+    """Generate KEXEC_FILE_MK_ID flag value from kernel ID."""
+    return (id << KEXEC_FILE_MK_ID_SHIFT) & KEXEC_FILE_MK_ID_MASK
 
 
 # Syscall numbers (architecture-dependent)
@@ -130,7 +130,7 @@ def kexec_file_load(
         kernel_fd: File descriptor for kernel image
         initrd_fd: File descriptor for initrd (use -1 if not provided)
         cmdline: Boot command line string
-        flags: KEXEC flags (e.g., KEXEC_MULTIKERNEL | KEXEC_MK_ID(id))
+        flags: KEXEC flags (e.g., KEXEC_FILE_MULTIKERNEL | KEXEC_FILE_MK_ID(id))
 
     Returns:
         0 on success, -errno on failure
@@ -178,7 +178,9 @@ def kexec_file_load(
             err=True,
         )
         click.echo(
-            f"DEBUG: KEXEC_MULTIKERNEL=0x{KEXEC_MULTIKERNEL:x}, KEXEC_MK_ID_MASK=0x{KEXEC_MK_ID_MASK:x}, KEXEC_MK_ID_SHIFT={KEXEC_MK_ID_SHIFT}",
+            f"DEBUG: KEXEC_FILE_MULTIKERNEL=0x{KEXEC_FILE_MULTIKERNEL:x}, "
+            f"KEXEC_FILE_MK_ID_MASK=0x{KEXEC_FILE_MK_ID_MASK:x}, "
+            f"KEXEC_FILE_MK_ID_SHIFT={KEXEC_FILE_MK_ID_SHIFT}",
             err=True,
         )
         if cmdline:
@@ -465,8 +467,8 @@ def load(  # pylint: disable=too-many-arguments,too-many-positional-arguments,to
                 sys.exit(1)
 
         # Always enable multikernel mode
-        mk_id_flags = KEXEC_MK_ID(instance_id)
-        flags = KEXEC_MULTIKERNEL | mk_id_flags
+        mk_id_flags = KEXEC_FILE_MK_ID(instance_id)
+        flags = KEXEC_FILE_MULTIKERNEL | mk_id_flags
 
         # If no initrd, set NO_INITRAMFS flag
         if not initrd_path:
@@ -474,7 +476,10 @@ def load(  # pylint: disable=too-many-arguments,too-many-positional-arguments,to
 
         if verbose:
             click.echo(f"Multikernel mode enabled with ID: {instance_id}")
-            flag_parts = [f"KEXEC_MULTIKERNEL=0x{KEXEC_MULTIKERNEL:x}", f"KEXEC_MK_ID({instance_id})=0x{mk_id_flags:x}"]
+            flag_parts = [
+                f"KEXEC_FILE_MULTIKERNEL=0x{KEXEC_FILE_MULTIKERNEL:x}",
+                f"KEXEC_FILE_MK_ID({instance_id})=0x{mk_id_flags:x}",
+            ]
             if not initrd_path:
                 flag_parts.append(f"KEXEC_FILE_NO_INITRAMFS=0x{KEXEC_FILE_NO_INITRAMFS:x}")
             click.echo(f"Flags: {', '.join(flag_parts)}, combined=0x{flags:x}")
