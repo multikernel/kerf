@@ -23,7 +23,7 @@ from /proc/kimage in an organized format.
 import re
 import sys
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 import click
 import libfdt
@@ -32,7 +32,7 @@ from ..baseline import BaselineManager
 from ..dtc.parser import DeviceTreeParser
 from ..exceptions import KernelInterfaceError, ParseError
 from ..metadata import load_instance_metadata
-from ..models import GlobalDeviceTree
+from ..models import DeviceInfo, GlobalDeviceTree
 from ..pool_diff import ANY_NODE
 from ..resources import get_pool_allocated_bytes
 from ..utils import get_instance_id_from_name, get_instance_status
@@ -80,7 +80,7 @@ def get_all_instance_names() -> List[str]:
     return sorted(instance_names)
 
 
-def read_instance_info(name: str) -> Dict[str, Optional[str]]:
+def read_instance_info(name: str) -> Dict[str, Any]:
     """
     Read instance information from /sys/fs/multikernel/instances/{name}/.
 
@@ -131,6 +131,8 @@ def read_instance_info(name: str) -> Dict[str, Optional[str]]:
                                     if not dts_content.startswith("/dts-v1/"):
                                         dts_content = "/dts-v1/;\n\n" + dts_content
                                     info["device_tree_source"] = dts_content
+                                    info["devices"] = \
+                                        parser.parse_instance_devices_from_bytes(file_data)
                                 except Exception:
                                     pass
                         except (OSError, IOError):
@@ -354,26 +356,33 @@ def display_baseline_info(tree: GlobalDeviceTree, verbose: bool = False):
                 for target_node, distance in sorted(numa_node.distance_matrix.items()):
                     click.echo(f"        -> Node {target_node}: {distance}")
 
-    # Devices
-    if hardware.devices:
-        click.echo("\n  Devices:")
-        for device_name, device_info in sorted(hardware.devices.items()):
-            click.echo(f"    {device_name}:")
-            if device_info.alias:
-                click.echo(f"      Alias:         {device_info.alias}")
+    _display_devices(hardware.devices)
+
+
+def _display_devices(devices: Dict[str, DeviceInfo]):
+    if not devices:
+        return
+    click.echo("\n  Devices:")
+    for device_name, device_info in sorted(devices.items()):
+        click.echo(f"    {device_name}:")
+        if device_info.alias:
+            click.echo(f"      Alias:         {device_info.alias}")
+        if device_info.compatible:
             click.echo(f"      Compatible:    {device_info.compatible}")
-            if device_info.device_type:
-                click.echo(f"      Type:          {device_info.device_type}")
-            if device_info.pci_id:
-                click.echo(f"      PCI ID:        {device_info.pci_id}")
-            if device_info.sriov_vfs:
-                click.echo(f"      SR-IOV VFs:    {device_info.sriov_vfs} total")
-                if device_info.available_vfs:
-                    click.echo(f"      Available VFs: {device_info.available_vfs}")
-            if device_info.namespaces:
-                click.echo(f"      Namespaces:    {device_info.namespaces} total")
-                if device_info.available_ns:
-                    click.echo(f"      Available NS:  {device_info.available_ns}")
+        if device_info.device_type:
+            click.echo(f"      Type:          {device_info.device_type}")
+        if device_info.pci_id:
+            click.echo(f"      PCI ID:        {device_info.pci_id}")
+        if device_info.iommu_base is not None:
+            click.echo(f"      IOMMU Unit:    0x{device_info.iommu_base:x}")
+        if device_info.sriov_vfs:
+            click.echo(f"      SR-IOV VFs:    {device_info.sriov_vfs} total")
+            if device_info.available_vfs:
+                click.echo(f"      Available VFs: {device_info.available_vfs}")
+        if device_info.namespaces:
+            click.echo(f"      Namespaces:    {device_info.namespaces} total")
+            if device_info.available_ns:
+                click.echo(f"      Available NS:  {device_info.available_ns}")
 
 
 def _display_kernel_metadata(metadata: Dict, verbose: bool = False):
@@ -436,7 +445,7 @@ def _display_rootfs_metadata(rootfs: Dict, verbose: bool = False):
 
 
 def display_instance_info(
-    instance_info: Dict[str, Optional[str]],
+    instance_info: Dict[str, Any],
     kimage_data: Optional[Dict[str, str]] = None,
     verbose: bool = False,
     metadata: Optional[Dict] = None,
@@ -480,6 +489,8 @@ def display_instance_info(
 
     if metadata and metadata.get("rootfs"):
         _display_rootfs_metadata(metadata["rootfs"], verbose)
+
+    _display_devices(instance_info.get("devices"))
 
     # Device tree source
     if "device_tree_source" in instance_info and instance_info["device_tree_source"]:

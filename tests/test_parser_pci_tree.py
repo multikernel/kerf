@@ -33,19 +33,21 @@ def _bus(sw, domain, bus, *devices):
     sw.property_u32("#size-cells", 2)
     sw.property_u32("linux,pci-domain", domain)
     sw.property("bus-range", struct.pack(">II", bus, bus))
-    for slot, func, vendor, device in devices:
+    for slot, func, vendor, device, *iommu in devices:
         sw.begin_node(f"pci@{slot:x},{func:x}")
         sw.property("reg", struct.pack(">5I", _phys_hi(bus, slot, func), 0, 0, 0, 0))
         sw.property_u32("vendor-id", vendor)
         sw.property_u32("device-id", device)
+        if iommu:
+            sw.property_u64("multikernel,iommu-base", iommu[0])
         sw.end_node()
     sw.end_node()
 
 
 def _pci_tree(sw, domain=0):
-    """Bus 0 with the SATA controller and bus 9 with the NIC, each a root bus."""
+    """Bus 0 with the SATA controller and bus 9 with the NIC behind a VT-d unit, each a root bus."""
     _bus(sw, domain, 0, (0x1F, 2, 0x8086, 0x2922))
-    _bus(sw, domain, 9, (0, 0, 0x1AF4, 0x1041))
+    _bus(sw, domain, 9, (0, 0, 0x1AF4, 0x1041, 0xFED90000))
 
 
 def _finish(sw):
@@ -146,3 +148,9 @@ def test_bridges_of_an_older_tree_are_walked_through():
 def test_instance_devices_are_found_under_their_buses():
     inst = DeviceTreeParser().parse_instance_dtb_from_bytes(_instance_dtb())
     assert inst.resources.devices == ["pci_0000_00_1f_2", "pci_0000_09_00_0"]
+
+
+def test_instance_devices_carry_their_iommu_unit():
+    devices = DeviceTreeParser().parse_instance_devices_from_bytes(_instance_dtb())
+    assert devices["pci_0000_09_00_0"].iommu_base == 0xFED90000
+    assert devices["pci_0000_00_1f_2"].iommu_base is None

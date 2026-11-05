@@ -18,12 +18,13 @@ Tests for `kerf show` baseline hardware display.
 
 from kerf.models import (
     CPUAllocation,
+    DeviceInfo,
     GlobalDeviceTree,
     HardwareInventory,
     MemoryAllocation,
     PoolMemoryRegion,
 )
-from kerf.show.main import display_baseline_info
+from kerf.show.main import display_baseline_info, display_instance_info
 
 
 def _tree(cpus, memory):
@@ -158,3 +159,26 @@ def test_cpu_host_reserved_hidden_when_the_kernel_reports_none(capsys, monkeypat
     display_baseline_info(_tree(cpus, memory))
 
     assert "Host Reserved:" not in capsys.readouterr().out
+
+
+def _nic(iommu_base=None):
+    return DeviceInfo(name="pci_0000_09_00_0", compatible="", device_type="pci",
+                      pci_id="0000:09:00.0", alias="enp9s0", iommu_base=iommu_base)
+
+
+def test_instance_devices_show_their_iommu_unit(capsys):
+    display_instance_info({"name": "web", "id": "1", "status": "active",
+                           "devices": {"pci_0000_09_00_0": _nic(0xFED90000)}})
+    out = capsys.readouterr().out
+
+    assert "pci_0000_09_00_0:" in out
+    assert "Alias:         enp9s0" in out
+    assert "PCI ID:        0000:09:00.0" in out
+    assert "IOMMU Unit:    0xfed90000" in out
+    assert "Compatible:" not in out
+
+
+def test_no_iommu_line_for_a_device_without_one(capsys):
+    display_instance_info({"name": "web", "devices": {"pci_0000_09_00_0": _nic()}})
+
+    assert "IOMMU Unit" not in capsys.readouterr().out

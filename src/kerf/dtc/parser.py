@@ -387,6 +387,9 @@ class DeviceTreeParser:
             device_info = self._parse_device_info(node, name)
             device_info.device_type = 'pci'
             device_info.pci_id = pci_id
+            iommu = self.fdt.getprop(node, 'multikernel,iommu-base', libfdt.QUIET_NOTFOUND)
+            if iommu != -libfdt.NOTFOUND:
+                device_info.iommu_base = iommu.as_uint64()
             found[node] = (name, device_info)
 
     def _parse_aliases(self, offsets: Dict[int, str]) -> Dict[str, str]:

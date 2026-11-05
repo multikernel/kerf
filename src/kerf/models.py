@@ -156,6 +156,7 @@ class DeviceInfo:
     alias: Optional[str] = None  # Stable name from /aliases (e.g., "nvme0")
     vendor_id: Optional[int] = None
     device_id: Optional[int] = None
+    iommu_base: Optional[int] = None  # Register base of the IOMMU unit it sits behind
     sriov_vfs: Optional[int] = None
     host_reserved_vf: Optional[int] = None
     available_vfs: Optional[List[int]] = None
