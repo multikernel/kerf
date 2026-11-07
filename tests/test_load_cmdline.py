@@ -14,7 +14,7 @@
 
 """Kernel parameters kerf load adds to every spawn's command line."""
 
-from kerf.load.main import required_kernel_params
+from kerf.load.main import build_ip_param, required_kernel_params
 
 PSEUDO_NMI = "irqchip.gicv3_pseudo_nmi=1"
 
@@ -42,3 +42,23 @@ def test_appended_again_when_turned_off_after_being_on():
     parts = [PSEUDO_NMI, "irqchip.gicv3_pseudo_nmi=0"]
 
     assert required_kernel_params(parts, "aarch64") == [PSEUDO_NMI]
+
+
+def test_dhcp_on_a_named_interface_puts_it_in_the_device_field():
+    param = build_ip_param("dhcp", None, "255.255.255.0", None, "enP9s0")
+    assert param == "ip=:::::enP9s0:dhcp"
+    assert param[3:].split(":")[5] == "enP9s0"
+
+
+def test_dhcp_on_any_interface():
+    assert build_ip_param("dhcp", None, "255.255.255.0", None, None) == "ip=dhcp"
+    assert build_ip_param("DHCP", None, "255.255.255.0", "web", None) == "ip=::::web::dhcp"
+
+
+def test_static_address():
+    assert (build_ip_param("192.168.122.157", "192.168.122.1", "255.255.255.0", None, "enP9s0")
+            == "ip=192.168.122.157::192.168.122.1:255.255.255.0::enP9s0:off")
+
+
+def test_no_address_no_parameter():
+    assert build_ip_param(None, None, "255.255.255.0", None, "eth0") is None

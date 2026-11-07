@@ -83,21 +83,18 @@ def build_ip_param(
     if not ip_addr:
         return None
 
-    if ip_addr.lower() == "dhcp":
-        if nic:
-            return f"ip=:::::::{nic}:dhcp"
+    dhcp = ip_addr.lower() == "dhcp"
+    if dhcp and not nic and not hostname:
         return "ip=dhcp"
 
-    # Static IP configuration
-    # Format: ip=<client-ip>:<server-ip>:<gw-ip>:<netmask>:<hostname>:<device>:<autoconf>
     parts = [
-        ip_addr,              # client-ip
-        "",                   # server-ip (empty)
-        gateway or "",        # gw-ip
-        netmask,              # netmask
-        hostname or "",       # hostname
-        nic or "",            # device
-        "off",                # autoconf (off for static)
+        "" if dhcp else ip_addr,
+        "",
+        "" if dhcp else gateway or "",
+        "" if dhcp else netmask,
+        hostname or "",
+        nic or "",
+        "dhcp" if dhcp else "off",
     ]
     return "ip=" + ":".join(parts)
 
