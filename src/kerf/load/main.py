@@ -61,7 +61,7 @@ SYS_KEXEC_FILE_LOAD_X86 = 320
 def build_ip_param(
     ip_addr: Optional[str],
     gateway: Optional[str],
-    netmask: str,
+    netmask: Optional[str],
     hostname: Optional[str],
     nic: Optional[str],
 ) -> Optional[str]:
@@ -91,7 +91,7 @@ def build_ip_param(
         "" if dhcp else ip_addr,
         "",
         "" if dhcp else gateway or "",
-        "" if dhcp else netmask,
+        "" if dhcp else netmask or "255.255.255.0",
         hostname or "",
         nic or "",
         "dhcp" if dhcp else "off",
@@ -255,7 +255,7 @@ def kexec_file_load(
 @click.option("--rootfs-dir", help="Use existing directory as rootfs instead of Docker image")
 @click.option("--ip", "ip_addr", help="IP address for spawn kernel (or 'dhcp')")
 @click.option("--gateway", help="Default gateway IP address")
-@click.option("--netmask", default="255.255.255.0", help="Network mask (default: 255.255.255.0)")
+@click.option("--netmask", help="Network mask (default: 255.255.255.0)")
 @click.option("--nic", help="Network interface name (e.g., eth0)")
 @click.option("--hostname", help="Hostname for spawn kernel")
 @click.option(
@@ -278,7 +278,7 @@ def load(  # pylint: disable=too-many-arguments,too-many-positional-arguments,to
     rootfs_dir: Optional[str],
     ip_addr: Optional[str],
     gateway: Optional[str],
-    netmask: str,
+    netmask: Optional[str],
     nic: Optional[str],
     hostname: Optional[str],
     console_device: Optional[str],
@@ -354,6 +354,12 @@ def load(  # pylint: disable=too-many-arguments,too-many-positional-arguments,to
 
         if entrypoint and not image and not rootfs_dir:
             click.echo("Error: --entrypoint requires --image or --rootfs-dir", err=True)
+            sys.exit(2)
+
+        network = {"--gateway": gateway, "--netmask": netmask, "--nic": nic, "--hostname": hostname}
+        given = [option for option, value in network.items() if value]
+        if given and not ip_addr:
+            click.echo(f"Error: {', '.join(given)} requires --ip (an address or dhcp)", err=True)
             sys.exit(2)
 
         instance_name = None
