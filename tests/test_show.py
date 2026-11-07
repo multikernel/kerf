@@ -163,7 +163,7 @@ def test_cpu_host_reserved_hidden_when_the_kernel_reports_none(capsys, monkeypat
 
 def _nic(iommu_base=None):
     return DeviceInfo(name="pci_0000_09_00_0", compatible="", device_type="pci",
-                      pci_id="0000:09:00.0", alias="enp9s0", iommu_base=iommu_base)
+                      pci_id="0000:09:00.0", label="enp9s0", iommu_base=iommu_base)
 
 
 def test_instance_devices_show_their_iommu_unit(capsys):
@@ -172,7 +172,8 @@ def test_instance_devices_show_their_iommu_unit(capsys):
     out = capsys.readouterr().out
 
     assert "pci_0000_09_00_0:" in out
-    assert "Alias:         enp9s0" in out
+    assert "Label:         enp9s0" in out
+    assert "Alias:" not in out
     assert "PCI ID:        0000:09:00.0" in out
     assert "IOMMU Unit:    0xfed90000" in out
     assert "Compatible:" not in out

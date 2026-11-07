@@ -243,6 +243,17 @@ def test_create_overlay_without_devices_has_one_fragment(sample_hardware, sample
     fdt = _assign(sample_hardware, sample_instances, [])
     assert fdt.path_offset("/fragment@1", quiet=[libfdt.FDT_ERR_NOTFOUND]) == MISSING
 
+def test_pool_device_add_carries_the_label():
+    diff = PoolDiff(devices_to_pool=["0001:01:00.1", "0000:05:00.0"],
+                    device_labels={"0001:01:00.1": "enP1s1f1"})
+    fdt, ov = _ov(OverlayGenerator().generate_pool_overlay(diff))
+
+    add = fdt.subnode_offset(ov, "device-add")
+    assert fdt.getprop(fdt.subnode_offset(add, "pci@0"), "label").as_str() == "enP1s1f1"
+    assert fdt.getprop(fdt.subnode_offset(add, "pci@1"), "label",
+                       quiet=[libfdt.FDT_ERR_NOTFOUND]) == MISSING
+
+
 def test_pool_device_add_carries_the_alias():
     diff = PoolDiff(devices_to_pool=["0000:04:00.0", "0000:05:00.0"],
                     device_aliases={"0000:04:00.0": "nvme0"})

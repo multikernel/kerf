@@ -156,6 +156,9 @@ class InstanceExtractor:
             if device_info.pci_id:
                 fdt_sw.property_string("pci-id", device_info.pci_id)
 
+            if device_info.label:
+                fdt_sw.property_string("label", device_info.label)
+
             if device_info.vendor_id is not None:
                 fdt_sw.property_u32("vendor-id", device_info.vendor_id)
 

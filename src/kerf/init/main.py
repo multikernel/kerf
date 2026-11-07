@@ -51,7 +51,7 @@ from ..models import (
     PoolMemoryRegion,
 )
 from ..pool_diff import ANY_NODE, PoolDiff, compute_pool_diff
-from ..devices import default_alias, is_partition, pci_node_name, split_alias
+from ..devices import check_label, default_label, is_partition, nvme_alias, pci_node_name, split_name
 from ..resources import get_busy_chunks_from_iomem
 from ..runtime import DeviceTreeManager
 from ..topology import cpu_id_name, cpu_numa_nodes, logical_to_physical, node_for_cpus
@@ -406,7 +406,7 @@ def parse_device_request(spec: Optional[str]) -> List[str]:
         spec: Comma-separated device entries, "none", or None
 
     Returns:
-        The requested entries ("device" or "device=alias"), empty for "none"
+        The requested entries ("device" or "device=name"), empty for "none"
         and for no request
 
     Raises:
@@ -566,7 +566,7 @@ def resolve_memory_nodes(requested: Dict[int, int],
 
 def pooled_device(pool_devices: Optional[Dict[str, DeviceInfo]],
                   ref: str) -> Optional[DeviceInfo]:
-    """A copy of the pool device that a node name, alias or PCI address names."""
+    """A copy of the pool device that a node name, label, alias or PCI address names."""
     if not pool_devices:
         return None
     name = HardwareInventory(cpus=None, memory=None, devices=pool_devices).find_device(ref)
@@ -590,7 +590,7 @@ def build_baseline_from_cmdline(
         memory: Pool memory request, either "2GB" on the node of the
                 requested CPUs, "8GB@0,8GB@1" for specific nodes, or "none"
         devices: Optional host device names or PCI addresses, each with an
-                 optional "=alias" (comma-separated, e.g. "nvme0n1,enp9s0"),
+                 optional "=name" (comma-separated, e.g. "nvme0n1,enp9s0"),
                  or "none"
         verbose: Whether to print verbose output
         pool_cpus: APIC IDs the pool already holds
@@ -667,7 +667,7 @@ def build_baseline_from_cmdline(
 
     device_dict = {}
     for entry in parse_device_request(devices):
-        host_name, alias = split_alias(entry)
+        host_name, label = split_name(entry)
         device_info = detect_device_from_system(host_name)
         if not device_info:
             # A device already in the pool is no longer on the host
@@ -681,12 +681,15 @@ def build_baseline_from_cmdline(
         name = host_name
         if device_info.device_type == "pci":
             name = pci_node_name(device_info.pci_id)
-            taken = {d.alias for d in device_dict.values() if d.alias}
-            alias = alias or device_info.alias or default_alias(host_name, device_info.compatible)
-            if alias in taken:
-                raise KernelInterfaceError(f"Alias '{alias}' is requested for more than one device")
+            label = label or device_info.label or default_label(host_name, device_info.compatible)
+            if label:
+                check_label(label, device_info.compatible)
+            if label and label in {d.label for d in device_dict.values()}:
+                raise KernelInterfaceError(f"Name '{label}' is requested for more than one device")
             device_info.name = name
-            device_info.alias = alias
+            device_info.label = label
+            if device_info.compatible == "pci-storage":
+                device_info.alias = nvme_alias(label)
             if is_partition(host_name):
                 click.echo(f"Note: {host_name} is a partition; the whole controller "
                            f"{device_info.pci_id} joins the pool")
@@ -698,6 +701,8 @@ def build_baseline_from_cmdline(
             click.echo(f"Detected device '{host_name}' as {name}:")
             click.echo(f"  Type: {device_info.device_type}")
             click.echo(f"  Compatible: {device_info.compatible}")
+            if device_info.label:
+                click.echo(f"  Label: {device_info.label}")
             if device_info.alias:
                 click.echo(f"  Alias: {device_info.alias}")
             if device_info.pci_id:
@@ -952,7 +957,7 @@ def _dump_baseline_dts(baseline_mgr: BaselineManager, tree: GlobalDeviceTree) ->
 @click.option('--input', '-i', help='Baseline DTB to replay, as written by "kerf dump". Mutually exclusive with --cpus, --memory and --devices.')
 @click.option('--cpus', '-c', help='Physical CPU IDs for baseline, the APIC ID on x86 or the MPIDR on arm64 (e.g., "128-134" or "128,130,132"), or "none" for no pool CPUs. Not logical CPU numbers. Mutually exclusive with --input.')
 @click.option('--memory', '-m', help='Pool memory: SIZE (e.g. "2GB") on the node of the requested CPUs, per-node "8GB@0,8GB@1", or "none" for no pool memory. Required with --cpus, mutually exclusive with --input.')
-@click.option('--devices', '-d', help='Host device names or PCI addresses to pool, each with an optional "=alias" the spawned kernels name the device by (comma-separated, e.g. "nvme0n1,enp9s0,0000:4f:01.0=nvme1"), or "none" for no devices. By default an NVMe keeps its controller name and a network device keeps its interface name. Mutually exclusive with --input.')
+@click.option('--devices', '-d', help='Host device names or PCI addresses to pool, each with an optional "=name" every kernel names the device by (comma-separated, e.g. "nvme0n1,enP1s1f1,0000:4f:01.0=nvme1"), or "none" for no devices. By default an NVMe keeps its controller name and a network device keeps its interface name. Mutually exclusive with --input.')
 @click.option('--dry-run', is_flag=True, help='Report the plan without applying it. Still reads the pool from the kernel, so it needs root.')
 @click.option('--report', is_flag=True, help='Generate detailed validation report. Ignored when the request asks for no memory.')
 @click.option('--format', type=click.Choice(['text', 'json', 'yaml']),

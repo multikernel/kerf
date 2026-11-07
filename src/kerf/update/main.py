@@ -56,7 +56,7 @@ def parse_device_request(spec: str) -> List[str]:
     """
     The devices an instance should hold, where "none" asks for none.
 
-    A device is named by alias ("enp9s0"), PCI address ("0000:09:00.0")
+    A device is named by its name ("enp9s0"), PCI address ("0000:09:00.0")
     or pool node name ("pci_0000_09_00_0"), comma-separated.
     """
     if spec_is_empty(spec, "--devices"):
@@ -121,7 +121,7 @@ def dump_overlay_for_debug(
 @click.option('--memory', '-m',
               help='Update memory allocation (e.g., "2GB", "2048MB")')
 @click.option('--devices', '-d',
-              help='The devices the instance should hold, by alias, PCI address or node name '
+              help='The devices the instance should hold, by name, PCI address or node name '
                    '(comma-separated, e.g. "enp9s0,0000:0a:00.0"), or "none" for no devices')
 @click.option('--dry-run', is_flag=True, help='Validate without applying to kernel')
 @click.option('--verbose', '-v', is_flag=True, help='Verbose output')

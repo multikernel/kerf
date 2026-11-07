@@ -154,3 +154,31 @@ def test_instance_devices_carry_their_iommu_unit():
     devices = DeviceTreeParser().parse_instance_devices_from_bytes(_instance_dtb())
     assert devices["pci_0000_09_00_0"].iommu_base == 0xFED90000
     assert devices["pci_0000_00_1f_2"].iommu_base is None
+
+
+def test_a_device_is_named_by_its_label():
+    sw = libfdt.FdtSw()
+    sw.finish_reservemap()
+    sw.begin_node("")
+    sw.property_string("compatible", "multikernel-v1")
+    sw.property_u32("id", 0)
+    sw.begin_node("resources")
+    sw.property("cpus", struct.pack(">Q", 1))
+    sw.end_node()
+    sw.begin_node("pci@1,1")
+    sw.property_string("compatible", "multikernel,pci-host-bridge")
+    sw.property_u32("linux,pci-domain", 1)
+    sw.begin_node("pci@0,1")
+    sw.property("reg", struct.pack(">5I", _phys_hi(1, 0, 1), 0, 0, 0, 0))
+    sw.property_u32("vendor-id", 0x15B3)
+    sw.property_u32("device-id", 0x1019)
+    sw.property_string("label", "enP1s1f1")
+    sw.end_node()
+    sw.end_node()
+    sw.end_node()
+
+    devices = DeviceTreeParser().parse_instance_devices_from_bytes(_finish(sw))
+
+    nic = devices["pci_0001_01_00_1"]
+    assert nic.label == "enP1s1f1"
+    assert nic.alias is None

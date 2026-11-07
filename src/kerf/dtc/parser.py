@@ -445,6 +445,9 @@ class DeviceTreeParser:
         except libfdt.FdtException:
             pass
 
+        label = self.fdt.getprop(node_offset, 'label', libfdt.QUIET_NOTFOUND)
+        label = None if label == -libfdt.NOTFOUND else label.as_str()
+
         try:
             vendor_id = self.fdt.getprop(node_offset, 'vendor-id').as_uint32()
         except libfdt.FdtException:
@@ -491,6 +494,7 @@ class DeviceTreeParser:
             device_type=device_type,
             device_name=device_name,
             pci_id=pci_id,
+            label=label,
             vendor_id=vendor_id,
             device_id=device_id,
             sriov_vfs=sriov_vfs,

@@ -30,6 +30,7 @@ class PoolDiff:
     devices_to_host: List[str] = field(default_factory=list)
     devices_lent: List[str] = field(default_factory=list)
     device_aliases: Dict[str, str] = field(default_factory=dict)
+    device_labels: Dict[str, str] = field(default_factory=dict)
     memory_to_pool: List[Tuple[int, int]] = field(default_factory=list)
     memory_to_host: List[PoolMemoryRegion] = field(default_factory=list)
 
@@ -105,6 +106,8 @@ def compute_pool_diff(current: GlobalDeviceTree, requested: GlobalDeviceTree,
     diff.devices_lent = sorted(lent - req_dev)
     diff.device_aliases = {d.pci_id: d.alias for d in requested.hardware.devices.values()
                            if d.alias and d.pci_id in diff.devices_to_pool}
+    diff.device_labels = {d.pci_id: d.label for d in requested.hardware.devices.values()
+                          if d.label and d.pci_id in diff.devices_to_pool}
 
     _memory_diff(current.hardware.memory.regions, requested.hardware.memory.requested,
                  busy_chunks or set(), diff)

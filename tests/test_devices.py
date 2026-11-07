@@ -1,8 +1,11 @@
-"""Pool device naming: addresses identify, aliases name."""
+"""Pool device naming: addresses identify, labels name."""
 
 import pytest
 
-from kerf.devices import default_alias, is_partition, normalize_pci_id, pci_node_name, split_alias
+from kerf.devices import (
+    check_label, default_label, is_partition, normalize_pci_id, nvme_alias, pci_node_name,
+    split_name,
+)
 from kerf.models import DeviceInfo, HardwareInventory, CPUAllocation, MemoryAllocation
 
 
@@ -28,18 +31,27 @@ def test_pci_node_name_matches_the_kernel_derivation():
 
 @pytest.mark.parametrize("entry, expected", [
     ("nvme0n1", ("nvme0n1", None)),
-    ("enp9s0=ethernet0", ("enp9s0", "ethernet0")),
+    ("enp9s0=wan0", ("enp9s0", "wan0")),
     ("0000:4f:01.0=nvme1", ("0000:4f:01.0", "nvme1")),
+    ("enP1s1f1=enP1s1f1", ("enP1s1f1", "enP1s1f1")),
+    ("enp9s0=Bond_0", ("enp9s0", "Bond_0")),
 ])
-def test_split_alias(entry, expected):
-    assert split_alias(entry) == expected
+def test_split_name(entry, expected):
+    assert split_name(entry) == expected
 
 
-@pytest.mark.parametrize("entry", ["enp9s0=Ethernet0", "enp9s0=", "nvme0n1=nvme_0",
-                                   "x=" + "a" * 32])
-def test_split_alias_rejects_names_outside_the_spec(entry):
+@pytest.mark.parametrize("entry", ["enp9s0=", "enp9s0=a b", "enp9s0=a/b", "enp9s0=a:b",
+                                   "enp9s0=.", "enp9s0=..", "x=" + "a" * 32])
+def test_split_name_rejects_names_no_kernel_can_carry(entry):
     with pytest.raises(ValueError):
-        split_alias(entry)
+        split_name(entry)
+
+
+def test_network_device_name_must_fit_an_interface_name():
+    check_label("enp129s0f0np0", "pci-network")
+    check_label("too-long-for-an-interface", "pci-storage")
+    with pytest.raises(ValueError):
+        check_label("too-long-for-an-interface", "pci-network")
 
 
 @pytest.mark.parametrize("host_name, compatible, expected", [
@@ -47,15 +59,20 @@ def test_split_alias_rejects_names_outside_the_spec(entry):
     ("nvme3n1p1", "pci-storage", "nvme3"),
     ("nvme12", "pci-storage", "nvme12"),
     ("enp9s0", "pci-network", "enp9s0"),
-    ("eth0", "pci-network", "eth0"),
-    ("enp129s0f0np0", "pci-network", "enp129s0f0np0"),
-    ("a-name-too-long-for-an-interface", "pci-network", None),
-    ("Bond_0", "pci-network", None),
+    ("enP1s1f1", "pci-network", "enP1s1f1"),
+    ("Bond_0", "pci-network", "Bond_0"),
     ("0000:4f:01.0", "pci-storage", None),
     ("sda", "pci-storage", None),
 ])
-def test_default_alias(host_name, compatible, expected):
-    assert default_alias(host_name, compatible) == expected
+def test_default_label(host_name, compatible, expected):
+    assert default_label(host_name, compatible) == expected
+
+
+@pytest.mark.parametrize("label, expected", [
+    ("nvme0", "nvme0"), ("nvme12", "nvme12"), ("fast", None), ("nvme0n1", None), (None, None),
+])
+def test_nvme_alias(label, expected):
+    assert nvme_alias(label) == expected
 
 
 def test_is_partition():
@@ -73,15 +90,19 @@ def _inventory(**devices):
     )
 
 
-def test_find_device_by_node_name_alias_or_address():
+def test_find_device_by_node_name_label_alias_or_address():
     inventory = _inventory(
         pci_0000_4f_01_0=DeviceInfo(name="pci_0000_4f_01_0", compatible="pci-storage",
-                                    device_type="pci", pci_id="0000:4f:01.0", alias="nvme0"),
+                                    device_type="pci", pci_id="0000:4f:01.0", alias="nvme0",
+                                    label="nvme0"),
+        pci_0001_01_00_1=DeviceInfo(name="pci_0001_01_00_1", compatible="pci-network",
+                                    device_type="pci", pci_id="0001:01:00.1", label="enP1s1f1"),
         serial_console=DeviceInfo(name="serial_console", compatible="ns16550",
                                   device_type="platform", device_name="serial8250"),
     )
     for ref in ("pci_0000_4f_01_0", "nvme0", "0000:4f:01.0", "0000:4F:01.0"):
         assert inventory.find_device(ref) == "pci_0000_4f_01_0"
+    assert inventory.find_device("enP1s1f1") == "pci_0001_01_00_1"
     assert inventory.find_device("serial_console") == "serial_console"
     assert inventory.find_device("nvme1") is None
     assert inventory.find_device("0000:4f:01.1") is None

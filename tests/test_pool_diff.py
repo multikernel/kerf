@@ -125,6 +125,15 @@ def test_device_aliases_follow_devices_joining_the_pool():
     assert d.device_aliases == {"0000:04:00.0": "nvme1"}
 
 
+def test_device_labels_follow_devices_joining_the_pool():
+    cur = _tree([4], devices=["0000:03:00.0"])
+    req = _tree([4], devices=["0000:03:00.0", "0001:01:00.1"])
+    req.hardware.devices["0000:03:00.0"].label = "nvme0"
+    req.hardware.devices["0001:01:00.1"].label = "enP1s1f1"
+    d = compute_pool_diff(cur, req)
+    assert d.device_labels == {"0001:01:00.1": "enP1s1f1"}
+
+
 def test_a_device_lent_to_an_instance_is_a_pool_member():
     """The pool tree lists only free devices; a lent one is still the pool's."""
     cur = _tree([4], devices=[])

@@ -18,10 +18,11 @@ Naming of pool PCI devices.
 A pool device is identified by its PCI address and nothing else: host
 names such as nvme0n1 or enp9s0 are probe-order or udev artifacts that
 differ between kernels, while the address is fixed by the fabric. The
-device node is named after the address, and a standard device tree
-/aliases entry gives the device a stable name: the name the device has in
-the kernel that owns it, which a spawned kernel then applies ("nvme0"
-stays nvme0 and its namespaces nvme0n1, "enp9s0" stays enp9s0).
+device node is named after the address, and its label carries the name
+the device has in the kernel that pooled it, verbatim, which every
+spawned kernel then applies ("enP1s1f1" stays enP1s1f1). An NVMe
+controller also gets a standard device tree /aliases entry ("nvme0"),
+which numbers the controller and its namespaces.
 """
 
 import re
@@ -29,8 +30,9 @@ from typing import Optional, Tuple
 
 PCI_ID_RE = re.compile(r'^([0-9a-fA-F]{1,4}):([0-9a-fA-F]{1,2}):([0-9a-fA-F]{1,2})\.([0-9a-fA-F])$')
 PCI_NODE_RE = re.compile(r'^pci_([0-9a-fA-F]{1,4})_([0-9a-fA-F]{1,2})_([0-9a-fA-F]{1,2})_([0-9a-fA-F])$')
-ALIAS_RE = re.compile(r'^[a-z0-9-]{1,31}$')
 NVME_NAME_RE = re.compile(r'^(nvme\d+)(?:n\d+(p\d+)?)?$')
+NVME_CONTROLLER_RE = re.compile(r'^nvme\d+$')
+LABEL_MAX = 31
 IFNAMSIZ = 16
 
 
@@ -51,17 +53,33 @@ def pci_node_name(pci_id: str) -> str:
     return "pci_" + normalized.replace(":", "_").replace(".", "_")
 
 
-def split_alias(entry: str) -> Tuple[str, Optional[str]]:
-    """Split a "device" or "device=alias" request into its parts."""
-    name, sep, alias = entry.partition("=")
-    if not sep:
-        return name, None
-    if not ALIAS_RE.match(alias):
+def check_label(label: str, compatible: Optional[str] = None) -> None:
+    """
+    Reject a name the kernels cannot carry or, for a network device, apply.
+
+    The rules are the kernel's own for an interface name, so any name the
+    host gave a device passes.
+    """
+    if (not label or len(label) > LABEL_MAX or label in (".", "..")
+            or any(c in "/:,=" or c.isspace() for c in label)):
         raise ValueError(
-            f"Invalid alias '{alias}' for device '{name}': "
-            "use 1 to 31 characters from a-z, 0-9 and '-', like nvme0 or enp9s0"
+            f"Invalid name '{label}': use 1 to {LABEL_MAX} characters "
+            "without whitespace, '/', ':', ',' or '='"
         )
-    return name, alias
+    if compatible == "pci-network" and len(label) >= IFNAMSIZ:
+        raise ValueError(
+            f"Invalid name '{label}' for a network device: "
+            f"an interface name is at most {IFNAMSIZ - 1} characters"
+        )
+
+
+def split_name(entry: str) -> Tuple[str, Optional[str]]:
+    """Split a "device" or "device=name" request into its parts."""
+    device, sep, name = entry.partition("=")
+    if not sep:
+        return device, None
+    check_label(name)
+    return device, name
 
 
 def is_partition(host_name: str) -> bool:
@@ -69,19 +87,24 @@ def is_partition(host_name: str) -> bool:
     return bool(match and match.group(2))
 
 
-def default_alias(host_name: str, compatible: Optional[str]) -> Optional[str]:
+def default_label(host_name: str, compatible: Optional[str]) -> Optional[str]:
     """
-    The alias a host device name implies, None when it implies nothing.
+    The name a host device name implies, None when it implies nothing.
 
     An NVMe name carries its controller name, which the namespaces follow.
-    A network interface name is the alias itself, when the kernel can
-    apply it. A raw PCI address implies no name at all.
+    A network interface name is the name itself. A raw PCI address, or a
+    name of something other than the PCI function, implies no name at all.
     """
     if normalize_pci_id(host_name):
         return None
     match = NVME_NAME_RE.match(host_name)
     if match:
         return match.group(1)
-    if compatible == "pci-network" and ALIAS_RE.match(host_name) and len(host_name) < IFNAMSIZ:
+    if compatible == "pci-network":
         return host_name
     return None
+
+
+def nvme_alias(label: Optional[str]) -> Optional[str]:
+    """The /aliases entry numbering an NVMe controller its label names."""
+    return label if label and NVME_CONTROLLER_RE.match(label) else None

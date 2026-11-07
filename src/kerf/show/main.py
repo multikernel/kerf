@@ -365,6 +365,8 @@ def _display_devices(devices: Dict[str, DeviceInfo]):
     click.echo("\n  Devices:")
     for device_name, device_info in sorted(devices.items()):
         click.echo(f"    {device_name}:")
+        if device_info.label:
+            click.echo(f"      Label:         {device_info.label}")
         if device_info.alias:
             click.echo(f"      Alias:         {device_info.alias}")
         if device_info.compatible:

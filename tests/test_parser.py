@@ -180,6 +180,18 @@ def test_aliases_survive_the_dtb_round_trip(sample_tree):
     assert parser.fdt.getprop(aliases, "nvme0").as_str() == "/resources/devices/pci_0000_4f_01_0"
 
 
+def test_labels_survive_the_dtb_round_trip(sample_tree):
+    sample_tree.hardware.devices["pci_0001_01_00_1"] = DeviceInfo(
+        name="pci_0001_01_00_1", compatible="pci-network", device_type="pci",
+        pci_id="0001:01:00.1", vendor_id=0x15b3, device_id=0x1019, label="enP1s1f1",
+    )
+    dtb_data = InstanceExtractor().generate_global_dtb(sample_tree)
+
+    parsed = DeviceTreeParser().parse_dtb_from_bytes(dtb_data)
+    assert parsed.hardware.devices["pci_0001_01_00_1"].label == "enP1s1f1"
+    assert parsed.hardware.devices["pci_0001_01_00_1"].alias is None
+
+
 def test_no_aliases_node_without_aliases(sample_tree):
     parser = DeviceTreeParser()
     parser.parse_dtb_from_bytes(InstanceExtractor().generate_global_dtb(sample_tree))

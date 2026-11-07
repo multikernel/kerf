@@ -327,7 +327,7 @@ def test_an_empty_request_does_not_read_the_pool_back(monkeypatch, capsys):
 def _pooled_nic():
     return {"pci_0000_09_00_0": DeviceInfo(
         name="pci_0000_09_00_0", compatible="", device_type="pci",
-        pci_id="0000:09:00.0", vendor_id=0x1AF4, device_id=0x1041, alias="enp9s0")}
+        pci_id="0000:09:00.0", vendor_id=0x1AF4, device_id=0x1041, label="enp9s0")}
 
 
 @pytest.mark.parametrize("ref", ["enp9s0", "0000:09:00.0", "pci_0000_09_00_0"])
@@ -341,16 +341,16 @@ def test_a_pooled_device_is_resolved_from_the_pool(monkeypatch, ref):
 
     nic = requested.hardware.devices["pci_0000_09_00_0"]
     assert nic.pci_id == "0000:09:00.0"
-    assert nic.alias == "enp9s0"
+    assert nic.label == "enp9s0"
 
 
-def test_a_pooled_device_keeps_a_new_alias(monkeypatch):
+def test_a_pooled_device_keeps_a_new_name(monkeypatch):
     monkeypatch.setattr(main, "detect_device_from_system", lambda name: None)
 
     requested = main.build_baseline_from_cmdline("1-3", memory="512MB", devices="0000:09:00.0=uplink",
                                                  pool_devices=_pooled_nic())
 
-    assert requested.hardware.devices["pci_0000_09_00_0"].alias == "uplink"
+    assert requested.hardware.devices["pci_0000_09_00_0"].label == "uplink"
 
 
 def test_an_unknown_device_is_still_an_error(monkeypatch):
@@ -395,3 +395,25 @@ def test_the_boot_cpu_is_found_by_its_own_id(monkeypatch):
 
     assert tree.hardware.cpus.available == [0x20000, 0x30000]
     assert tree.hardware.cpus.host_reserved == [0x10000]
+
+
+def test_a_nic_keeps_its_interface_name_verbatim(monkeypatch):
+    monkeypatch.setattr(main, "detect_device_from_system", lambda name: DeviceInfo(
+        name=name, compatible="pci-network", device_type="pci", pci_id="0001:01:00.1",
+        vendor_id=0x15B3, device_id=0x1019))
+
+    requested = main.build_baseline_from_cmdline("1-3", memory="512MB", devices="enP1s1f1")
+
+    nic = requested.hardware.devices["pci_0001_01_00_1"]
+    assert nic.label == "enP1s1f1"
+    assert nic.alias is None
+
+
+def test_an_nvme_controller_is_named_and_numbered(monkeypatch):
+    monkeypatch.setattr(main, "detect_device_from_system", lambda name: DeviceInfo(
+        name=name, compatible="pci-storage", device_type="pci", pci_id="0000:4f:00.0"))
+
+    requested = main.build_baseline_from_cmdline("1-3", memory="512MB", devices="nvme1n1")
+
+    nvme = requested.hardware.devices["pci_0000_4f_00_0"]
+    assert (nvme.label, nvme.alias) == ("nvme1", "nvme1")

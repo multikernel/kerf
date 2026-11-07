@@ -307,7 +307,7 @@ def parse_device_list(device_spec: Optional[str]) -> List[str]:
     """
     Parse device specification string into list of device references.
 
-    A reference is an alias ("nvme0"), a PCI address ("0000:4f:01.0") or a
+    A reference is a name ("nvme0", "enP1s1f1"), a PCI address ("0000:4f:01.0") or a
     device node name ("pci_0000_4f_01_0") from the baseline, comma-separated.
 
     Args:
@@ -399,7 +399,7 @@ def dump_overlay_for_debug(
 @click.option(
     "--devices",
     "-d",
-    help='Pool devices to assign, by alias, PCI address or node name '
+    help='Pool devices to assign, by name, PCI address or node name '
     '(comma-separated, e.g. "nvme0,0000:09:00.0"), as listed by kerf show.',
 )
 @click.option(
