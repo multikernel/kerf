@@ -17,7 +17,9 @@ Per-instance load metadata recorded by kerf load.
 
 The kernel's /proc/kimage table only knows about loaded segments, not the
 source image file, so kerf load records the kernel image provenance here
-for kerf show to display.
+for kerf show to display. The record lives on tmpfs and is keyed by
+instance ID because it describes a load, which neither survives a reboot nor
+carries over to a later instance reusing the same name.
 """
 
 import hashlib
@@ -35,35 +37,35 @@ from .vmlinuz import (
     payload_compression,
 )
 
-KERF_INSTANCES_DIR = "/var/lib/kerf/instances"
+KERF_INSTANCES_DIR = "/run/kerf/instances"
 
 # Setup header field holding a pointer to the version string, less 0x200
 BZIMAGE_KERNEL_VERSION = 0x20E
 
 
-def _metadata_path(name: str) -> Path:
-    return Path(KERF_INSTANCES_DIR) / f"{name}.json"
+def _metadata_path(instance_id: int) -> Path:
+    return Path(KERF_INSTANCES_DIR) / f"{instance_id}.json"
 
 
-def save_instance_metadata(name: str, metadata: dict) -> None:
-    """Persist load metadata for an instance, replacing any previous record."""
-    path = _metadata_path(name)
+def save_instance_metadata(instance_id: int, metadata: dict) -> None:
+    """Record load metadata for an instance, replacing any previous record."""
+    path = _metadata_path(instance_id)
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(".tmp")
     tmp.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
     os.replace(tmp, path)
 
 
-def load_instance_metadata(name: str) -> Optional[dict]:
+def load_instance_metadata(instance_id: int) -> Optional[dict]:
     """Read load metadata for an instance, or None if absent or unreadable."""
     try:
-        return json.loads(_metadata_path(name).read_text(encoding="utf-8"))
+        return json.loads(_metadata_path(instance_id).read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
 
 
-def delete_instance_metadata(name: str) -> None:
-    _metadata_path(name).unlink(missing_ok=True)
+def delete_instance_metadata(instance_id: int) -> None:
+    _metadata_path(instance_id).unlink(missing_ok=True)
 
 
 def _bzimage_version(data: bytes) -> Optional[str]:

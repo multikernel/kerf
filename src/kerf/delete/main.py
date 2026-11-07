@@ -193,7 +193,7 @@ def delete(
             try:
                 from ..metadata import delete_instance_metadata
 
-                delete_instance_metadata(instance_name)
+                delete_instance_metadata(instance_id)
             except OSError:
                 pass
 

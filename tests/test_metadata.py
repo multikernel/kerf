@@ -40,28 +40,28 @@ def instances_dir(tmp_path, monkeypatch):
 class TestInstanceMetadataStore:
     def test_save_load_roundtrip(self):
         metadata = {"kernel": {"path": "/boot/vmlinuz"}, "initrd": None}
-        save_instance_metadata("web-server", metadata)
-        assert load_instance_metadata("web-server") == metadata
+        save_instance_metadata(1, metadata)
+        assert load_instance_metadata(1) == metadata
 
     def test_load_missing_returns_none(self):
-        assert load_instance_metadata("no-such-instance") is None
+        assert load_instance_metadata(42) is None
 
     def test_save_overwrites_previous(self):
-        save_instance_metadata("web-server", {"loaded_at": "old"})
-        save_instance_metadata("web-server", {"loaded_at": "new"})
-        assert load_instance_metadata("web-server") == {"loaded_at": "new"}
+        save_instance_metadata(1, {"loaded_at": "old"})
+        save_instance_metadata(1, {"loaded_at": "new"})
+        assert load_instance_metadata(1) == {"loaded_at": "new"}
 
     def test_delete_removes_metadata(self):
-        save_instance_metadata("web-server", {"kernel": {}})
-        delete_instance_metadata("web-server")
-        assert load_instance_metadata("web-server") is None
+        save_instance_metadata(1, {"kernel": {}})
+        delete_instance_metadata(1)
+        assert load_instance_metadata(1) is None
 
     def test_delete_missing_is_noop(self):
-        delete_instance_metadata("no-such-instance")
+        delete_instance_metadata(42)
 
     def test_load_corrupt_file_returns_none(self, tmp_path):
-        (tmp_path / "web-server.json").write_text("not json{")
-        assert load_instance_metadata("web-server") is None
+        (tmp_path / "1.json").write_text("not json{")
+        assert load_instance_metadata(1) is None
 
 
 class TestInspectKernelImage:
@@ -196,7 +196,7 @@ class TestDisplayMetadata:
 
         display_instance_info(
             {"name": "web-server", "id": "1", "status": "loaded"},
-            kimage_data=None,
+            kimage_data={"mk_id": "1", "type": "multikernel"},
             metadata=metadata,
         )
         assert "Initrd" not in capsys.readouterr().out
@@ -209,30 +209,34 @@ class TestDisplayMetadata:
 
         display_instance_info(
             {"name": "web-server", "id": "1", "status": "loaded"},
-            kimage_data=None,
+            kimage_data={"mk_id": "1", "type": "multikernel"},
             metadata=metadata,
         )
         assert "/boot/initrd.img (uncompressed cpio)" in capsys.readouterr().out
 
-    def test_metadata_shown_without_kimage_data(self, capsys):
+    def test_stale_metadata_hidden_without_kimage_data(self, capsys):
         from kerf.show.main import display_instance_info
 
+        metadata = self._metadata()
+        metadata["rootfs"] = {"source": "docker", "image": "alpine:latest"}
         display_instance_info(
-            {"name": "web-server", "id": "1", "status": "created"},
+            {"name": "web-server", "id": "1", "status": "ready"},
             kimage_data=None,
-            metadata=self._metadata(),
+            metadata=metadata,
         )
 
         out = capsys.readouterr().out
-        assert "Kernel Image:" in out
-        assert "/boot/vmlinuz-7.0.11" in out
+        assert "Kernel Image:" not in out
+        assert "/boot/vmlinuz-7.0.11" not in out
+        assert "/boot/initrd.img" not in out
+        assert "alpine:latest" not in out
 
     def test_sha256_only_in_verbose(self, capsys):
         from kerf.show.main import display_instance_info
 
         display_instance_info(
             {"name": "web-server", "id": "1", "status": "loaded"},
-            kimage_data=None,
+            kimage_data={"mk_id": "1", "type": "multikernel"},
             metadata=self._metadata(),
         )
         out = capsys.readouterr().out
@@ -241,7 +245,7 @@ class TestDisplayMetadata:
 
         display_instance_info(
             {"name": "web-server", "id": "1", "status": "loaded"},
-            kimage_data=None,
+            kimage_data={"mk_id": "1", "type": "multikernel"},
             metadata=self._metadata(),
             verbose=True,
         )
@@ -263,7 +267,7 @@ class TestDisplayMetadata:
 
         display_instance_info(
             {"name": "web-server", "id": "1", "status": "loaded"},
-            kimage_data=None,
+            kimage_data={"mk_id": "1", "type": "multikernel"},
             metadata=metadata,
         )
         out = capsys.readouterr().out
@@ -287,7 +291,7 @@ class TestDisplayMetadata:
 
         display_instance_info(
             {"name": "web-server", "id": "1", "status": "loaded"},
-            kimage_data=None,
+            kimage_data={"mk_id": "1", "type": "multikernel"},
             metadata=metadata,
             verbose=True,
         )
@@ -306,14 +310,14 @@ class TestDisplayMetadata:
 
         display_instance_info(
             {"name": "web-server", "id": "1", "status": "loaded"},
-            kimage_data=None,
+            kimage_data={"mk_id": "1", "type": "multikernel"},
             metadata=metadata,
         )
         assert "ef" * 32 not in capsys.readouterr().out
 
         display_instance_info(
             {"name": "web-server", "id": "1", "status": "loaded"},
-            kimage_data=None,
+            kimage_data={"mk_id": "1", "type": "multikernel"},
             metadata=metadata,
             verbose=True,
         )
@@ -331,7 +335,7 @@ class TestDisplayMetadata:
 
         display_instance_info(
             {"name": "web-server", "id": "1", "status": "loaded"},
-            kimage_data=None,
+            kimage_data={"mk_id": "1", "type": "multikernel"},
             metadata=metadata,
         )
         out = capsys.readouterr().out
@@ -343,7 +347,7 @@ class TestDisplayMetadata:
 
         display_instance_info(
             {"name": "web-server", "id": "1", "status": "loaded"},
-            kimage_data=None,
+            kimage_data={"mk_id": "1", "type": "multikernel"},
             metadata=self._metadata(),
         )
         assert "Rootfs:" not in capsys.readouterr().out
@@ -357,7 +361,7 @@ class TestDisplayMetadata:
 
         display_instance_info(
             {"name": "web-server", "id": "1", "status": "loaded"},
-            kimage_data=None,
+            kimage_data={"mk_id": "1", "type": "multikernel"},
             metadata=metadata,
         )
         assert "vmlinux (ELF)" in capsys.readouterr().out

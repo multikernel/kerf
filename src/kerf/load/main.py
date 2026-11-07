@@ -634,7 +634,7 @@ def load(  # pylint: disable=too-many-arguments,too-many-positional-arguments,to
                         "size": daxfs_image.size,
                     }
             try:
-                save_instance_metadata(instance_name, {
+                save_instance_metadata(instance_id, {
                     "kernel": inspect_kernel_image(kernel_path),
                     "initrd": inspect_initrd_image(initrd_path) if initrd_path else None,
                     "rootfs": rootfs_meta,

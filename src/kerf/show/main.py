@@ -459,6 +459,10 @@ def display_instance_info(
         verbose: Whether to show verbose information
         metadata: Optional load metadata recorded by kerf load
     """
+    if not kimage_data:
+        # A record without a loaded kimage is left over from an earlier load
+        metadata = None
+
     name = instance_info.get("name", "unknown")
     instance_id = instance_info.get("id")
     status = instance_info.get("status")
@@ -475,13 +479,11 @@ def display_instance_info(
         click.echo(f"  Status:          {status}")
 
     # Kernel image information from /proc/kimage plus load metadata
-    if kimage_data or metadata:
+    if kimage_data:
         click.echo("\n  Kernel Image:")
-        if kimage_data:
-            for key, value in kimage_data.items():
-                # Format key nicely
-                key_display = key.replace("_", " ").title()
-                click.echo(f"    {key_display:15} {value}")
+        for key, value in kimage_data.items():
+            key_display = key.replace("_", " ").title()
+            click.echo(f"    {key_display:15} {value}")
         if metadata:
             _display_kernel_metadata(metadata, verbose)
     elif instance_id and verbose:
@@ -576,7 +578,7 @@ def show(name: Optional[str], verbose: bool):
             # Display information
             display_instance_info(
                 instance_info, kimage_data, verbose,
-                metadata=load_instance_metadata(name),
+                metadata=load_instance_metadata(instance_id),
             )
         else:
             # Show all instances and baseline
@@ -630,7 +632,7 @@ def show(name: Optional[str], verbose: bool):
 
                 display_instance_info(
                     instance_info, kimage_data, verbose,
-                    metadata=load_instance_metadata(inst_name),
+                    metadata=load_instance_metadata(instance_id) if kimage_data else None,
                 )
 
             click.echo()
