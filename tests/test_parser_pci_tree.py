@@ -33,13 +33,15 @@ def _bus(sw, domain, bus, *devices):
     sw.property_u32("#size-cells", 2)
     sw.property_u32("linux,pci-domain", domain)
     sw.property("bus-range", struct.pack(">II", bus, bus))
-    for slot, func, vendor, device, *iommu in devices:
+    for slot, func, vendor, device, *rest in devices:
         sw.begin_node(f"pci@{slot:x},{func:x}")
         sw.property("reg", struct.pack(">5I", _phys_hi(bus, slot, func), 0, 0, 0, 0))
         sw.property_u32("vendor-id", vendor)
         sw.property_u32("device-id", device)
-        if iommu:
-            sw.property_u64("multikernel,iommu-base", iommu[0])
+        if rest:
+            iommu, label = rest
+            sw.property_u64("multikernel,iommu-base", iommu)
+            sw.property_string("label", label)
         sw.end_node()
     sw.end_node()
 
@@ -47,7 +49,7 @@ def _bus(sw, domain, bus, *devices):
 def _pci_tree(sw, domain=0):
     """Bus 0 with the SATA controller and bus 9 with the NIC behind a VT-d unit, each a root bus."""
     _bus(sw, domain, 0, (0x1F, 2, 0x8086, 0x2922))
-    _bus(sw, domain, 9, (0, 0, 0x1AF4, 0x1041, 0xFED90000))
+    _bus(sw, domain, 9, (0, 0, 0x1AF4, 0x1041, 0xFED90000, "enp9s0"))
 
 
 def _finish(sw):
@@ -71,9 +73,6 @@ def _pool_dtb():
     sw.property_u32("numa-node-id", 0)
     sw.end_node()
     sw.end_node()
-    sw.begin_node("aliases")
-    sw.property_string("enp9s0", "/pci@0,9/pci@0,0")
-    sw.end_node()
     _pci_tree(sw)
     sw.end_node()
     return _finish(sw)
@@ -91,9 +90,6 @@ def _instance_dtb():
     sw.property_u64("memory-bytes", 128 << 20)
     sw.property("cpus", struct.pack(">Q", 2))
     sw.end_node()
-    sw.begin_node("aliases")
-    sw.property_string("enp9s0", "/pci@0,9/pci@0,0")
-    sw.end_node()
     _pci_tree(sw)
     sw.end_node()
     return _finish(sw)
@@ -107,11 +103,11 @@ def test_pool_devices_are_found_under_their_buses():
     assert nic.device_type == "pci"
     assert nic.vendor_id == 0x1AF4
     assert nic.device_id == 0x1041
-    assert nic.alias == "enp9s0"
+    assert nic.label == "enp9s0"
 
     sata = tree.hardware.devices["pci_0000_00_1f_2"]
     assert sata.pci_id == "0000:00:1f.2"
-    assert sata.alias is None
+    assert sata.label is None
     assert set(tree.hardware.devices) == {"pci_0000_09_00_0", "pci_0000_00_1f_2"}
 
 
@@ -181,4 +177,3 @@ def test_a_device_is_named_by_its_label():
 
     nic = devices["pci_0001_01_00_1"]
     assert nic.label == "enP1s1f1"
-    assert nic.alias is None

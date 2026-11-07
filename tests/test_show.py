@@ -173,7 +173,6 @@ def test_instance_devices_show_their_iommu_unit(capsys):
 
     assert "pci_0000_09_00_0:" in out
     assert "Label:         enp9s0" in out
-    assert "Alias:" not in out
     assert "PCI ID:        0000:09:00.0" in out
     assert "IOMMU Unit:    0xfed90000" in out
     assert "Compatible:" not in out

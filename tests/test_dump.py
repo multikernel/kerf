@@ -113,8 +113,8 @@ def test_dump_dts_on_a_tty_is_fine(monkeypatch):
 
 
 def test_instance_dtb_with_host_bridge_nodes_parses_and_renders():
-    """The kernel now emits /aliases and pci@D,B host-bridge nodes alongside
-    /resources; dump parsing and DTS rendering must take them in stride."""
+    """The kernel now emits pci@D,B host-bridge nodes alongside /resources;
+    dump parsing and DTS rendering must take them in stride."""
     import struct
     import libfdt
     from kerf.dtc.parser import DeviceTreeParser
@@ -135,12 +135,10 @@ def test_instance_dtb_with_host_bridge_nodes_parses_and_renders():
     sw.property_string("pci-id", "0000:50:00.0")
     sw.property_u32("vendor-id", 0x144D)
     sw.property_u32("device-id", 0xA80A)
+    sw.property_string("label", "nvme0")
     sw.end_node()
     sw.end_node()
     sw.end_node()  # resources
-    sw.begin_node("aliases")
-    sw.property_string("nvme0", "/resources/devices/pci_0000_50_00_0")
-    sw.end_node()
     sw.begin_node("pci@0,50")
     sw.property_string("compatible", "multikernel,pci-host-bridge")
     sw.property_string("device_type", "pci")
@@ -166,4 +164,4 @@ def test_instance_dtb_with_host_bridge_nodes_parses_and_renders():
     assert "pci@0,50 {" in text
     assert "multikernel,pci-host-bridge" in text
     assert "bus-range" in text
-    assert "nvme0" in text
+    assert 'label = "nvme0"' in text

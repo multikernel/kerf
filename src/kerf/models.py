@@ -153,7 +153,6 @@ class DeviceInfo:
     device_type: Optional[str] = None  # "pci", "platform", etc.
     device_name: Optional[str] = None  # For platform devices (e.g., "serial8250")
     pci_id: Optional[str] = None
-    alias: Optional[str] = None  # /aliases entry numbering it (e.g., "nvme0")
     label: Optional[str] = None  # Its name where it was pooled (e.g., "enP1s1f1")
     vendor_id: Optional[int] = None
     device_id: Optional[int] = None
@@ -233,14 +232,14 @@ class HardwareInventory:
     devices: Dict[str, DeviceInfo] = None
 
     def find_device(self, ref: str) -> Optional[str]:
-        """Node name of the device a node name, label, alias or PCI address refers to."""
+        """Node name of the device a node name, label or PCI address refers to."""
         if not self.devices:
             return None
         if ref in self.devices:
             return ref
         pci_id = normalize_pci_id(ref)
         for name, device in self.devices.items():
-            if ref in (device.label, device.alias):
+            if ref == device.label:
                 return name
             if pci_id and device.pci_id and normalize_pci_id(device.pci_id) == pci_id:
                 return name

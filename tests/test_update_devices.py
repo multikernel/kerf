@@ -73,7 +73,7 @@ def _manager(sample_tree, monkeypatch):
     sample_tree.instances.clear()
     sample_tree.hardware.devices["pci_0000_04_00_0"] = DeviceInfo(
         name="pci_0000_04_00_0", compatible="", device_type="pci",
-        pci_id="0000:04:00.0", alias="nvme0")
+        pci_id="0000:04:00.0", label="nvme0")
     manager = _FakeManager(sample_tree)
     monkeypatch.setattr(main, "DeviceTreeManager", lambda: manager)
     return manager

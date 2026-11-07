@@ -3,8 +3,7 @@
 import pytest
 
 from kerf.devices import (
-    check_label, default_label, is_partition, normalize_pci_id, nvme_alias, pci_node_name,
-    split_name,
+    check_label, default_label, is_partition, normalize_pci_id, pci_node_name, split_name,
 )
 from kerf.models import DeviceInfo, HardwareInventory, CPUAllocation, MemoryAllocation
 
@@ -68,13 +67,6 @@ def test_default_label(host_name, compatible, expected):
     assert default_label(host_name, compatible) == expected
 
 
-@pytest.mark.parametrize("label, expected", [
-    ("nvme0", "nvme0"), ("nvme12", "nvme12"), ("fast", None), ("nvme0n1", None), (None, None),
-])
-def test_nvme_alias(label, expected):
-    assert nvme_alias(label) == expected
-
-
 def test_is_partition():
     assert is_partition("nvme0n1p1")
     assert not is_partition("nvme0n1")
@@ -90,11 +82,10 @@ def _inventory(**devices):
     )
 
 
-def test_find_device_by_node_name_label_alias_or_address():
+def test_find_device_by_node_name_label_or_address():
     inventory = _inventory(
         pci_0000_4f_01_0=DeviceInfo(name="pci_0000_4f_01_0", compatible="pci-storage",
-                                    device_type="pci", pci_id="0000:4f:01.0", alias="nvme0",
-                                    label="nvme0"),
+                                    device_type="pci", pci_id="0000:4f:01.0", label="nvme0"),
         pci_0001_01_00_1=DeviceInfo(name="pci_0001_01_00_1", compatible="pci-network",
                                     device_type="pci", pci_id="0001:01:00.1", label="enP1s1f1"),
         serial_console=DeviceInfo(name="serial_console", compatible="ns16550",

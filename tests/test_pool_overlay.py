@@ -252,14 +252,3 @@ def test_pool_device_add_carries_the_label():
     assert fdt.getprop(fdt.subnode_offset(add, "pci@0"), "label").as_str() == "enP1s1f1"
     assert fdt.getprop(fdt.subnode_offset(add, "pci@1"), "label",
                        quiet=[libfdt.FDT_ERR_NOTFOUND]) == MISSING
-
-
-def test_pool_device_add_carries_the_alias():
-    diff = PoolDiff(devices_to_pool=["0000:04:00.0", "0000:05:00.0"],
-                    device_aliases={"0000:04:00.0": "nvme0"})
-    fdt, ov = _ov(OverlayGenerator().generate_pool_overlay(diff))
-
-    add = fdt.subnode_offset(ov, "device-add")
-    assert fdt.getprop(fdt.subnode_offset(add, "pci@0"), "alias").as_str() == "nvme0"
-    assert fdt.getprop(fdt.subnode_offset(add, "pci@1"), "alias",
-                       quiet=[libfdt.FDT_ERR_NOTFOUND]) == MISSING

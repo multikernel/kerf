@@ -372,7 +372,7 @@ def test_lent_devices_come_from_the_instance_trees(monkeypatch):
     monkeypatch.setattr(main, "list_instance_names", lambda: ["web"])
     lent = main.lent_devices(_Manager())
     assert set(lent) == {"pci_0000_09_00_0", "pci_0000_00_1f_2"}
-    assert lent["pci_0000_09_00_0"].alias == "enp9s0"
+    assert lent["pci_0000_09_00_0"].label == "enp9s0"
     assert lent["pci_0000_09_00_0"].pci_id == "0000:09:00.0"
 
 
@@ -406,14 +406,13 @@ def test_a_nic_keeps_its_interface_name_verbatim(monkeypatch):
 
     nic = requested.hardware.devices["pci_0001_01_00_1"]
     assert nic.label == "enP1s1f1"
-    assert nic.alias is None
 
 
-def test_an_nvme_controller_is_named_and_numbered(monkeypatch):
+def test_an_nvme_controller_is_named_by_its_controller(monkeypatch):
     monkeypatch.setattr(main, "detect_device_from_system", lambda name: DeviceInfo(
         name=name, compatible="pci-storage", device_type="pci", pci_id="0000:4f:00.0"))
 
     requested = main.build_baseline_from_cmdline("1-3", memory="512MB", devices="nvme1n1")
 
     nvme = requested.hardware.devices["pci_0000_4f_00_0"]
-    assert (nvme.label, nvme.alias) == ("nvme1", "nvme1")
+    assert nvme.label == "nvme1"

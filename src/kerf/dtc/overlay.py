@@ -236,8 +236,7 @@ class OverlayGenerator:
         self._cpu_op(fdt_sw, "cpu-remove", diff.cpus_to_host)
         self._cpu_op(fdt_sw, "cpu-add", diff.cpus_to_pool)
         self._device_op(fdt_sw, "device-remove", diff.devices_to_host)
-        self._device_op(fdt_sw, "device-add", diff.devices_to_pool, diff.device_aliases,
-                        diff.device_labels)
+        self._device_op(fdt_sw, "device-add", diff.devices_to_pool, diff.device_labels)
 
         fdt_sw.end_node()  # End __overlay__
         fdt_sw.end_node()  # End fragment@0
@@ -270,7 +269,7 @@ class OverlayGenerator:
             fdt_sw.end_node()
         fdt_sw.end_node()
 
-    def _device_op(self, fdt_sw, operation, pci_ids, aliases=None, labels=None):
+    def _device_op(self, fdt_sw, operation, pci_ids, labels=None):
         """Write a device operation node, or nothing when there are no devices."""
         if not pci_ids:
             return
@@ -279,8 +278,6 @@ class OverlayGenerator:
         for idx, pci_id in enumerate(pci_ids):
             fdt_sw.begin_node(f"pci@{idx}")
             fdt_sw.property_string("pci-id", pci_id)
-            if aliases and pci_id in aliases:
-                fdt_sw.property_string("alias", aliases[pci_id])
             if labels and pci_id in labels:
                 fdt_sw.property_string("label", labels[pci_id])
             fdt_sw.end_node()

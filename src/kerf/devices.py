@@ -20,9 +20,7 @@ names such as nvme0n1 or enp9s0 are probe-order or udev artifacts that
 differ between kernels, while the address is fixed by the fabric. The
 device node is named after the address, and its label carries the name
 the device has in the kernel that pooled it, verbatim, which every
-spawned kernel then applies ("enP1s1f1" stays enP1s1f1). An NVMe
-controller also gets a standard device tree /aliases entry ("nvme0"),
-which numbers the controller and its namespaces.
+spawned kernel then applies ("enP1s1f1" stays enP1s1f1).
 """
 
 import re
@@ -31,7 +29,6 @@ from typing import Optional, Tuple
 PCI_ID_RE = re.compile(r'^([0-9a-fA-F]{1,4}):([0-9a-fA-F]{1,2}):([0-9a-fA-F]{1,2})\.([0-9a-fA-F])$')
 PCI_NODE_RE = re.compile(r'^pci_([0-9a-fA-F]{1,4})_([0-9a-fA-F]{1,2})_([0-9a-fA-F]{1,2})_([0-9a-fA-F])$')
 NVME_NAME_RE = re.compile(r'^(nvme\d+)(?:n\d+(p\d+)?)?$')
-NVME_CONTROLLER_RE = re.compile(r'^nvme\d+$')
 LABEL_MAX = 31
 IFNAMSIZ = 16
 
@@ -103,8 +100,3 @@ def default_label(host_name: str, compatible: Optional[str]) -> Optional[str]:
     if compatible == "pci-network":
         return host_name
     return None
-
-
-def nvme_alias(label: Optional[str]) -> Optional[str]:
-    """The /aliases entry numbering an NVMe controller its label names."""
-    return label if label and NVME_CONTROLLER_RE.match(label) else None

@@ -479,12 +479,12 @@ class TestPoolChunks:
 
 
 @pytest.mark.parametrize("ref", ["pci_0000_4f_01_0", "nvme0", "0000:4f:01.0"])
-def test_instance_may_name_a_device_by_node_alias_or_address(sample_hardware, ref):
+def test_instance_may_name_a_device_by_node_label_or_address(sample_hardware, ref):
     from kerf.models import DeviceInfo, Instance, InstanceResources, GlobalDeviceTree
 
     sample_hardware.devices["pci_0000_4f_01_0"] = DeviceInfo(
         name="pci_0000_4f_01_0", compatible="pci-storage", device_type="pci",
-        pci_id="0000:4f:01.0", alias="nvme0",
+        pci_id="0000:4f:01.0", label="nvme0",
     )
     instances = {
         "db": Instance(name="db", id=1, resources=InstanceResources(

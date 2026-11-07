@@ -51,7 +51,7 @@ from ..models import (
     PoolMemoryRegion,
 )
 from ..pool_diff import ANY_NODE, PoolDiff, compute_pool_diff
-from ..devices import check_label, default_label, is_partition, nvme_alias, pci_node_name, split_name
+from ..devices import check_label, default_label, is_partition, pci_node_name, split_name
 from ..resources import get_busy_chunks_from_iomem
 from ..runtime import DeviceTreeManager
 from ..topology import cpu_id_name, cpu_numa_nodes, logical_to_physical, node_for_cpus
@@ -566,7 +566,7 @@ def resolve_memory_nodes(requested: Dict[int, int],
 
 def pooled_device(pool_devices: Optional[Dict[str, DeviceInfo]],
                   ref: str) -> Optional[DeviceInfo]:
-    """A copy of the pool device that a node name, label, alias or PCI address names."""
+    """A copy of the pool device that a node name, label or PCI address names."""
     if not pool_devices:
         return None
     name = HardwareInventory(cpus=None, memory=None, devices=pool_devices).find_device(ref)
@@ -688,8 +688,6 @@ def build_baseline_from_cmdline(
                 raise KernelInterfaceError(f"Name '{label}' is requested for more than one device")
             device_info.name = name
             device_info.label = label
-            if device_info.compatible == "pci-storage":
-                device_info.alias = nvme_alias(label)
             if is_partition(host_name):
                 click.echo(f"Note: {host_name} is a partition; the whole controller "
                            f"{device_info.pci_id} joins the pool")
@@ -703,8 +701,6 @@ def build_baseline_from_cmdline(
             click.echo(f"  Compatible: {device_info.compatible}")
             if device_info.label:
                 click.echo(f"  Label: {device_info.label}")
-            if device_info.alias:
-                click.echo(f"  Alias: {device_info.alias}")
             if device_info.pci_id:
                 click.echo(f"  PCI ID: {device_info.pci_id}")
             if device_info.vendor_id is not None:

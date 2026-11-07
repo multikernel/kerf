@@ -108,14 +108,7 @@ class DeviceTreeParser:
             self.fdt = libfdt.Fdt(dtb_data)
         except Exception as e:
             raise ParseError(f"Failed to parse instance DTB: {e}") from e
-        devices = {}
-        offsets = {}
-        for offset, (name, device_info) in self._parse_pci_tree().items():
-            devices[name] = device_info
-            offsets[offset] = name
-        for alias, name in self._parse_aliases(offsets).items():
-            devices[name].alias = alias
-        return devices
+        return dict(self._parse_pci_tree().values())
 
     def _build_global_tree(self) -> GlobalDeviceTree:
         """Build GlobalDeviceTree from parsed FDT."""
@@ -325,7 +318,6 @@ class DeviceTreeParser:
     def _parse_devices(self, resources_node: int) -> Dict[str, DeviceInfo]:
         """Parse device information from resources node."""
         devices = {}
-        offsets = {}
 
         devices_node = self.fdt.subnode_offset(resources_node, 'devices',
                                                libfdt.QUIET_NOTFOUND)
@@ -333,16 +325,11 @@ class DeviceTreeParser:
             name = self.fdt.get_name(offset)
             try:
                 devices[name] = self._parse_device_info(offset, name)
-                offsets[offset] = name
             except ParseError:
                 pass
 
-        for offset, (name, device_info) in self._parse_pci_tree().items():
+        for name, device_info in self._parse_pci_tree().values():
             devices[name] = device_info
-            offsets[offset] = name
-
-        for alias, name in self._parse_aliases(offsets).items():
-            devices[name].alias = alias
 
         return devices
 
@@ -391,23 +378,6 @@ class DeviceTreeParser:
             if iommu != -libfdt.NOTFOUND:
                 device_info.iommu_base = iommu.as_uint64()
             found[node] = (name, device_info)
-
-    def _parse_aliases(self, offsets: Dict[int, str]) -> Dict[str, str]:
-        """Map each /aliases entry to the device node it points at."""
-        aliases = {}
-        aliases_node = self.fdt.path_offset('/aliases', libfdt.QUIET_NOTFOUND)
-        if aliases_node < 0:
-            return aliases
-
-        prop_offset = self.fdt.first_property_offset(aliases_node, libfdt.QUIET_NOTFOUND)
-        while prop_offset >= 0:
-            prop = self.fdt.get_property_by_offset(prop_offset)
-            target = self.fdt.path_offset(prop.as_str(), libfdt.QUIET_NOTFOUND)
-            if target in offsets:
-                aliases[prop.name] = offsets[target]
-            prop_offset = self.fdt.next_property_offset(prop_offset, libfdt.QUIET_NOTFOUND)
-
-        return aliases
 
     def _parse_device_info(self, node_offset: int, name: str) -> DeviceInfo:
         """Parse individual device information."""
