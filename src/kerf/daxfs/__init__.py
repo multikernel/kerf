@@ -19,7 +19,7 @@ from .mkdaxfs import (
     unmount_daxfs,
     DaxfsError,
     DaxfsImage,
-    inject_kerf_init,
+    KERF_INIT_PATH,
 )
 
 __all__ = [
@@ -27,5 +27,5 @@ __all__ = [
     "unmount_daxfs",
     "DaxfsError",
     "DaxfsImage",
-    "inject_kerf_init",
+    "KERF_INIT_PATH",
 ]

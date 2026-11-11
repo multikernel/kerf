@@ -92,14 +92,18 @@ class FileEntry:
     data_offset: int = 0
     child_count: int = 0
     is_hardlink: bool = False
+    source: Optional[Path] = None
 
 
 class DaxfsBuilder:
     """Builds a daxfs v8 filesystem image: base snapshot plus write overlay."""
 
     def __init__(self, src_dir: str,
-                 overlay_pool_size: int = DAXFS_DEFAULT_OVERLAY_POOL):
+                 overlay_pool_size: int = DAXFS_DEFAULT_OVERLAY_POOL,
+                 overrides: Optional[Dict[str, Path]] = None):
         self.src_dir = Path(src_dir)
+        # Image path -> host file placed there instead of the rootfs entry
+        self.overrides = overrides or {}
         self.files: List[FileEntry] = []
         self.files_by_path: Dict[str, FileEntry] = {}
         # First entry seen for each hardlinked (st_dev, st_ino)
@@ -126,11 +130,13 @@ class DaxfsBuilder:
             buckets <<= 1
         return max(buckets, DAXFS_DEFAULT_BUCKET_COUNT)
 
-    def _add_file(self, relpath: str, stat_result: os.stat_result) -> FileEntry:
+    def _add_file(self, relpath: str, stat_result: os.stat_result,
+                  source: Optional[Path] = None) -> FileEntry:
         entry = FileEntry(
             path=relpath,
             name=os.path.basename(relpath)[:DAXFS_NAME_MAX] if relpath else "",
             stat=stat_result,
+            source=source,
         )
 
         # Hardlinked regular files share one inode and one data extent
@@ -162,6 +168,8 @@ class DaxfsBuilder:
 
         for entry in sorted(entries, key=lambda e: e.name):
             newrel = f"{relpath}/{entry.name}" if relpath else entry.name
+            if newrel in self.overrides:
+                continue
 
             try:
                 file_stat = entry.lstat()
@@ -178,6 +186,16 @@ class DaxfsBuilder:
         root_stat = self.src_dir.lstat()
         self._add_file("", root_stat)
         self._scan_directory_recursive("")
+        for relpath, source in self.overrides.items():
+            self._add_file(relpath, self._override_stat(source), source)
+
+    @staticmethod
+    def _override_stat(source: Path) -> os.stat_result:
+        st = os.stat(source)
+        return os.stat_result((
+            stat_mod.S_IFREG | 0o755, st.st_ino, st.st_dev, 1, 0, 0,
+            st.st_size, int(st.st_atime), int(st.st_mtime), int(st.st_ctime),
+        ))
 
     def build_tree(self) -> None:
         """Assign parent inodes and count directory children."""
@@ -324,7 +342,7 @@ class DaxfsBuilder:
     def _write_file_data(self, mem: mmap.mmap, offset: int,
                          entry: FileEntry) -> None:
         try:
-            with open(self.src_dir / entry.path, 'rb') as f:
+            with open(entry.source or self.src_dir / entry.path, 'rb') as f:
                 mem.seek(offset)
                 shutil.copyfileobj(f, mem)
         except (PermissionError, FileNotFoundError, IsADirectoryError):
@@ -442,25 +460,18 @@ MOVE_MOUNT_F_EMPTY_PATH = 0x00000004
 
 AT_FDCWD = -100
 
+# Off /init so that an image's own /init stays usable as an entrypoint
+KERF_INIT_PATH = "/.kerf-init"
 
-def inject_kerf_init(rootfs_path: str) -> None:
-    """Inject /init binary into rootfs.
 
-    The entrypoint is passed via kernel cmdline as kerf.entrypoint=<path>.
-    """
-    rootfs = Path(rootfs_path)
-
-    # Copy the pre-built init binary
+def _kerf_init_binary() -> Path:
     init_binary = get_init_binary_path()
     if not init_binary.exists():
         raise DaxfsError(
             f"Init binary not found at {init_binary}. "
             "Run 'make' to build it first."
         )
-
-    init_path = rootfs / "init"
-    shutil.copy2(init_binary, init_path)
-    os.chmod(init_path, 0o755)
+    return init_binary
 
 
 def _mount_daxfs(instance_name: str, dmabuf_fd: int) -> None:
@@ -521,7 +532,9 @@ def create_daxfs_image(
     size: Optional[int] = None,
 ) -> DaxfsImage:
     """
-    Create a daxfs filesystem image from a directory.
+    Create a daxfs filesystem image from a directory, with kerf-init at
+    KERF_INIT_PATH. The entrypoint is passed via kernel cmdline as
+    kerf.entrypoint=<path>.
 
     Args:
         rootfs_path: Path to the root filesystem directory
@@ -538,7 +551,8 @@ def create_daxfs_image(
     if not os.path.isdir(rootfs_path):
         raise DaxfsError(f"Rootfs directory '{rootfs_path}' does not exist")
 
-    builder = DaxfsBuilder(rootfs_path)
+    builder = DaxfsBuilder(rootfs_path,
+                           overrides={KERF_INIT_PATH[1:]: _kerf_init_binary()})
     builder.scan()
     builder.build_tree()
     builder.calculate_offsets()
