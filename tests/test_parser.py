@@ -74,6 +74,19 @@ class TestDeviceTreeParser:
         assert len(parsed_tree.instances) == 0
         assert parsed_tree.hardware.cpus.available == sample_hardware.cpus.available
 
+    def test_parse_sparse_cpu_ids_counts_cpus(self, sample_hardware):
+        """arm64 MPIDRs are large and sparse; the total is how many there are."""
+        from kerf.models import GlobalDeviceTree
+
+        sample_hardware.cpus.available = [0x140000, 0x220000]
+        tree = GlobalDeviceTree(hardware=sample_hardware, instances={}, device_references={})
+        dtb_data = InstanceExtractor().generate_global_dtb(tree)
+
+        parsed = DeviceTreeParser().parse_dtb_from_bytes(dtb_data)
+
+        assert parsed.hardware.cpus.available == [0x140000, 0x220000]
+        assert parsed.hardware.cpus.total == 2
+
     def test_parse_invalid_dtb(self):
         """Test parsing invalid DTB data."""
         parser = DeviceTreeParser()

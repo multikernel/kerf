@@ -288,17 +288,17 @@ class MultikernelValidator:
         cpus = tree.hardware.cpus
         instance_cpus = set(instance.resources.cpus)
 
-        for cpu in instance_cpus:
-            if cpu < 0 or cpu >= cpus.total:
-                error_msg = self._format_error_with_context(
-                    error_type="CPU allocation error",
-                    instance_name=instance.name,
-                    problem=f"CPU {cpu} does not exist in hardware inventory",
-                    current_state=f"Hardware has CPUs 0-{cpus.total-1}",
-                    suggestion=f"Use CPUs in range 0-{cpus.total-1}",
-                    alternative="Check hardware inventory configuration",
-                )
-                self.errors.append(error_msg)
+        known = sorted(set(cpus.host_reserved) | set(cpus.available))
+        for cpu in sorted(instance_cpus - set(known)):
+            error_msg = self._format_error_with_context(
+                error_type="CPU allocation error",
+                instance_name=instance.name,
+                problem=f"CPU {cpu} does not exist in hardware inventory",
+                current_state=f"Hardware has CPUs {known}",
+                suggestion="Use a CPU from the hardware inventory",
+                alternative="Check hardware inventory configuration",
+            )
+            self.errors.append(error_msg)
 
         host_reserved = set(cpus.host_reserved)
         reserved_cpus = instance_cpus.intersection(host_reserved)

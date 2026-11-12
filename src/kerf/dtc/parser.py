@@ -234,14 +234,10 @@ class DeviceTreeParser:
         if free_prop is not None:
             available_free = unpack_cpu_ids(free_prop)
 
-        if available:
-            total = max(available) + 1
-        else:
-            total = 0
         host_reserved = []
 
         return CPUAllocation(
-            total=total,
+            total=len(available),
             host_reserved=host_reserved,
             available=available,
             available_free=available_free

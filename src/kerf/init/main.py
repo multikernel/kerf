@@ -630,8 +630,7 @@ def build_baseline_from_cmdline(
             f"Valid {cpu_id_name()}s on this system: {sorted(valid_apic_ids)}"
         )
 
-    # Total CPUs is based on the max APIC ID + 1 for sizing purposes
-    total_cpus = max(valid_apic_ids) + 1
+    total_cpus = len(valid_apic_ids)
     # Host reserved are all valid APIC IDs not in the available list
     boot_cpu = get_boot_cpu_from_system()
     if boot_cpu in cpu_list:
