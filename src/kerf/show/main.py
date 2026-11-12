@@ -341,6 +341,8 @@ def display_baseline_info(tree: GlobalDeviceTree, verbose: bool = False):
             available_gb = available_bytes / (1024**3)
             click.echo(f"    Pool Allocated:  {allocated_gb:.2f} GB ({allocated_bytes} bytes)")
             click.echo(f"    Pool Available:  {available_gb:.2f} GB ({available_bytes} bytes)")
+        else:
+            click.echo("    Pool Usage:      unknown, /proc/iomem shows addresses only to root")
 
     # NUMA Topology
     if hardware.topology and hardware.topology.numa_nodes:

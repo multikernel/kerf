@@ -292,6 +292,16 @@ class TestIomemPoolAccounting:
         )
         assert get_pool_allocated_bytes(str(path)) == (0x40000000, 0x40000000, 0)
 
+    def test_get_pool_allocated_bytes_addresses_hidden(self, tmp_path):
+        # What a reader without CAP_SYS_ADMIN gets
+        path = tmp_path / "iomem"
+        path.write_text(
+            "00000000-00000000 : Multikernel Memory Pool\n"
+            "  00000000-00000000 : generation-2\n",
+            encoding="utf-8",
+        )
+        assert get_pool_allocated_bytes(str(path)) is None
+
     def test_get_pool_allocated_bytes_no_pool(self, tmp_path):
         path = tmp_path / "iomem"
         path.write_text("00001000-0009ffff : System RAM\n", encoding="utf-8")

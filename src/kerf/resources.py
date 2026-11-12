@@ -54,6 +54,9 @@ def _parse_iomem_regions(iomem_path: str) -> List[Tuple[int, int, str]]:
                     regions.append((base, end, match.group(3).strip()))
     except (OSError, IOError, ValueError):
         pass
+    # Without CAP_SYS_ADMIN the kernel zeroes every address in the file
+    if all(base == 0 and end == 0 for base, end, _ in regions):
+        return []
     return regions
 
 
