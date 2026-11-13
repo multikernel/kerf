@@ -173,13 +173,21 @@ def test_physical_ids_are_mpidrs_where_cpuinfo_has_no_apic_ids(tmp_path):
     assert cpu_numa_nodes(node_root, str(cpuinfo), cpu_root, "") == {2: 0}
 
 
+def test_physical_ids_are_hart_ids_on_riscv(tmp_path):
+    cpuinfo = tmp_path / "cpuinfo"
+    cpuinfo.write_text("processor\t: 0\nhart\t\t: 3\nisa\t\t: rv64imafdc\n", encoding="utf-8")
+    cpu_root = _arm64_cpu_root(tmp_path, {0: ("dt", (3).to_bytes(4, "big"))})
+
+    assert logical_to_physical(str(cpuinfo), cpu_root, "") == {0: 3}
+
+
 def test_physical_ids_are_apic_ids_on_x86(tmp_path):
     cpuinfo = _cpuinfo(tmp_path, {0: 0, 1: 2})
 
     assert logical_to_physical(cpuinfo, str(tmp_path / "none"), "") == {0: 0, 1: 2}
 
 
-@pytest.mark.parametrize("machine, name", [("x86_64", "APIC ID"), ("aarch64", "MPIDR")])
+@pytest.mark.parametrize("machine, name", [("x86_64", "APIC ID"), ("aarch64", "MPIDR"), ("riscv64", "hart ID")])
 def test_messages_name_the_physical_id_of_the_architecture(monkeypatch, machine, name):
     monkeypatch.setattr("platform.machine", lambda: machine)
     assert cpu_id_name() == name

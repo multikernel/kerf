@@ -43,7 +43,7 @@ def get_reboot_syscall():
     arch = platform.machine().lower()
     if arch in ("x86_64", "amd64"):
         return SYS_REBOOT_X86_64
-    if arch in ("aarch64", "arm64"):
+    if arch in ("aarch64", "arm64", "riscv64"):
         return SYS_REBOOT_ARM64
     if arch.startswith("arm"):
         return SYS_REBOOT_ARM
