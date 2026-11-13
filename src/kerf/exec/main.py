@@ -18,6 +18,7 @@ kerf exec: run a command inside a running instance.
 
 import errno
 import os
+import random
 import signal
 import socket
 import sys
@@ -76,7 +77,11 @@ def connect_agent(instance_id: int, name: str) -> socket.socket:
     try:
         sock.setsockopt(socket.AF_VSOCK, SO_VM_SOCKETS_TRANSPORT, VSOCK_TRANSPORT_MULTIKERNEL)
         # kerf-init only trusts reserved ports, which only root can bind.
-        for port in range(protocol.AGENT_PORT, 511, -1):
+        # Start at a random one: reusing the port of an exec that just gave
+        # up can pick up the late answer to that exec's connect.
+        ports = list(range(protocol.AGENT_PORT, 511, -1))
+        start = random.randrange(len(ports))
+        for port in ports[start:] + ports[:start]:
             try:
                 sock.bind((socket.VMADDR_CID_ANY, port))
                 break
