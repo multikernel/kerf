@@ -16,7 +16,8 @@
 Host CPU topology, as sysfs and /proc/cpuinfo describe it.
 
 Multikernel names CPUs by their physical IDs, the one thing all kernels on
-a machine agree on: APIC ids on x86, MPIDR affinity values on arm64.
+a machine agree on: APIC ids on x86, MPIDR affinity values on arm64 and
+hart IDs on RISC-V.
 """
 
 import os
@@ -43,8 +44,11 @@ _NODE_DIR = re.compile(r"^node(\d+)$")
 
 def cpu_id_name() -> str:
     """What this machine calls a physical CPU ID, for messages."""
-    if platform.machine().lower() in ("aarch64", "arm64"):
+    arch = platform.machine().lower()
+    if arch in ("aarch64", "arm64"):
         return "MPIDR"
+    if arch == "riscv64":
+        return "hart ID"
     return "APIC ID"
 
 
@@ -121,7 +125,7 @@ def _madt_mpidrs(madt_path: str) -> Dict[int, int]:
 
 def logical_to_mpidr(cpu_root: str = CPU_ROOT, madt_path: str = MADT) -> Dict[int, int]:
     """
-    Map logical CPU number to MPIDR affinity on arm64.
+    Map logical CPU number to MPIDR affinity on arm64, or hart ID on RISC-V.
 
     /proc/cpuinfo does not carry it. A CPU's device tree node does, in its
     reg, and on an ACPI host the MADT does, keyed by the processor UID that

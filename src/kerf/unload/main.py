@@ -75,7 +75,7 @@ def KEXEC_FILE_MK_ID(id: int) -> int:  # pylint: disable=invalid-name
 
 # Syscall numbers (architecture-dependent)
 # Same syscall number as kexec_file_load
-# For x86_64: 320, for x86: 320, for ARM64: 294, for ARM: 382
+# For x86_64: 320, for x86: 320, for ARM64 and RISC-V: 294, for ARM: 382
 SYS_KEXEC_FILE_LOAD_X86_64 = 320
 SYS_KEXEC_FILE_LOAD_ARM64 = 294
 SYS_KEXEC_FILE_LOAD_ARM = 382
@@ -87,7 +87,7 @@ def get_kexec_file_load_syscall():
     arch = platform.machine().lower()
     if arch in ("x86_64", "amd64"):
         return SYS_KEXEC_FILE_LOAD_X86_64
-    if arch in ("aarch64", "arm64"):
+    if arch in ("aarch64", "arm64", "riscv64"):
         return SYS_KEXEC_FILE_LOAD_ARM64
     if arch.startswith("arm"):
         return SYS_KEXEC_FILE_LOAD_ARM
