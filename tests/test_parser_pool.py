@@ -161,3 +161,45 @@ def test_parse_dtb_legacy_memory_base_alone_rejected():
 
     with pytest.raises(ParseError, match="not supported"):
         DeviceTreeParser().parse_dtb_from_bytes(_dtb(build))
+
+
+def _dtb_with_kinds():
+    sw = libfdt.FdtSw()
+    sw.finish_reservemap()
+    sw.begin_node("")
+    sw.begin_node("resources")
+    sw.property("cpus", struct.pack(">QQQ", 3, 8, 9))
+    sw.property("cpus-available", struct.pack(">QQ", 3, 8))
+    sw.property("cpus-unclaimed", struct.pack(">QQ", 8, 9))
+    sw.end_node()
+    sw.begin_node("cpu-kinds")
+    sw.begin_node("kind@0")
+    sw.property_u32("reg", 0)
+    sw.property("cpus", struct.pack(">QQ", 0, 3))
+    sw.end_node()
+    sw.begin_node("kind@1")
+    sw.property_u32("reg", 1)
+    sw.property("cpus", struct.pack(">QQ", 8, 9))
+    sw.end_node()
+    sw.end_node()
+    sw.end_node()
+    fdt = sw.as_fdt()
+    fdt.pack()
+    return bytes(fdt.as_bytearray())
+
+
+def test_parse_unclaimed_cpus_and_kinds():
+    cpus = DeviceTreeParser().parse_dtb_from_bytes(_dtb_with_kinds()).hardware.cpus
+
+    assert cpus.available == [3, 8, 9]
+    assert cpus.unclaimed == [8, 9]
+    assert cpus.kinds == {0: 0, 3: 0, 8: 1, 9: 1}
+
+
+def test_a_pool_without_kinds_has_none():
+    def build(sw):
+        sw.property("cpus-available", struct.pack(">QQ", 4, 5))
+
+    cpus = DeviceTreeParser().parse_dtb_from_bytes(_dtb(build)).hardware.cpus
+    assert cpus.unclaimed == []
+    assert cpus.kinds == {}

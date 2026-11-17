@@ -422,3 +422,33 @@ def test_an_nvme_controller_is_named_by_its_controller(monkeypatch):
 
     nvme = requested.hardware.devices["pci_0000_4f_00_0"]
     assert nvme.label == "nvme1"
+
+
+def _live_with_unclaimed():
+    live = _tree([3, 8, 9], [PoolMemoryRegion(0x1_0000_0000, GB, 0)], {},
+                 available_free=[3, 8, 9])
+    live.hardware.cpus.unclaimed = [8, 9]
+    return live
+
+
+def test_unclaimed_cpus_stay_whatever_is_asked(monkeypatch):
+    monkeypatch.setattr(main, "get_valid_apic_ids_from_system", lambda: {0, 1, 2})
+    live = _live_with_unclaimed()
+
+    tree = main.build_baseline_from_cmdline(
+        "none", memory="none", pool_cpus=main.pool_apic_ids(live),
+        unclaimed=main.pool_unclaimed_cpus(live))
+
+    assert tree.hardware.cpus.available == [8, 9]
+    assert 8 not in tree.hardware.cpus.host_reserved
+    assert main.request_is_empty(tree)
+
+    manager, baseline_mgr = FakeManager(), FakeBaselineManager()
+    monkeypatch.setattr(main, "list_instance_names", lambda: [])
+    diff = reconcile_pool(live, tree, set(), False, manager, baseline_mgr)
+    assert diff.cpus_to_host == [3]
+    assert diff.cpus_to_pool == []
+
+
+def test_no_pool_has_no_unclaimed_cpus():
+    assert not main.pool_unclaimed_cpus(None)

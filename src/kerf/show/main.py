@@ -298,6 +298,15 @@ def display_baseline_info(tree: GlobalDeviceTree, verbose: bool = False):
         click.echo(
             f"    Available:       {len(hardware.cpus.available)} cpus: {hardware.cpus.available}"
         )
+    if hardware.cpus.unclaimed:
+        click.echo(
+            f"    Unclaimed CPUs:  {len(hardware.cpus.unclaimed)} cpus: {hardware.cpus.unclaimed}"
+            " (never booted by the host, always in the pool)"
+        )
+    for kind in sorted(set(hardware.cpus.kinds.values())):
+        of_kind = sorted(cpu for cpu, k in hardware.cpus.kinds.items() if k == kind)
+        click.echo(f"    Kind {kind}:          {len(of_kind)} cpus: {of_kind}"
+                   + (" (the host's)" if kind == 0 else ""))
 
     if verbose and hardware.cpus.topology:
         click.echo("\n    Topology:")

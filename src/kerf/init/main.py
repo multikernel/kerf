@@ -581,6 +581,7 @@ def build_baseline_from_cmdline(
     pool_cpus: Optional[set] = None,
     pool_regions: Optional[List[PoolMemoryRegion]] = None,
     pool_devices: Optional[Dict[str, DeviceInfo]] = None,
+    unclaimed: Optional[List[int]] = None,
 ) -> GlobalDeviceTree:
     """
     Build a GlobalDeviceTree from command line arguments.
@@ -596,6 +597,7 @@ def build_baseline_from_cmdline(
         pool_cpus: APIC IDs the pool already holds
         pool_regions: Chunks the pool already holds
         pool_devices: Devices the pool already holds, by node name
+        unclaimed: Pool CPUs the host never booted, which stay whatever is asked
 
     Returns:
         GlobalDeviceTree with resources only (no instances)
@@ -604,7 +606,7 @@ def build_baseline_from_cmdline(
         ValueError: If the CPU or memory specification is invalid
         KernelInterfaceError: If the system topology cannot be read
     """
-    cpu_list = parse_cpu_request(cpus)
+    cpu_list = sorted(set(parse_cpu_request(cpus)) | set(unclaimed or ()))
 
     # Silence about memory would otherwise read as "give it all back".
     if not memory:
@@ -655,7 +657,8 @@ def build_baseline_from_cmdline(
     cpu_allocation = CPUAllocation(
         total=total_cpus,
         host_reserved=host_reserved_cpus,
-        available=cpu_list
+        available=cpu_list,
+        unclaimed=list(unclaimed or ())
     )
 
     memory_allocation = MemoryAllocation(
@@ -761,6 +764,13 @@ def pool_apic_ids(current: Optional[GlobalDeviceTree]) -> set:
     return set(current.hardware.cpus.available or [])
 
 
+def pool_unclaimed_cpus(current: Optional[GlobalDeviceTree]) -> List[int]:
+    """CPUs of the live pool the host never booted, which no request moves."""
+    if not pool_is_live(current):
+        return []
+    return list(current.hardware.cpus.unclaimed)
+
+
 def pool_memory_regions(current: Optional[GlobalDeviceTree]) -> List[PoolMemoryRegion]:
     """Chunks the live pool holds, which place CPUs the host no longer reports."""
     if not pool_is_live(current):
@@ -808,7 +818,8 @@ def read_current_pool(baseline_mgr) -> Optional[GlobalDeviceTree]:
 def request_is_empty(requested: GlobalDeviceTree) -> bool:
     """Whether the request asks for nothing at all, so the pool goes away."""
     hardware = requested.hardware
-    return not (hardware.cpus.available or hardware.memory.requested or hardware.devices)
+    cpus = set(hardware.cpus.available) - set(hardware.cpus.unclaimed)
+    return not (cpus or hardware.memory.requested or hardware.devices)
 
 
 def _print_diff(diff: PoolDiff) -> None:
@@ -1042,6 +1053,7 @@ def init(ctx: click.Context, input: Optional[str], cpus: Optional[str], memory: 
         current = read_current_pool(baseline_mgr)
         held = lent_devices(manager) if current else {}
         live_cpus = pool_apic_ids(current)
+        unclaimed = pool_unclaimed_cpus(current)
         live_regions = pool_memory_regions(current)
 
         if input:
@@ -1069,6 +1081,13 @@ def init(ctx: click.Context, input: Optional[str], cpus: Optional[str], memory: 
                 click.echo(f"Error: {input}: {e}", err=True)
                 sys.exit(2)
 
+            # A dump lists the CPUs the host never booted, which are the
+            # live pool's to have and not the replay's to ask for.
+            replayed = tree.hardware.cpus
+            replayed.available = sorted((set(replayed.available) - set(replayed.unclaimed))
+                                        | set(unclaimed))
+            replayed.unclaimed = unclaimed
+
             tree.hardware.memory.requested, note = resolve_memory_nodes(
                 tree.hardware.memory.requested, tree.hardware.cpus.available,
                 live_cpus, live_regions)
@@ -1079,6 +1098,7 @@ def init(ctx: click.Context, input: Optional[str], cpus: Optional[str], memory: 
             try:
                 tree = build_baseline_from_cmdline(cpus, memory=memory, devices=devices,
                                                    verbose=verbose, pool_cpus=live_cpus,
+                                                   unclaimed=unclaimed,
                                                    pool_regions=live_regions,
                                                    pool_devices={**current.hardware.devices, **held} if current else None)
             except ValueError as e:
