@@ -1,5 +1,5 @@
 name: kerf
-arch: amd64
+arch: ${ARCH}
 platform: linux
 version: ${VERSION}
 maintainer: Cong Wang <xiyou.wangcong@gmail.com>

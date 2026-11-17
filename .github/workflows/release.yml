@@ -76,9 +76,18 @@ jobs:
 
   packages:
     needs: build
-    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            arch: amd64
+          - runner: ubuntu-24.04-arm
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
     env:
       NFPM_VERSION: 2.41.1
+      # nfpm.yaml takes the package architecture from this
+      ARCH: ${{ matrix.arch }}
     steps:
     - uses: actions/checkout@v4
 
@@ -87,7 +96,7 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y musl-tools
         curl -sSfLo /tmp/nfpm.deb \
-          "https://github.com/goreleaser/nfpm/releases/download/v${NFPM_VERSION}/nfpm_${NFPM_VERSION}_amd64.deb"
+          "https://github.com/goreleaser/nfpm/releases/download/v${NFPM_VERSION}/nfpm_${NFPM_VERSION}_${ARCH}.deb"
         sudo apt-get install -y /tmp/nfpm.deb
 
     - name: Build init binary
@@ -116,7 +125,7 @@ jobs:
     - name: Upload packages
       uses: actions/upload-artifact@v4
       with:
-        name: packages
+        name: packages-${{ matrix.arch }}
         path: packages/
 
   publish:
