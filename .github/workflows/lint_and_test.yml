@@ -6,15 +6,16 @@ on:
 jobs:
   lint_and_test:
     # Python 3.9 has no build for ubuntu-26.04, which ubuntu-latest now is
-    runs-on: ubuntu-24.04
+    runs-on: ${{ matrix.runner }}
     strategy:
       matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
         python-version: ["3.9", "3.10"]
     steps:
     - uses: actions/checkout@v4
 
     - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v3
+      uses: actions/setup-python@v5
       with:
         python-version: ${{ matrix.python-version }}
 
