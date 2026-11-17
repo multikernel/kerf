@@ -35,6 +35,7 @@ from kerf.resources import (
     find_next_instance_id,
 )
 from kerf.exceptions import ResourceError
+from kerf.topology import cpu_id_name
 
 
 class TestCPUAllocation:
@@ -91,7 +92,7 @@ class TestCPUAllocation:
         # Request CPU that doesn't exist
         requested_cpus = [999]
 
-        with pytest.raises(ResourceError, match="Invalid APIC IDs requested"):
+        with pytest.raises(ResourceError, match=f"Invalid {cpu_id_name()}s requested"):
             validate_cpu_allocation(sample_tree, requested_cpus)
 
     def test_validate_cpu_allocation_with_exclusion(self, sample_tree):

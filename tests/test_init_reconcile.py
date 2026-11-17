@@ -31,6 +31,7 @@ from kerf.models import (
     MemoryAllocation,
     PoolMemoryRegion,
 )
+from kerf.topology import cpu_id_name
 
 GB = 1 << 30
 
@@ -286,7 +287,7 @@ def test_apic_id_outside_system_and_pool_is_rejected(monkeypatch):
     monkeypatch.setattr(main, "get_valid_apic_ids_from_system", lambda: {0})
     live = _tree([1], [PoolMemoryRegion(0x1_0000_0000, GB, 0)], {})
 
-    with pytest.raises(ValueError, match=r"Invalid APIC ID\(s\) specified: \[9\]"):
+    with pytest.raises(ValueError, match=rf"Invalid {cpu_id_name()}\(s\) specified: \[9\]"):
         main.build_baseline_from_cmdline("1,9", memory="512MB",
                                          pool_cpus=main.pool_apic_ids(live))
 
@@ -334,6 +335,7 @@ def _pooled_nic():
 def test_a_pooled_device_is_resolved_from_the_pool(monkeypatch, ref):
     """A NIC in the pool no longer exists on the host, so init takes it
     from the live tree instead of failing to detect it."""
+    monkeypatch.setattr(main, "get_valid_apic_ids_from_system", lambda: {0, 1, 2, 3})
     monkeypatch.setattr(main, "detect_device_from_system", lambda name: None)
 
     requested = main.build_baseline_from_cmdline("1-3", memory="512MB", devices=ref,
@@ -345,6 +347,7 @@ def test_a_pooled_device_is_resolved_from_the_pool(monkeypatch, ref):
 
 
 def test_a_pooled_device_keeps_a_new_name(monkeypatch):
+    monkeypatch.setattr(main, "get_valid_apic_ids_from_system", lambda: {0, 1, 2, 3})
     monkeypatch.setattr(main, "detect_device_from_system", lambda name: None)
 
     requested = main.build_baseline_from_cmdline("1-3", memory="512MB", devices="0000:09:00.0=uplink",
@@ -354,6 +357,7 @@ def test_a_pooled_device_keeps_a_new_name(monkeypatch):
 
 
 def test_an_unknown_device_is_still_an_error(monkeypatch):
+    monkeypatch.setattr(main, "get_valid_apic_ids_from_system", lambda: {0, 1, 2, 3})
     monkeypatch.setattr(main, "detect_device_from_system", lambda name: None)
 
     with pytest.raises(KernelInterfaceError, match="enp7s0"):
@@ -398,6 +402,7 @@ def test_the_boot_cpu_is_found_by_its_own_id(monkeypatch):
 
 
 def test_a_nic_keeps_its_interface_name_verbatim(monkeypatch):
+    monkeypatch.setattr(main, "get_valid_apic_ids_from_system", lambda: {0, 1, 2, 3})
     monkeypatch.setattr(main, "detect_device_from_system", lambda name: DeviceInfo(
         name=name, compatible="pci-network", device_type="pci", pci_id="0001:01:00.1",
         vendor_id=0x15B3, device_id=0x1019))
@@ -409,6 +414,7 @@ def test_a_nic_keeps_its_interface_name_verbatim(monkeypatch):
 
 
 def test_an_nvme_controller_is_named_by_its_controller(monkeypatch):
+    monkeypatch.setattr(main, "get_valid_apic_ids_from_system", lambda: {0, 1, 2, 3})
     monkeypatch.setattr(main, "detect_device_from_system", lambda name: DeviceInfo(
         name=name, compatible="pci-storage", device_type="pci", pci_id="0000:4f:00.0"))
 
