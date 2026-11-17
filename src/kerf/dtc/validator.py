@@ -169,8 +169,13 @@ class MultikernelValidator:
         if cpus.total <= 0:
             self.errors.append("Hardware inventory: Total CPU count must be positive")
 
+        # Not an error: the pool also holds the CPUs the host never booted,
+        # which only the kernel knows of before the pool exists.
         if not cpus.available:
-            self.errors.append("Hardware inventory: No CPUs available for spawn kernels")
+            self.warnings.append(
+                "Hardware inventory: no host CPUs in the pool; instances can "
+                "only use CPUs the host never booted"
+            )
 
         host_set = set(cpus.host_reserved)
         available_set = set(cpus.available)
@@ -311,6 +316,22 @@ class MultikernelValidator:
                 current_state=f"Host reserved CPUs: {sorted(host_reserved)}",
                 suggestion=f"Use available CPUs: {available_cpus}",
                 alternative="Modify host-reserved CPU configuration",
+            )
+            self.errors.append(error_msg)
+
+        kinds = {cpus.kinds[cpu] for cpu in instance_cpus if cpu in cpus.kinds}
+        if len(kinds) > 1:
+            by_kind = "; ".join(
+                f"kind {kind}: {sorted(cpu for cpu in instance_cpus if cpus.kinds.get(cpu) == kind)}"
+                for kind in sorted(kinds)
+            )
+            error_msg = self._format_error_with_context(
+                error_type="CPU allocation error",
+                instance_name=instance.name,
+                problem="CPUs of more than one kind",
+                current_state=f"Kinds of the requested CPUs: {by_kind}",
+                suggestion="Give an instance CPUs of one kind only",
+                alternative="Create one instance per kind of CPU",
             )
             self.errors.append(error_msg)
 

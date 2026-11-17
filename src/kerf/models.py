@@ -98,6 +98,11 @@ class CPUAllocation:
     available: List[int]  # Pool membership: every CPU in the pool, lent or free
     topology: Optional[Dict[int, CPUTopology]] = None  # CPU ID -> topology info
     available_free: Optional[List[int]] = None  # Pool members not lent to an instance
+    # Pool members the host never booted: there without being asked for, for good
+    unclaimed: List[int] = field(default_factory=list)
+    # CPU ID -> kind number, where the machine has more than one kind;
+    # 0 is the host's own, and an instance is one kind
+    kinds: Dict[int, int] = field(default_factory=dict)
 
     def get_allocated_cpus(self) -> Set[int]:
         """Get set of CPUs allocated to instances."""

@@ -234,14 +234,36 @@ class DeviceTreeParser:
         if free_prop is not None:
             available_free = unpack_cpu_ids(free_prop)
 
+        unclaimed_prop = self._optional_prop(resources_node, 'cpus-unclaimed')
+        unclaimed = unpack_cpu_ids(unclaimed_prop) if unclaimed_prop is not None else []
+
         host_reserved = []
 
         return CPUAllocation(
             total=len(available),
             host_reserved=host_reserved,
             available=available,
-            available_free=available_free
+            available_free=available_free,
+            unclaimed=unclaimed,
+            kinds=self._parse_cpu_kinds()
         )
+
+    def _parse_cpu_kinds(self) -> Dict[int, int]:
+        """Map CPU ID to its kind number from /cpu-kinds, empty where every CPU is alike."""
+        try:
+            kinds_node = self.fdt.path_offset('/cpu-kinds')
+        except libfdt.FdtException:
+            return {}
+
+        kinds = {}
+        for node in self._subnodes(kinds_node):
+            kind = self._optional_prop(node, 'reg')
+            cpus = self._optional_prop(node, 'cpus')
+            if kind is None or cpus is None:
+                continue
+            for cpu in unpack_cpu_ids(cpus):
+                kinds[cpu] = kind.as_uint32()
+        return kinds
 
     def _subnodes(self, node: int):
         """Yield the offsets of a node's immediate children."""

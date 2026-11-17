@@ -507,3 +507,43 @@ def test_unknown_device_reference_is_rejected(sample_hardware):
 
     result = MultikernelValidator().validate(tree)
     assert any("non-existent device 'nvme7'" in e for e in result.errors)
+
+
+def test_instance_of_two_kinds_is_rejected(sample_hardware):
+    from kerf.models import Instance, InstanceResources, GlobalDeviceTree
+
+    cpus = sample_hardware.cpus.available[:2]
+    sample_hardware.cpus.kinds = {cpus[0]: 0, cpus[1]: 1}
+    instance = Instance(
+        name="mixed",
+        id=1,
+        resources=InstanceResources(
+            cpus=cpus, memory_base=0x80000000, memory_bytes=2 * 1024**3, devices=[]
+        ),
+    )
+    tree = GlobalDeviceTree(hardware=sample_hardware, instances={"mixed": instance},
+                            device_references={})
+
+    result = MultikernelValidator().validate(tree)
+
+    assert any("CPUs of more than one kind" in error for error in result.errors)
+
+
+def test_instance_of_one_kind_passes_the_kind_check(sample_hardware):
+    from kerf.models import Instance, InstanceResources, GlobalDeviceTree
+
+    cpus = sample_hardware.cpus.available[:2]
+    sample_hardware.cpus.kinds = {cpu: 1 for cpu in sample_hardware.cpus.available}
+    instance = Instance(
+        name="alike",
+        id=1,
+        resources=InstanceResources(
+            cpus=cpus, memory_base=0x80000000, memory_bytes=2 * 1024**3, devices=[]
+        ),
+    )
+    tree = GlobalDeviceTree(hardware=sample_hardware, instances={"alike": instance},
+                            device_references={})
+
+    result = MultikernelValidator().validate(tree)
+
+    assert not any("more than one kind" in error for error in result.errors)
