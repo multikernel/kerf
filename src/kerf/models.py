@@ -190,7 +190,6 @@ class Instance:
     id: Optional[int]  # None means kernel should auto-assign
     resources: InstanceResources
     config: Optional[InstanceConfig] = None
-    options: Optional[Dict[str, bool]] = None
 
 
 @dataclass

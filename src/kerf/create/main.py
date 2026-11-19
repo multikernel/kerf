@@ -411,9 +411,6 @@ def dump_overlay_for_debug(
     "size, devices and id, unless overridden by NAME or --id. Mutually exclusive "
     "with the resource options above.",
 )
-@click.option(
-    "--enable-host-kcore", is_flag=True, help="Enable host kcore access for this instance"
-)
 @click.option("--uring", is_flag=True, default=False, help="Enable io_uring shared ring (sq=256, cq=256, shim=64)")
 @click.option("--uring-sq-entries", type=int, default=None, help="io_uring SQ entries (power of 2, default: 256)")
 @click.option("--uring-cq-entries", type=int, default=None, help="io_uring CQ entries (power of 2, default: 256)")
@@ -432,7 +429,6 @@ def create(  # pylint: disable=too-many-arguments,too-many-positional-arguments
     memory: str,
     devices: Optional[str],
     input_path: Optional[str],
-    enable_host_kcore: bool,
     uring: bool,
     uring_sq_entries: Optional[int],
     uring_cq_entries: Optional[int],
@@ -667,14 +663,8 @@ def create(  # pylint: disable=too-many-arguments,too-many-positional-arguments
                 uring_shim_pages=uring_shim_pages or (64 if uring_enabled else None),
             )
 
-            options = None
-            if enable_host_kcore:
-                options = {"enable-host-kcore": True}
-
             # Create instance
-            instance = Instance(
-                name=name, id=final_instance_id, resources=resources, options=options
-            )
+            instance = Instance(name=name, id=final_instance_id, resources=resources)
 
             # Add to modified state
             modified.instances[name] = instance

@@ -566,13 +566,11 @@ class DeviceTreeParser:
             pass
 
         resources = self._parse_instance_resources_from_overlay(node_offset)
-        options = self._parse_instance_options(node_offset)
 
         return Instance(
             name=instance_name,
             id=instance_id,
             resources=resources,
-            options=options
         )
 
     def _parse_instance_resources_from_overlay(self, node_offset: int) -> InstanceResources:
@@ -649,15 +647,12 @@ class DeviceTreeParser:
         except libfdt.FdtException as e:
             raise ParseError(f"Missing 'id' property for instance '{name}': {e}") from e
 
-        # Parse resources and options
         resources = self._parse_instance_resources(node_offset)
-        options = self._parse_instance_options(node_offset)
 
         return Instance(
             name=name,
             id=instance_id,
             resources=resources,
-            options=options
         )
 
     def _parse_instance_resources(self, node_offset: int) -> InstanceResources:
@@ -731,23 +726,6 @@ class DeviceTreeParser:
             uring_cq_entries=uring_cq,
             uring_shim_pages=uring_shim,
         )
-
-    def _parse_instance_options(self, node_offset: int) -> Optional[Dict[str, bool]]:
-        """Parse instance options from DTB node."""
-        options = {}
-
-        try:
-            options_node = self.fdt.subnode_offset(node_offset, 'options')
-        except libfdt.FdtException:
-            return None if not options else options
-
-        try:
-            self.fdt.getprop(options_node, 'enable-host-kcore')
-            options['enable-host-kcore'] = True
-        except libfdt.FdtException:
-            pass
-
-        return options if options else None
 
     def _parse_device_references(self) -> Dict[str, Dict]:
         """Parse device reference nodes (phandle targets) from DTB."""
