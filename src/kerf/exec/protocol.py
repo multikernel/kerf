@@ -116,22 +116,29 @@ def pack_signal(signo: int) -> bytes:
     return pack_frame(SIGNAL, struct.pack("<I", signo))
 
 
+def _unpack(fmt: str, payload: bytes) -> tuple:
+    try:
+        return struct.unpack(fmt, payload)
+    except struct.error as e:
+        raise ProtocolError(f"malformed reply: {e}") from e
+
+
 def unpack_started(payload: bytes) -> int:
-    return struct.unpack("<I", payload)[0]
+    return _unpack("<I", payload)[0]
 
 
 def unpack_error(payload: bytes) -> Tuple[int, str]:
-    (err,) = struct.unpack_from("<I", payload)
+    (err,) = _unpack("<I", payload[:4])
     return err, payload[4:].split(b"\0", 1)[0].decode(errors="replace")
 
 
 def unpack_ack(payload: bytes) -> int:
-    return struct.unpack("<I", payload)[0]
+    return _unpack("<I", payload)[0]
 
 
 def unpack_exit(payload: bytes) -> int:
     """Shell-style status: the exit code, or 128 + signal."""
-    signaled, code = struct.unpack("<BB", payload)
+    signaled, code = _unpack("<BB", payload)
     return 128 + code if signaled else code
 
 

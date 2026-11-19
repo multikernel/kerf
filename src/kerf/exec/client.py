@@ -99,6 +99,7 @@ class Session:
     ) -> int:
         threading.Thread(target=self._writer, daemon=True).start()
         self.send(open_frame)
+        started = False
         try:
             while True:
                 try:
@@ -109,6 +110,10 @@ class Session:
                     raise LostConnection()
                 ftype, payload = frame
                 if ftype == protocol.STARTED:
+                    if started:
+                        raise protocol.ProtocolError("duplicate STARTED")
+                    started = True
+                    protocol.unpack_started(payload)
                     if stdin_fd is not None:
                         threading.Thread(
                             target=self._stdin_reader, args=(stdin_fd,), daemon=True
@@ -121,11 +126,15 @@ class Session:
                     out.flush()
                 elif ftype == protocol.STDIN_ACK:
                     with self._credit_cond:
-                        self._credit += protocol.unpack_ack(payload)
+                        self._credit = min(
+                            self._credit + protocol.unpack_ack(payload), protocol.STDIN_WINDOW
+                        )
                         self._credit_cond.notify()
                 elif ftype == protocol.EXIT:
                     return protocol.unpack_exit(payload)
                 elif ftype == protocol.ERROR:
                     raise RemoteError(*protocol.unpack_error(payload))
+        except protocol.ProtocolError as e:
+            raise LostConnection() from e
         finally:
             self.send(None)

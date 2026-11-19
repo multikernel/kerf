@@ -105,6 +105,46 @@ def test_lost_connection():
         Session(host).run(protocol.pack_open(["true"], []), io.BytesIO(), io.BytesIO())
 
 
+def run_against(*frames):
+    """Run a session against a peer that sends frames and closes."""
+    host, peer = socket.socketpair()
+    peer.sendall(b"".join(frames))
+    peer.close()
+    session = Session(host)
+    try:
+        return session, session.run(b"", io.BytesIO(), io.BytesIO())
+    finally:
+        host.close()
+
+
+STARTED = protocol.pack_frame(protocol.STARTED, bytes(4))
+EXIT = protocol.pack_frame(protocol.EXIT, bytes(2))
+
+
+@pytest.mark.parametrize("frames", [
+    [STARTED, protocol.pack_frame(protocol.EXIT, bytes(1))],
+    [STARTED, protocol.pack_frame(protocol.EXIT, bytes(3))],
+    [STARTED, protocol.pack_frame(protocol.STDIN_ACK, bytes(1)), EXIT],
+    [protocol.pack_frame(protocol.ERROR, bytes(1))],
+    [protocol.pack_frame(protocol.STARTED), EXIT],
+    [STARTED, STARTED, EXIT],
+])
+def test_malformed_reply_is_a_lost_connection(frames):
+    with pytest.raises(LostConnection):
+        run_against(*frames)
+
+
+def test_ack_cannot_grow_the_stdin_window():
+    ack = protocol.pack_frame(protocol.STDIN_ACK, (1 << 30).to_bytes(4, "little"))
+    session, code = run_against(STARTED, ack, EXIT)
+    assert code == 0
+    assert session._credit == protocol.STDIN_WINDOW  # pylint: disable=protected-access
+
+
+def test_unknown_reply_is_ignored():
+    assert run_against(STARTED, protocol.pack_frame(99, b"zz"), EXIT)[1] == 0
+
+
 @needs_session
 def test_run_respects_stdin_window(agent):
     size = 1 << 20

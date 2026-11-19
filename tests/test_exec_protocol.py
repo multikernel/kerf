@@ -94,6 +94,17 @@ def test_unpack_replies():
     assert protocol.unpack_exit(bytes([1, 15])) == 143
 
 
+@pytest.mark.parametrize("unpack, payload", [
+    (protocol.unpack_started, b""),
+    (protocol.unpack_ack, bytes(5)),
+    (protocol.unpack_exit, bytes(1)),
+    (protocol.unpack_error, bytes(3)),
+])
+def test_unpack_rejects_malformed_replies(unpack, payload):
+    with pytest.raises(protocol.ProtocolError):
+        unpack(payload)
+
+
 def test_error_exit_code():
     assert protocol.error_exit_code(errno.ENOENT) == 127
     assert protocol.error_exit_code(errno.EACCES) == 126
