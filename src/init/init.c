@@ -30,10 +30,12 @@
 #include <sys/signalfd.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
+#include <sys/syscall.h>
 #include <sys/wait.h>
 #include <termios.h>
 #include <unistd.h>
 
+#include "lockdown.h"
 #include "proto.h"
 #include "session.h"
 
@@ -107,19 +109,22 @@ static int mount_filesystems(void)
     if (do_mount("devpts", "/dev/pts", "devpts", MS_NOSUID | MS_NOEXEC) < 0)
         return -1;
 
+    /* Only a lockdown request needs it, and that reports it missing */
+    mount("securityfs", "/sys/kernel/security", "securityfs",
+          MS_NOSUID | MS_NODEV | MS_NOEXEC, NULL);
+
     return 0;
 }
 
-static int read_entrypoint(char *buf, size_t bufsize)
+static int read_cmdline(char *cmdline, size_t size)
 {
-    char cmdline[MAX_CMDLINE_LEN];
     int fd = open(CMDLINE_PATH, O_RDONLY);
     if (fd < 0) {
         log_error("open " CMDLINE_PATH);
         return -1;
     }
 
-    ssize_t n = read(fd, cmdline, sizeof(cmdline) - 1);
+    ssize_t n = read(fd, cmdline, size - 1);
     close(fd);
 
     if (n < 0) {
@@ -128,6 +133,15 @@ static int read_entrypoint(char *buf, size_t bufsize)
     }
 
     cmdline[n] = '\0';
+    return 0;
+}
+
+static int read_entrypoint(char *buf, size_t bufsize)
+{
+    char cmdline[MAX_CMDLINE_LEN];
+
+    if (read_cmdline(cmdline, sizeof(cmdline)) < 0)
+        return -1;
 
     /* Find kerf.entrypoint= in cmdline */
     char *start = strstr(cmdline, ENTRYPOINT_KEY);
@@ -422,7 +436,11 @@ int main(int argc, char *argv[])
     (void)argv;
 
     char entrypoint[MAX_ENTRYPOINT_LEN];
+    char cmdline[MAX_CMDLINE_LEN];
     char *ep_argv[MAX_ARGS];
+
+    /* Nothing an initrd or loader left open may reach the workload */
+    syscall(SYS_close_range, 3U, ~0U, 0U);
 
     if (mount_filesystems() < 0) {
         log_msg("failed to mount filesystems");
@@ -430,6 +448,13 @@ int main(int argc, char *argv[])
     }
 
     ensure_std_fds();
+
+    /* Before the entrypoint and before any exec session can start */
+    if (read_cmdline(cmdline, sizeof(cmdline)) < 0 ||
+        lockdown_setup(cmdline, log_msg) < 0) {
+        log_msg("failed to set up lockdown");
+        return 1;
+    }
 
     if (read_entrypoint(entrypoint, sizeof(entrypoint)) < 0) {
         log_msg("failed to read entrypoint");

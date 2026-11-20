@@ -16,6 +16,8 @@
 Tests for `kerf show` baseline hardware display.
 """
 
+import pytest
+
 from kerf.models import (
     CPUAllocation,
     DeviceInfo,
@@ -24,7 +26,11 @@ from kerf.models import (
     MemoryAllocation,
     PoolMemoryRegion,
 )
-from kerf.show.main import display_baseline_info, display_instance_info
+from kerf.show.main import (
+    _display_kernel_metadata,
+    display_baseline_info,
+    display_instance_info,
+)
 
 
 def _tree(cpus, memory):
@@ -182,3 +188,24 @@ def test_no_iommu_line_for_a_device_without_one(capsys):
     display_instance_info({"name": "web", "devices": {"pci_0000_09_00_0": _nic()}})
 
     assert "IOMMU Unit" not in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("lockdown, row", [
+    ({"level": "confidentiality", "deny": []}, "confidentiality"),
+    ({"level": "integrity", "deny": ["kcore", "xfrm-secret"]},
+     "integrity, deny kcore,xfrm-secret"),
+])
+def test_shows_the_lockdown_a_spawn_was_loaded_with(lockdown, row, capsys):
+    _display_kernel_metadata({"kernel": {"path": "/boot/vmlinux"}, "lockdown": lockdown})
+
+    assert f"    {'Lockdown':15} {row}\n" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("metadata", [
+    {"kernel": {"path": "/boot/vmlinux"}},
+    {"kernel": {"path": "/boot/vmlinux"}, "lockdown": None},
+])
+def test_no_lockdown_row_when_none_was_requested(metadata, capsys):
+    _display_kernel_metadata(metadata)
+
+    assert "Lockdown" not in capsys.readouterr().out
