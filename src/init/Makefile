@@ -14,8 +14,8 @@ session-test: session_test.c session.c session.h proto.h
 	$(CC) $(CFLAGS) -o $@ session_test.c session.c
 
 # Runs the lockdown code on a BTF file for tests/test_init_*.py; not shipped.
-lockdown-test: lockdown_test.c btf.c btf.h
-	$(CC) $(CFLAGS) -o $@ lockdown_test.c btf.c
+lockdown-test: lockdown_test.c lockdown.c lockdown.h btf.c btf.h bpf_uapi.h
+	$(CC) $(CFLAGS) -o $@ lockdown_test.c lockdown.c btf.c
 
 clean:
 	rm -f kerf-init session-test lockdown-test

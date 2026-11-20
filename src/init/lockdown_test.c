@@ -22,6 +22,7 @@
 #include <string.h>
 
 #include "btf.h"
+#include "lockdown.h"
 
 static int test_btf(const struct btf *btf)
 {
@@ -38,13 +39,44 @@ static int test_btf(const struct btf *btf)
     return 0;
 }
 
+static void print_insns(const char *prog, const struct bpf_insn *insns, int count)
+{
+    for (int i = 0; i < count; i++)
+        printf("%s %02x %u %u %d %d\n", prog, insns[i].code, insns[i].dst_reg,
+               insns[i].src_reg, insns[i].off, insns[i].imm);
+}
+
+static int test_plan(const struct btf *btf, const char *names)
+{
+    struct bpf_insn deny[DENY_PROG_INSNS], guard[GUARD_PROG_INSNS];
+    struct deny_plan plan;
+    char err[128];
+
+    if (lockdown_resolve(btf, names, &plan, err, sizeof(err)) < 0) {
+        fprintf(stderr, "error: %s\n", err);
+        return 1;
+    }
+
+    printf("mask=%" PRIx64 "\n", plan.mask);
+    printf("locked_down_id=%u\n", plan.locked_down_id);
+    printf("ptrace_id=%u\n", plan.ptrace_id);
+    printf("tgid_off=%u\n", plan.tgid_off);
+    lockdown_emit_deny(&plan, deny);
+    lockdown_emit_guard(&plan, guard);
+    print_insns("deny", deny, DENY_PROG_INSNS);
+    print_insns("guard", guard, GUARD_PROG_INSNS);
+    return 0;
+}
+
 int main(int argc, char *argv[])
 {
+    int plan = argc == 4 && !strcmp(argv[1], "plan");
     struct btf btf;
     int ret;
 
-    if (argc < 3 || strcmp(argv[1], "btf")) {
-        fprintf(stderr, "usage: lockdown-test btf BTF_FILE\n");
+    if (!plan && (argc != 3 || strcmp(argv[1], "btf"))) {
+        fprintf(stderr, "usage: lockdown-test btf BTF_FILE\n"
+                        "       lockdown-test plan BTF_FILE NAMES\n");
         return 2;
     }
 
@@ -58,7 +90,7 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    ret = test_btf(&btf);
+    ret = plan ? test_plan(&btf, argv[3]) : test_btf(&btf);
     btf_free(&btf);
     return ret;
 }
