@@ -416,6 +416,12 @@ def _display_kernel_metadata(metadata: Dict, verbose: bool = False):
     elif initrd:
         # Records from before initrd inspection hold just the path
         click.echo(f"    {'Initrd':15} {initrd}")
+    lockdown = metadata.get("lockdown")
+    if lockdown:
+        lockdown_line = lockdown["level"]
+        if lockdown.get("deny"):
+            lockdown_line += f", deny {','.join(lockdown['deny'])}"
+        click.echo(f"    {'Lockdown':15} {lockdown_line}")
     if metadata.get("loaded_at"):
         click.echo(f"    {'Loaded At':15} {metadata['loaded_at']}")
     if verbose:
