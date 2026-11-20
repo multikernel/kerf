@@ -3,4 +3,5 @@ __pycache__/
 # Built artifacts
 src/init/kerf-init
 src/init/session-test
+src/init/lockdown-test
 src/kerf/data/kerf-init
