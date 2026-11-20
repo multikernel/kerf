@@ -20,6 +20,7 @@
 #include <inttypes.h>
 #include <stdio.h>
 #include <string.h>
+#include <unistd.h>
 
 #include "btf.h"
 #include "lockdown.h"
@@ -68,15 +69,52 @@ static int test_plan(const struct btf *btf, const char *names)
     return 0;
 }
 
+/* Whether this kernel's verifier takes the programs; nothing is attached */
+static int test_load(const char *names)
+{
+    struct deny_plan plan;
+    int deny_fd, guard_fd;
+    struct btf btf;
+    char err[256];
+    int ret;
+
+    if (btf_load("/sys/kernel/btf/vmlinux", &btf) < 0) {
+        fprintf(stderr, "error: no usable kernel BTF\n");
+        return 1;
+    }
+    ret = lockdown_resolve(&btf, names, &plan, err, sizeof(err));
+    btf_free(&btf);
+    if (ret < 0 || lockdown_load(&plan, &deny_fd, &guard_fd, err, sizeof(err)) < 0) {
+        fprintf(stderr, "error: %s\n", err);
+        return 1;
+    }
+    close(deny_fd);
+    close(guard_fd);
+    printf("loaded\n");
+    return 0;
+}
+
+static void print_log(const char *msg)
+{
+    printf("%s\n", msg);
+}
+
 int main(int argc, char *argv[])
 {
     int plan = argc == 4 && !strcmp(argv[1], "plan");
     struct btf btf;
     int ret;
 
+    if (argc == 3 && !strcmp(argv[1], "load"))
+        return test_load(argv[2]);
+    if (argc == 3 && !strcmp(argv[1], "setup"))
+        return lockdown_setup(argv[2], print_log) < 0;
+
     if (!plan && (argc != 3 || strcmp(argv[1], "btf"))) {
         fprintf(stderr, "usage: lockdown-test btf BTF_FILE\n"
-                        "       lockdown-test plan BTF_FILE NAMES\n");
+                        "       lockdown-test plan BTF_FILE NAMES\n"
+                        "       lockdown-test load NAMES     (as root)\n"
+                        "       lockdown-test setup CMDLINE\n");
         return 2;
     }
 

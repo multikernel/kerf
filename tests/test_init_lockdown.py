@@ -154,3 +154,34 @@ def test_tgid_too_far_for_an_instruction_offset(run):
     code, _, err = run(lockdown_blob(tgid_byte=40000), "kcore")
 
     assert code == 1 and "task_struct.tgid" in err
+
+
+def run_setup(cmdline):
+    proc = subprocess.run([str(LOCKDOWN_TEST), "setup", cmdline],
+                          capture_output=True, text=True, timeout=10, check=False)
+    return proc.returncode, proc.stdout
+
+
+@pytest.mark.parametrize("cmdline", [
+    "",
+    "root=/dev/vda console=mktty0",
+    "nolockdown=integrity foo.kerf.deny=kcore",
+    "lockdown=bogus lockdown=",
+    'kerf.entrypoint="/bin/sh -c lockdown=integrity kerf.deny=kcore" quiet',
+])
+def test_setup_does_nothing_when_nothing_is_asked(cmdline):
+    assert run_setup(cmdline) == (0, "")
+
+
+def test_setup_checks_the_level_the_kernel_is_at():
+    # What it finds depends on the host; either the level holds or it says why
+    code, out = run_setup("quiet lockdown=confidentiality")
+
+    assert out.startswith("lockdown: ") and out.count("\n") == 1
+    assert (code == 0) == (out == "lockdown: confidentiality\n")
+
+
+def test_setup_refuses_two_deny_lists():
+    code, out = run_setup("kerf.deny=kcore kerf.deny=perf")
+
+    assert code == 1 and out.startswith("lockdown: ")

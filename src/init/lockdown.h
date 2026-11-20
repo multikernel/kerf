@@ -43,4 +43,18 @@ int lockdown_resolve(const struct btf *btf, const char *names,
 void lockdown_emit_deny(const struct deny_plan *plan, struct bpf_insn *insns);
 void lockdown_emit_guard(const struct deny_plan *plan, struct bpf_insn *insns);
 
+/*
+ * Load both programs into the running kernel without attaching them.
+ * Returns 0 with the program fds, or -1 with a message for the log in err.
+ */
+int lockdown_load(const struct deny_plan *plan, int *deny_fd, int *guard_fd,
+                  char *err, size_t errlen);
+
+/*
+ * Put the lockdown the command line asks for in force: verify the level
+ * the kernel was told, and attach the kerf.deny= programs. Returns 0 when
+ * nothing was asked or all of it holds, -1 after logging why not.
+ */
+int lockdown_setup(const char *cmdline, void (*log)(const char *msg));
+
 #endif
