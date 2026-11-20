@@ -154,6 +154,15 @@ kerf load --kernel=/boot/vmlinuz --initrd=/boot/initrd.img \
 kerf sign /boot/vmlinuz -o vmlinux.signed --key signing_key.pem --cert signing_cert.pem
 kerf load --kernel=vmlinux.signed --id=1
 
+# Lock a spawn kernel down at either of the kernel's two levels,
+# integrity or confidentiality
+kerf load --kernel=vmlinux.signed --id=1 --lockdown=integrity
+
+# Or pick individual confidentiality restrictions on top of integrity;
+# kerf-init enforces them, and the spawn kernel needs BPF LSM and BTF
+kerf load web --kernel=vmlinux.signed --image=nginx:latest \
+         --lockdown=integrity --deny=kcore,xfrm-secret
+
 # Boot a kernel instance
 kerf start web-server
 
