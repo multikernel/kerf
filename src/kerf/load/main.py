@@ -32,6 +32,13 @@ from ..metadata import (
     inspect_kernel_image,
     save_instance_metadata,
 )
+from ..lockdown import (
+    CONFIDENTIALITY_REASONS,
+    LOCKDOWN_LEVELS,
+    LockdownError,
+    image_supports_lockdown,
+    resolve_lockdown,
+)
 from ..utils import get_instance_id_from_name, get_instance_name_from_id
 from ..signature import kexec_signatures_enforced
 from ..vmlinuz import BZIMAGE_HEADER_SIZE, VmlinuzError, is_bzimage, open_kernel_fd
@@ -265,6 +272,20 @@ def kexec_file_load(
     show_default=True,
     help="Console device, ignored when --cmdline already sets console=",
 )
+@click.option(
+    "--lockdown",
+    type=click.Choice(LOCKDOWN_LEVELS),
+    help="Lock down the spawn kernel. integrity blocks what lets root modify the "
+    "running kernel (kexec of unsigned images, /dev/mem, MSR writes, debugfs, "
+    "unsigned modules); confidentiality also blocks what lets root read kernel "
+    "memory.",
+)
+@click.option(
+    "--deny",
+    help="With --lockdown=integrity, also deny these confidentiality restrictions "
+    f"(comma-separated): {', '.join(CONFIDENTIALITY_REASONS)}. Needs --image or "
+    "--rootfs-dir, and a spawn kernel with BPF LSM and BTF.",
+)
 @click.option("--verbose", "-v", is_flag=True, help="Verbose output")
 def load(  # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     ctx: click.Context,
@@ -282,6 +303,8 @@ def load(  # pylint: disable=too-many-arguments,too-many-positional-arguments,to
     nic: Optional[str],
     hostname: Optional[str],
     console_device: Optional[str],
+    lockdown: Optional[str],
+    deny: Optional[str],
     verbose: bool,
 ):
     """
@@ -334,6 +357,11 @@ def load(  # pylint: disable=too-many-arguments,too-many-positional-arguments,to
         # Load with no console
         kerf load web-server --kernel=/boot/vmlinuz --image=nginx:latest \\
                  --console=ttynull
+
+        # Load a spawn whose root can neither modify the kernel nor read
+        # /proc/kcore and IPsec keys, but can still use perf and tracing
+        kerf load web-server --kernel=vmlinux.signed --image=nginx:latest \\
+                 --lockdown=integrity --deny=kcore,xfrm-secret
     """
     try:
         if not name and id is None:
@@ -361,6 +389,18 @@ def load(  # pylint: disable=too-many-arguments,too-many-positional-arguments,to
         if given and not ip_addr:
             click.echo(f"Error: {', '.join(given)} requires --ip (an address or dhcp)", err=True)
             sys.exit(2)
+
+        # Checked here, before a rootfs or daxfs image exists to clean up
+        try:
+            lockdown_request = resolve_lockdown(
+                lockdown, deny, cmdline, bool(image or rootfs_dir), bool(initrd)
+            )
+        except LockdownError as e:
+            click.echo(f"Error: {e}", err=True)
+            sys.exit(2)
+        if lockdown_request:
+            for warning in lockdown_request.warnings:
+                click.echo(f"Warning: {warning}", err=True)
 
         instance_name = None
         instance_id = None
@@ -554,6 +594,11 @@ def load(  # pylint: disable=too-many-arguments,too-many-positional-arguments,to
             if verbose:
                 click.echo(f"Console: console={console_device}")
 
+        if lockdown_request and lockdown_request.params:
+            cmdline_parts.extend(lockdown_request.params)
+            if verbose:
+                click.echo(f"Lockdown: {' '.join(lockdown_request.params)}")
+
         # Last, so that it wins over anything given above
         required = required_kernel_params(cmdline_parts)
         if required:
@@ -581,6 +626,13 @@ def load(  # pylint: disable=too-many-arguments,too-many-positional-arguments,to
                     err=True,
                 )
             kernel_fd = open_kernel_fd(kernel_path)
+            if lockdown_request and not image_supports_lockdown(kernel_fd):
+                click.echo(
+                    "Warning: this kernel image does not appear to be built with the "
+                    "lockdown LSM (CONFIG_SECURITY_LOCKDOWN_LSM); it will ignore "
+                    f"lockdown={lockdown_request.level}.",
+                    err=True,
+                )
         except VmlinuzError as e:
             click.echo(f"Error: {e}", err=True)
             sys.exit(3)
@@ -635,6 +687,10 @@ def load(  # pylint: disable=too-many-arguments,too-many-positional-arguments,to
                     "kernel": inspect_kernel_image(kernel_path),
                     "initrd": inspect_initrd_image(initrd_path) if initrd_path else None,
                     "rootfs": rootfs_meta,
+                    "lockdown": {
+                        "level": lockdown_request.level,
+                        "deny": list(lockdown_request.deny),
+                    } if lockdown_request else None,
                     "loaded_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
                 })
             except OSError as e:
