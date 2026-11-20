@@ -4,7 +4,7 @@
 CC = musl-gcc
 CFLAGS = -Wall -Wextra -Werror -O2 -static
 
-all: kerf-init session-test
+all: kerf-init session-test lockdown-test
 
 kerf-init: init.c session.c session.h proto.h
 	$(CC) $(CFLAGS) -o $@ init.c session.c
@@ -13,7 +13,11 @@ kerf-init: init.c session.c session.h proto.h
 session-test: session_test.c session.c session.h proto.h
 	$(CC) $(CFLAGS) -o $@ session_test.c session.c
 
+# Runs the lockdown code on a BTF file for tests/test_init_*.py; not shipped.
+lockdown-test: lockdown_test.c btf.c btf.h
+	$(CC) $(CFLAGS) -o $@ lockdown_test.c btf.c
+
 clean:
-	rm -f kerf-init session-test
+	rm -f kerf-init session-test lockdown-test
 
 .PHONY: all clean
