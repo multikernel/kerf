@@ -33,10 +33,10 @@ from ..metadata import (
     save_instance_metadata,
 )
 from ..lockdown import (
-    CONFIDENTIALITY_REASONS,
     LOCKDOWN_LEVELS,
     LockdownError,
     image_supports_lockdown,
+    lockdown_help,
     resolve_lockdown,
 )
 from ..utils import get_instance_id_from_name, get_instance_name_from_id
@@ -250,7 +250,7 @@ def kexec_file_load(
     return result
 
 
-@click.command()
+@click.command(epilog=lockdown_help())
 @click.pass_context
 @click.argument("name", required=False)
 @click.option("--kernel", "-k", required=True, help="Path to kernel image file")
@@ -275,16 +275,15 @@ def kexec_file_load(
 @click.option(
     "--lockdown",
     type=click.Choice(LOCKDOWN_LEVELS),
-    help="Lock down the spawn kernel. integrity blocks what lets root modify the "
-    "running kernel (kexec of unsigned images, /dev/mem, MSR writes, debugfs, "
-    "unsigned modules); confidentiality also blocks what lets root read kernel "
-    "memory.",
+    help="Lock down the spawn kernel. integrity restricts what lets root modify "
+    "the running kernel; confidentiality also restricts what lets root read "
+    "kernel memory. Both are listed below.",
 )
 @click.option(
     "--deny",
-    help="With --lockdown=integrity, also deny these confidentiality restrictions "
-    f"(comma-separated): {', '.join(CONFIDENTIALITY_REASONS)}. Needs --image or "
-    "--rootfs-dir, and a spawn kernel with BPF LSM and BTF.",
+    help="With --lockdown=integrity, also restrict these confidentiality features "
+    "(comma-separated names from the list below). Needs --image or --rootfs-dir, "
+    "and a spawn kernel with BPF LSM and BTF.",
 )
 @click.option("--verbose", "-v", is_flag=True, help="Verbose output")
 def load(  # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
