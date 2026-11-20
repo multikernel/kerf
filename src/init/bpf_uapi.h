@@ -55,4 +55,52 @@ struct bpf_insn {
     int32_t imm;
 };
 
+/* enum bpf_cmd */
+#define BPF_PROG_LOAD 5
+#define BPF_LINK_CREATE 28
+
+/* enum bpf_prog_type */
+#define BPF_PROG_TYPE_LSM 29
+
+/* enum bpf_attach_type */
+#define BPF_LSM_MAC 27
+
+#define BPF_OBJ_NAME_LEN 16
+
+/*
+ * union bpf_attr, cut down to the two commands used and to the leading
+ * fields each needs. The kernel takes a shorter attr as zero-extended.
+ */
+union bpf_attr {
+    struct {
+        uint32_t prog_type;
+        uint32_t insn_cnt;
+        uint64_t insns;
+        uint64_t license;
+        uint32_t log_level;
+        uint32_t log_size;
+        uint64_t log_buf;
+        uint32_t kern_version;
+        uint32_t prog_flags;
+        char prog_name[BPF_OBJ_NAME_LEN];
+        uint32_t prog_ifindex;
+        uint32_t expected_attach_type;
+        uint32_t prog_btf_fd;
+        uint32_t func_info_rec_size;
+        uint64_t func_info;
+        uint32_t func_info_cnt;
+        uint32_t line_info_rec_size;
+        uint64_t line_info;
+        uint32_t line_info_cnt;
+        uint32_t attach_btf_id;
+    } prog_load;
+
+    struct {
+        uint32_t prog_fd;
+        uint32_t target_fd;
+        uint32_t attach_type;
+        uint32_t flags;
+    } link_create;
+} __attribute__((aligned(8)));
+
 #endif

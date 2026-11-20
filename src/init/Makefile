@@ -6,8 +6,8 @@ CFLAGS = -Wall -Wextra -Werror -O2 -static
 
 all: kerf-init session-test lockdown-test
 
-kerf-init: init.c session.c session.h proto.h
-	$(CC) $(CFLAGS) -o $@ init.c session.c
+kerf-init: init.c session.c session.h proto.h lockdown.c lockdown.h btf.c btf.h bpf_uapi.h
+	$(CC) $(CFLAGS) -o $@ init.c session.c lockdown.c btf.c
 
 # Runs one exec session on fd 0 for tests/test_exec_session.py; not shipped.
 session-test: session_test.c session.c session.h proto.h
