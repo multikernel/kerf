@@ -23,6 +23,7 @@ from kerf.lockdown import (
     INTEGRITY_REASONS,
     LockdownError,
     image_supports_lockdown,
+    lockdown_help,
     resolve_lockdown,
 )
 
@@ -162,3 +163,10 @@ def test_works_on_a_memfd():
         assert os.lseek(fd, 0, os.SEEK_CUR) == 0
     finally:
         os.close(fd)
+
+
+def test_help_lists_every_lockdown_feature():
+    text = lockdown_help()
+    for name in INTEGRITY_REASONS + CONFIDENTIALITY_REASONS:
+        assert f"  {name} " in text
+    assert text.index("module-signature") < text.index("kcore")

@@ -30,19 +30,43 @@ from .exceptions import KerfError
 
 LOCKDOWN_LEVELS: Tuple[str, ...] = ("integrity", "confidentiality")
 
-# enum lockdown_reason without the LOCKDOWN_ prefix, in kernel order. The
-# spawn kernel's own BTF is the authority; these only catch mistakes early.
-INTEGRITY_REASONS: Tuple[str, ...] = (
-    "module-signature", "dev-mem", "efi-test", "kexec", "hibernation",
-    "pci-access", "ioport", "msr", "acpi-tables", "device-tree",
-    "pcmcia-cis", "tiocsserial", "module-parameters", "mmiotrace", "debugfs",
-    "xmon-wr", "bpf-write-user", "dbg-write-kernel", "rtas-error-injection",
-    "xen-user-actions",
+# enum lockdown_reason without the LOCKDOWN_ prefix, in kernel order, with
+# the kernel's own description of each. The spawn kernel's BTF is the
+# authority; these only catch mistakes early and fill the help text.
+_INTEGRITY = (
+    ("module-signature", "unsigned module loading"),
+    ("dev-mem", "/dev/mem, /dev/kmem and /dev/port"),
+    ("efi-test", "/dev/efi_test access"),
+    ("kexec", "kexec of unsigned images"),
+    ("hibernation", "hibernation"),
+    ("pci-access", "direct PCI access"),
+    ("ioport", "raw I/O port access"),
+    ("msr", "raw MSR access"),
+    ("acpi-tables", "modifying ACPI tables"),
+    ("device-tree", "modifying device tree contents"),
+    ("pcmcia-cis", "direct PCMCIA CIS storage"),
+    ("tiocsserial", "reconfiguration of serial port I/O"),
+    ("module-parameters", "unsafe module parameters"),
+    ("mmiotrace", "unsafe mmio"),
+    ("debugfs", "debugfs access"),
+    ("xmon-wr", "xmon write access"),
+    ("bpf-write-user", "use of bpf to write user RAM"),
+    ("dbg-write-kernel", "use of kgdb/kdb to write kernel RAM"),
+    ("rtas-error-injection", "RTAS error injection"),
+    ("xen-user-actions", "Xen guest user action"),
 )
-CONFIDENTIALITY_REASONS: Tuple[str, ...] = (
-    "kcore", "kprobes", "bpf-read-kernel", "dbg-read-kernel",
-    "perf", "tracefs", "xmon-rw", "xfrm-secret",
+_CONFIDENTIALITY = (
+    ("kcore", "/proc/kcore access"),
+    ("kprobes", "use of kprobes"),
+    ("bpf-read-kernel", "use of bpf to read kernel RAM"),
+    ("dbg-read-kernel", "use of kgdb/kdb to read kernel RAM"),
+    ("perf", "unsafe use of perf"),
+    ("tracefs", "use of tracefs"),
+    ("xmon-rw", "xmon read and write access"),
+    ("xfrm-secret", "xfrm SA secret"),
 )
+INTEGRITY_REASONS: Tuple[str, ...] = tuple(name for name, _ in _INTEGRITY)
+CONFIDENTIALITY_REASONS: Tuple[str, ...] = tuple(name for name, _ in _CONFIDENTIALITY)
 
 # Printed by lock_kernel_down(), which is built only with
 # CONFIG_SECURITY_LOCKDOWN_LSM; a kernel without it ignores lockdown=.
@@ -63,6 +87,23 @@ class LockdownRequest:
     deny: Tuple[str, ...]
     params: Tuple[str, ...]
     warnings: Tuple[str, ...]
+
+
+def lockdown_help() -> str:
+    """The lockdown features of each level, for kerf load --help."""
+
+    def table(reasons):
+        return "\n".join(f"  {name:22}{what}" for name, what in reasons)
+
+    # \b keeps click from rewrapping the paragraph that follows it
+    return (
+        "Lockdown features:\n\n"
+        "--lockdown=integrity restricts what lets root modify the running kernel:\n\n"
+        f"\b\n{table(_INTEGRITY)}\n\n"
+        "--lockdown=confidentiality also restricts what lets root read kernel "
+        "memory. With --lockdown=integrity, --deny selects among these by name:\n\n"
+        f"\b\n{table(_CONFIDENTIALITY)}"
+    )
 
 
 def _check_options(level: Optional[str], kerf_init: bool, initrd: bool) -> None:
