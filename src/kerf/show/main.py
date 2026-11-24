@@ -421,6 +421,8 @@ def _display_kernel_metadata(metadata: Dict, verbose: bool = False):
         lockdown_line = lockdown["level"]
         if lockdown.get("deny"):
             lockdown_line += f", deny {','.join(lockdown['deny'])}"
+            if lockdown.get("pinned"):
+                lockdown_line += " (pinned, spawn root can lift it)"
         click.echo(f"    {'Lockdown':15} {lockdown_line}")
     if metadata.get("loaded_at"):
         click.echo(f"    {'Loaded At':15} {metadata['loaded_at']}")

@@ -163,6 +163,12 @@ kerf load --kernel=vmlinux.signed --id=1 --lockdown=integrity
 kerf load web --kernel=vmlinux.signed --image=nginx:latest \
          --lockdown=integrity --deny=kcore,xfrm-secret
 
+# The same for a spawn that boots its own initramfs: kerf-init is added to
+# it and runs first. Here root in the spawn is trusted not to lift the
+# restrictions, which only stay pinned in a bpffs
+kerf load web --kernel=vmlinux.signed --initrd=/boot/initrd.img \
+         --lockdown=integrity --deny=kcore,xfrm-secret
+
 # Boot a kernel instance
 kerf start web-server
 

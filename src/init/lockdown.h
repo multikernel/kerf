@@ -54,7 +54,12 @@ int lockdown_load(const struct deny_plan *plan, int *deny_fd, int *guard_fd,
  * Put the lockdown the command line asks for in force: verify the level
  * the kernel was told, and attach the kerf.deny= programs. Returns 0 when
  * nothing was asked or all of it holds, -1 after logging why not.
+ *
+ * The caller keeps the deny list alive by staying PID 1. One about to exec
+ * another init gives pin_dir instead: the deny list is pinned in a bpffs
+ * mounted there, where it holds until the spawn's root removes it.
  */
-int lockdown_setup(const char *cmdline, void (*log)(const char *msg));
+int lockdown_setup(const char *cmdline, const char *pin_dir,
+                   void (*log)(const char *msg));
 
 #endif

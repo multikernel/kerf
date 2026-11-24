@@ -37,7 +37,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
-from kerf.data import get_init_binary_path
+from kerf.data import KERF_INIT_PATH, get_init_binary_path
 
 DAXFS_SUPER_MAGIC = 0x64617835  # "dax5"
 DAXFS_VERSION = 8
@@ -459,10 +459,6 @@ FSCONFIG_CMD_CREATE = 6
 MOVE_MOUNT_F_EMPTY_PATH = 0x00000004
 
 AT_FDCWD = -100
-
-# Off /init so that an image's own /init stays usable as an entrypoint
-KERF_INIT_PATH = "/.kerf-init"
-
 
 def _kerf_init_binary() -> Path:
     init_binary = get_init_binary_path()

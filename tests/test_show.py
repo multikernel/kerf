@@ -194,6 +194,8 @@ def test_no_iommu_line_for_a_device_without_one(capsys):
     ({"level": "confidentiality", "deny": []}, "confidentiality"),
     ({"level": "integrity", "deny": ["kcore", "xfrm-secret"]},
      "integrity, deny kcore,xfrm-secret"),
+    ({"level": "integrity", "deny": ["kcore"], "pinned": True},
+     "integrity, deny kcore (pinned, spawn root can lift it)"),
 ])
 def test_shows_the_lockdown_a_spawn_was_loaded_with(lockdown, row, capsys):
     _display_kernel_metadata({"kernel": {"path": "/boot/vmlinux"}, "lockdown": lockdown})

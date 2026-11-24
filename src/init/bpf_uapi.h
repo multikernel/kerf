@@ -57,6 +57,7 @@ struct bpf_insn {
 
 /* enum bpf_cmd */
 #define BPF_PROG_LOAD 5
+#define BPF_OBJ_PIN 6
 #define BPF_LINK_CREATE 28
 
 /* enum bpf_prog_type */
@@ -68,7 +69,7 @@ struct bpf_insn {
 #define BPF_OBJ_NAME_LEN 16
 
 /*
- * union bpf_attr, cut down to the two commands used and to the leading
+ * union bpf_attr, cut down to the commands used and to the leading
  * fields each needs. The kernel takes a shorter attr as zero-extended.
  */
 union bpf_attr {
@@ -94,6 +95,12 @@ union bpf_attr {
         uint32_t line_info_cnt;
         uint32_t attach_btf_id;
     } prog_load;
+
+    struct {
+        uint64_t pathname;
+        uint32_t bpf_fd;
+        uint32_t file_flags;
+    } obj_pin;
 
     struct {
         uint32_t prog_fd;

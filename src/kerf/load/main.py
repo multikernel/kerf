@@ -32,6 +32,7 @@ from ..metadata import (
     inspect_kernel_image,
     save_instance_metadata,
 )
+from ..initrd import InitrdError, open_initrd_with_kerf_init
 from ..lockdown import (
     LOCKDOWN_LEVELS,
     LockdownError,
@@ -282,8 +283,9 @@ def kexec_file_load(
 @click.option(
     "--deny",
     help="With --lockdown=integrity, also restrict these confidentiality features "
-    "(comma-separated names from the list below). Needs --image or --rootfs-dir, "
-    "and a spawn kernel with BPF LSM and BTF.",
+    "(comma-separated names from the list below). Needs a spawn kernel with BPF "
+    "LSM and BTF, and --image, --rootfs-dir or --initrd. With --initrd alone, "
+    "root in the spawn is trusted not to lift the restrictions.",
 )
 @click.option("--verbose", "-v", is_flag=True, help="Verbose output")
 def load(  # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
@@ -317,6 +319,12 @@ def load(  # pylint: disable=too-many-arguments,too-many-positional-arguments,to
     before loading, since the kernel side only accepts ELF images. Note that
     an extracted vmlinux carries no signature, so this will not work on
     hosts enforcing kexec signature verification (Secure Boot lockdown).
+
+    --deny is enforced by kerf-init. With --image or --rootfs-dir it is the
+    spawn's PID 1 and keeps the restrictions in place for good. With --initrd
+    alone, kerf-init is added to the initramfs, applies the restrictions
+    before the initramfs's own init runs and then hands over to it; from
+    there on they hold only until root in the spawn removes them.
 
     When --image or --rootfs-dir is provided, a daxfs image is created and the
     kernel boots directly into daxfs as root filesystem (no initrd needed if
@@ -643,8 +651,13 @@ def load(  # pylint: disable=too-many-arguments,too-many-positional-arguments,to
         initrd_fd = -1
         if initrd_path:
             try:
-                initrd_fd = os.open(str(initrd_path), os.O_RDONLY)
-            except OSError as e:
+                if lockdown_request and lockdown_request.chained:
+                    initrd_fd = open_initrd_with_kerf_init(initrd_path)
+                    if verbose:
+                        click.echo("Added kerf-init to the initrd")
+                else:
+                    initrd_fd = os.open(str(initrd_path), os.O_RDONLY)
+            except (OSError, InitrdError) as e:
                 os.close(kernel_fd)
                 click.echo(f"Error: Failed to open initrd image: {e}", err=True)
                 sys.exit(3)
@@ -689,6 +702,7 @@ def load(  # pylint: disable=too-many-arguments,too-many-positional-arguments,to
                     "lockdown": {
                         "level": lockdown_request.level,
                         "deny": list(lockdown_request.deny),
+                        "pinned": lockdown_request.chained,
                     } if lockdown_request else None,
                     "loaded_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
                 })

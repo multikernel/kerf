@@ -22,6 +22,8 @@
 #include <fcntl.h>
 #include <stdio.h>
 #include <string.h>
+#include <sys/mount.h>
+#include <sys/stat.h>
 #include <sys/syscall.h>
 #include <unistd.h>
 
@@ -287,6 +289,55 @@ static void attach_error(const char *name, char *err, size_t errlen)
              strerror(errno));
 }
 
+/* The guard first, so the deny list is never in force unprotected */
+static int hold_links(int deny_fd, int guard_fd, char *err, size_t errlen)
+{
+    guard_link = attach_prog(guard_fd);
+    if (guard_link < 0) {
+        attach_error("guard", err, errlen);
+        return -1;
+    }
+    deny_link = attach_prog(deny_fd);
+    if (deny_link < 0) {
+        attach_error("deny", err, errlen);
+        return -1;
+    }
+    return 0;
+}
+
+/*
+ * No guard: it protects the links PID 1 holds, and here the pin is what
+ * keeps the deny list attached.
+ */
+static int pin_deny(int deny_fd, const char *dir, char *err, size_t errlen)
+{
+    union bpf_attr attr;
+    char path[128];
+    int link, ret;
+
+    if ((mkdir(dir, 0700) < 0 && errno != EEXIST) ||
+        mount("bpf", dir, "bpf", MS_NOSUID | MS_NODEV | MS_NOEXEC, NULL) < 0) {
+        snprintf(err, errlen, "cannot mount bpffs on %s: %s", dir, strerror(errno));
+        return -1;
+    }
+
+    link = attach_prog(deny_fd);
+    if (link < 0) {
+        attach_error("deny", err, errlen);
+        return -1;
+    }
+
+    snprintf(path, sizeof(path), "%s/deny", dir);
+    memset(&attr, 0, sizeof(attr));
+    attr.obj_pin.pathname = (uintptr_t)path;
+    attr.obj_pin.bpf_fd = link;
+    ret = sys_bpf(BPF_OBJ_PIN, &attr);
+    if (ret < 0)
+        snprintf(err, errlen, "cannot pin %s: %s", path, strerror(errno));
+    close(link);
+    return ret;
+}
+
 static int read_small(const char *path, char *buf, size_t size)
 {
     int fd = open(path, O_RDONLY | O_CLOEXEC);
@@ -385,7 +436,7 @@ static int lsm_active(const char *lsm)
     }
 }
 
-static int setup_deny(const char *names, char *err, size_t errlen)
+static int setup_deny(const char *names, const char *pin_dir, char *err, size_t errlen)
 {
     struct deny_plan plan;
     int deny_fd, guard_fd;
@@ -409,24 +460,17 @@ static int setup_deny(const char *names, char *err, size_t errlen)
     if (lockdown_load(&plan, &deny_fd, &guard_fd, err, errlen) < 0)
         return -1;
 
-    /* The guard first, so the deny list is never in force unprotected */
-    guard_link = attach_prog(guard_fd);
-    if (guard_link < 0) {
-        attach_error("guard", err, errlen);
-        ret = -1;
-    } else {
-        deny_link = attach_prog(deny_fd);
-        if (deny_link < 0) {
-            attach_error("deny", err, errlen);
-            ret = -1;
-        }
-    }
+    if (pin_dir)
+        ret = pin_deny(deny_fd, pin_dir, err, errlen);
+    else
+        ret = hold_links(deny_fd, guard_fd, err, errlen);
     close(deny_fd);
     close(guard_fd);
     return ret;
 }
 
-int lockdown_setup(const char *cmdline, void (*log)(const char *msg))
+int lockdown_setup(const char *cmdline, const char *pin_dir,
+                   void (*log)(const char *msg))
 {
     char names[MAX_DENY_LEN], err[256], msg[320 + MAX_DENY_LEN];
     const char *deny = NULL;
@@ -461,12 +505,13 @@ int lockdown_setup(const char *cmdline, void (*log)(const char *msg))
         }
         memcpy(names, deny, deny_len);
         names[deny_len] = '\0';
-        if (setup_deny(names, err, sizeof(err)) < 0) {
+        if (setup_deny(names, pin_dir, err, sizeof(err)) < 0) {
             snprintf(msg, sizeof(msg), "lockdown: %s", err);
             log(msg);
             return -1;
         }
-        snprintf(msg, sizeof(msg), "lockdown: %s, deny %s", level_names[active], names);
+        snprintf(msg, sizeof(msg), "lockdown: %s, deny %s%s%s", level_names[active],
+                 names, pin_dir ? ", pinned in " : "", pin_dir ? pin_dir : "");
     } else {
         snprintf(msg, sizeof(msg), "lockdown: %s", level_names[active]);
     }
