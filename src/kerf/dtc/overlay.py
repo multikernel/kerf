@@ -350,6 +350,11 @@ class OverlayGenerator:
 
             fdt_sw.end_node()  # End resources
 
+            if instance.message_ring:
+                fdt_sw.begin_node("chosen")
+                fdt_sw.property("multikernel,ipi-buffer", b"")
+                fdt_sw.end_node()
+
             fdt_sw.end_node()  # End instance-create
             fdt_sw.end_node()  # End __overlay__
             fdt_sw.end_node()  # End fragment

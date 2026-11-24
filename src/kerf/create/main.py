@@ -415,6 +415,13 @@ def dump_overlay_for_debug(
 @click.option("--uring-sq-entries", type=int, default=None, help="io_uring SQ entries (power of 2, default: 256)")
 @click.option("--uring-cq-entries", type=int, default=None, help="io_uring CQ entries (power of 2, default: 256)")
 @click.option("--uring-shim-pages", type=int, default=None, help="Shim shared data pages (default: 64)")
+@click.option(
+    "--static",
+    is_flag=True,
+    default=False,
+    help="Create a static partition with no message ring to the host: it cannot be "
+    "resized, lent PCI devices or shut down gracefully, only killed",
+)
 @click.option("--dry-run", is_flag=True, help="Validate without applying to kernel")
 @click.option("--verbose", "-v", is_flag=True, help="Verbose output")
 def create(  # pylint: disable=too-many-arguments,too-many-positional-arguments
@@ -433,6 +440,7 @@ def create(  # pylint: disable=too-many-arguments,too-many-positional-arguments
     uring_sq_entries: Optional[int],
     uring_cq_entries: Optional[int],
     uring_shim_pages: Optional[int],
+    static: bool,
     dry_run: bool,
     verbose: bool,
 ):
@@ -664,7 +672,12 @@ def create(  # pylint: disable=too-many-arguments,too-many-positional-arguments
             )
 
             # Create instance
-            instance = Instance(name=name, id=final_instance_id, resources=resources)
+            instance = Instance(
+                name=name,
+                id=final_instance_id,
+                resources=resources,
+                message_ring=not static,
+            )
 
             # Add to modified state
             modified.instances[name] = instance

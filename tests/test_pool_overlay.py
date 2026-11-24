@@ -15,6 +15,7 @@
 """Pool transaction overlays and target-path addressing of instance overlays."""
 
 import copy
+import dataclasses
 import struct
 
 import libfdt
@@ -252,3 +253,26 @@ def test_pool_device_add_carries_the_label():
     assert fdt.getprop(fdt.subnode_offset(add, "pci@0"), "label").as_str() == "enP1s1f1"
     assert fdt.getprop(fdt.subnode_offset(add, "pci@1"), "label",
                        quiet=[libfdt.FDT_ERR_NOTFOUND]) == MISSING
+
+
+def _created(instance, sample_hardware):
+    current = GlobalDeviceTree(hardware=sample_hardware, instances={}, device_references={})
+    modified = GlobalDeviceTree(
+        hardware=sample_hardware, instances={instance.name: instance}, device_references={}
+    )
+    fdt, ov = _ov(OverlayGenerator().generate_overlay(current, modified))
+    return fdt, fdt.subnode_offset(ov, "instance-create")
+
+
+def test_create_overlay_asks_for_a_message_ring(sample_hardware, sample_instances):
+    fdt, create = _created(sample_instances["database"], sample_hardware)
+
+    chosen = fdt.subnode_offset(create, "chosen")
+    assert len(fdt.getprop(chosen, "multikernel,ipi-buffer")) == 0
+
+
+def test_create_overlay_of_a_static_partition_has_no_chosen(sample_hardware, sample_instances):
+    static = dataclasses.replace(sample_instances["database"], message_ring=False)
+    fdt, create = _created(static, sample_hardware)
+
+    assert fdt.subnode_offset(create, "chosen", quiet=[libfdt.FDT_ERR_NOTFOUND]) == MISSING

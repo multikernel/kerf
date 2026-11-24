@@ -195,6 +195,7 @@ class Instance:
     id: Optional[int]  # None means kernel should auto-assign
     resources: InstanceResources
     config: Optional[InstanceConfig] = None
+    message_ring: bool = True  # False makes a static partition no kernel can message
 
 
 @dataclass
