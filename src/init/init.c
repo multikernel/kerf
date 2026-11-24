@@ -27,6 +27,7 @@
 #include <string.h>
 #include <sys/ioctl.h>
 #include <sys/mount.h>
+#include <sys/reboot.h>
 #include <sys/signalfd.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
@@ -383,8 +384,21 @@ static int setup_signalfd(void)
     return signalfd(-1, &mask, SFD_CLOEXEC | SFD_NONBLOCK);
 }
 
+/*
+ * The spawn exists to run the entrypoint. Once that is gone, halting is
+ * what tells the host and returns the CPUs; idling would hold them forever.
+ */
+static void power_off(void)
+{
+    log_msg("entrypoint is gone, powering off");
+    sync();
+    reboot(RB_POWER_OFF);
+    log_error("reboot");
+}
+
 static void reap_children(void)
 {
+    int entrypoint_exited = 0;
     int status;
     pid_t pid;
 
@@ -396,8 +410,12 @@ static void reap_children(void)
             snprintf(msg, sizeof(msg), "child exited with status %d", code);
             log_msg(msg);
             child_pid = -1;
+            entrypoint_exited = 1;
         }
     }
+
+    if (entrypoint_exited)
+        power_off();
 }
 
 static void handle_signals(int sfd)
