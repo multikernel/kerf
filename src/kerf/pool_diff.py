@@ -43,7 +43,7 @@ def _pci_ids(tree: GlobalDeviceTree) -> Set[str]:
 
 
 def _memory_diff(regions: List[PoolMemoryRegion], requested: Dict[int, int],
-                  busy: Set[int], diff: PoolDiff) -> None:
+                  busy: Set[int], park: Set[int], diff: PoolDiff) -> None:
     remaining = list(regions)
 
     for node, want in requested.items():
@@ -53,7 +53,7 @@ def _memory_diff(regions: List[PoolMemoryRegion], requested: Dict[int, int],
         if want > have:
             diff.memory_to_pool.append((node, want - have))
         elif want < have:
-            _release(remaining, lambda r, node=node: r.node == node, have - want, busy, diff)
+            _release(remaining, lambda r, node=node: r.node == node, have - want, busy, park, diff)
 
     # Chunks on nodes nobody asked for are surplus, unless an any-node request absorbs them.
     explicit = {n for n in requested if n != ANY_NODE}
@@ -63,15 +63,16 @@ def _memory_diff(regions: List[PoolMemoryRegion], requested: Dict[int, int],
     if any_want > have:
         diff.memory_to_pool.append((ANY_NODE, any_want - have))
     elif any_want < have:
-        _release(remaining, lambda r: r.node not in explicit, have - any_want, busy, diff)
+        _release(remaining, lambda r: r.node not in explicit, have - any_want, busy, park, diff)
 
 
 def _release(remaining: List[PoolMemoryRegion], pred, surplus: int,
-             busy: Set[int], diff: PoolDiff) -> None:
+             busy: Set[int], park: Set[int], diff: PoolDiff) -> None:
     # A chunk that still holds an allocation cannot go back to the host, and
-    # asking anyway fails the whole transaction.
+    # asking anyway fails the whole transaction. The park table's chunk goes
+    # last, as the kernel then has to build the table again elsewhere.
     candidates = sorted((r for r in remaining if pred(r) and r.base not in busy),
-                         key=lambda r: -r.size)
+                         key=lambda r: (-r.size, r.base in park))
     for r in candidates:
         if surplus <= 0:
             break
@@ -84,13 +85,17 @@ def _release(remaining: List[PoolMemoryRegion], pred, surplus: int,
 
 def compute_pool_diff(current: GlobalDeviceTree, requested: GlobalDeviceTree,
                        busy_chunks: Optional[Set[int]] = None,
-                       lent_devices: Optional[Set[str]] = None) -> PoolDiff:
+                       lent_devices: Optional[Set[str]] = None,
+                       park_chunks: Optional[Set[int]] = None) -> PoolDiff:
     """
     The request is the desired state; memory on nodes it omits counts as surplus.
 
     The pool tree lists only its free devices, so the devices lent to
     instances are passed alongside: they are members the request need
     not add, and they cannot go back to the host while lent.
+
+    The chunk holding the park table stays for as long as the request
+    keeps a CPU in the pool, as that CPU may be waiting in the table.
     """
     diff = PoolDiff()
     cur_cpus = set(current.hardware.cpus.available)
@@ -106,6 +111,9 @@ def compute_pool_diff(current: GlobalDeviceTree, requested: GlobalDeviceTree,
     diff.device_labels = {d.pci_id: d.label for d in requested.hardware.devices.values()
                           if d.label and d.pci_id in diff.devices_to_pool}
 
+    busy, park = set(busy_chunks or ()), set(park_chunks or ())
+    if req_cpus:
+        busy |= park
     _memory_diff(current.hardware.memory.regions, requested.hardware.memory.requested,
-                 busy_chunks or set(), diff)
+                 busy, park, diff)
     return diff

@@ -35,6 +35,9 @@ IOMEM_PATH = "/proc/iomem"
 #: iomem resource name the kernel registers every pool chunk under.
 MULTIKERNEL_POOL_NAME = "Multikernel Memory Pool"
 
+#: iomem resource name of the pool park table, nested in the chunk holding it.
+MULTIKERNEL_PARK_NAME = "Multikernel Park Table"
+
 _IOMEM_RANGE_RE = re.compile(r"([0-9a-fA-F]+)-([0-9a-fA-F]+)\s*:\s*(.*)")
 
 
@@ -181,13 +184,30 @@ def get_busy_chunks_from_iomem(iomem_path: str = IOMEM_PATH) -> Set[int]:
     Find the pool chunks that still hold an allocation.
 
     A chunk with any nested region cannot be returned to the host, so the
-    pool diff avoids picking it when it has a choice.
+    pool diff avoids picking it when it has a choice. The park table is
+    not counted: what it pins depends on the pool's CPUs, see
+    get_park_chunks_from_iomem().
 
     Returns:
         Base addresses of the chunks with at least one child region
     """
-    regions = _parse_iomem_regions(iomem_path)
+    regions = [r for r in _parse_iomem_regions(iomem_path) if r[2] != MULTIKERNEL_PARK_NAME]
     return {chunk_base for chunk_base, _, _ in _chunk_children(regions, _pool_chunks(regions))}
+
+
+def get_park_chunks_from_iomem(iomem_path: str = IOMEM_PATH) -> Set[int]:
+    """
+    Find the pool chunk that holds the park table.
+
+    Pool CPUs wait in the park table, so the kernel keeps its chunk until
+    the pool has no CPU left, and then frees the table with the chunk.
+
+    Returns:
+        Base addresses of the chunks holding the park table
+    """
+    regions = _parse_iomem_regions(iomem_path)
+    park = [r for r in regions if r[2] == MULTIKERNEL_PARK_NAME]
+    return {chunk_base for chunk_base, _, _ in _chunk_children(park, _pool_chunks(regions))}
 
 
 def get_memory_pool_from_iomem(iomem_path: str = IOMEM_PATH) -> Optional[Tuple[int, int]]:

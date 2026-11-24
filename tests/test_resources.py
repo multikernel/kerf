@@ -27,6 +27,7 @@ from kerf.resources import (
     get_pool_allocated_bytes,
     get_pool_chunks_from_iomem,
     get_busy_chunks_from_iomem,
+    get_park_chunks_from_iomem,
     get_instance_regions_from_iomem,
     find_free_range_from_iomem,
     get_memory_granule,
@@ -353,6 +354,20 @@ class TestIomemPoolAccounting:
             (1 << 30) + (1 << 29),
             1 << 28,
         )
+
+    def test_park_table_is_not_an_allocation(self, tmp_path):
+        path = tmp_path / "iomem"
+        path.write_text(
+            self.TWO_CHUNKS + "\n  200000000-20000ffff : Multikernel Park Table\n",
+            encoding="utf-8",
+        )
+        assert get_busy_chunks_from_iomem(str(path)) == {0x100000000}
+        assert get_park_chunks_from_iomem(str(path)) == {0x200000000}
+        # Still memory no instance can be given
+        assert get_pool_allocated_bytes(str(path))[2] == (1 << 28) + 0x10000
+
+    def test_no_park_table(self, two_chunk_iomem):
+        assert get_park_chunks_from_iomem(two_chunk_iomem) == set()
 
     def test_no_chunks(self, tmp_path):
         path = tmp_path / "iomem"

@@ -139,3 +139,45 @@ def test_a_lent_device_the_request_omits_stays_with_its_instance():
     d = compute_pool_diff(cur, req, lent_devices={"0000:09:00.0"})
     assert d.devices_to_host == ["0000:03:00.0"]
     assert d.devices_lent == ["0000:09:00.0"]
+
+
+def test_park_table_chunk_stays_while_the_pool_keeps_a_cpu():
+    # Equal sizes: only the park table tells the two chunks apart.
+    park = PoolMemoryRegion(0x1_0000_0000, GB, 0)
+    idle = PoolMemoryRegion(0x2_0000_0000, GB, 0)
+    cur = _tree([4], regions=[park, idle])
+    req = _tree([4], requested={0: GB})
+    d = compute_pool_diff(cur, req, park_chunks={park.base})
+    assert d.memory_to_host == [idle]
+
+
+def test_park_table_chunk_is_all_that_fits_the_surplus():
+    park = PoolMemoryRegion(0x1_0000_0000, GB // 2, 0)
+    idle = PoolMemoryRegion(0x2_0000_0000, GB, 0)
+    cur = _tree([4], regions=[park, idle])
+    req = _tree([4], requested={0: GB})
+    assert compute_pool_diff(cur, req, park_chunks={park.base}).is_empty()
+
+
+def test_park_table_chunk_goes_once_no_cpu_is_left():
+    park = PoolMemoryRegion(0x1_0000_0000, GB, 0)
+    idle = PoolMemoryRegion(0x2_0000_0000, GB, 0)
+    cur = _tree([4], regions=[park, idle])
+    d = compute_pool_diff(cur, _tree([]), park_chunks={park.base})
+    assert d.cpus_to_host == [4]
+    assert sorted(r.base for r in d.memory_to_host) == [park.base, idle.base]
+
+
+def test_park_table_chunk_goes_last_without_cpus():
+    park = PoolMemoryRegion(0x1_0000_0000, GB, 0)
+    idle = PoolMemoryRegion(0x2_0000_0000, GB, 0)
+    cur = _tree([4], regions=[park, idle])
+    d = compute_pool_diff(cur, _tree([], requested={0: GB}), park_chunks={park.base})
+    assert d.memory_to_host == [idle]
+
+
+def test_park_table_does_not_free_a_chunk_with_an_allocation():
+    park = PoolMemoryRegion(0x1_0000_0000, GB, 0)
+    cur = _tree([4], regions=[park])
+    d = compute_pool_diff(cur, _tree([]), busy_chunks={park.base}, park_chunks={park.base})
+    assert d.memory_to_host == []

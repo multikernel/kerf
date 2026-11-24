@@ -52,7 +52,7 @@ from ..models import (
 )
 from ..pool_diff import ANY_NODE, PoolDiff, compute_pool_diff
 from ..devices import check_label, default_label, is_partition, pci_node_name, split_name
-from ..resources import get_busy_chunks_from_iomem
+from ..resources import get_busy_chunks_from_iomem, get_park_chunks_from_iomem
 from ..runtime import DeviceTreeManager
 from ..topology import cpu_id_name, cpu_numa_nodes, logical_to_physical, node_for_cpus
 
@@ -853,6 +853,7 @@ def reconcile_pool(
     manager,
     baseline_mgr,
     lent: Optional[Set[str]] = None,
+    park_chunks: Optional[Set[int]] = None,
 ) -> Optional[PoolDiff]:
     """
     Bring the live pool in line with the requested baseline.
@@ -867,6 +868,7 @@ def reconcile_pool(
         busy_chunks: Bases of pool chunks that still hold an allocation
         dry_run: Report the plan without touching the kernel
         lent: PCI addresses of pool devices instances currently hold
+        park_chunks: Bases of pool chunks that hold the park table
         manager: DeviceTreeManager used to apply the overlay
         baseline_mgr: BaselineManager used for the initial write
 
@@ -891,7 +893,7 @@ def reconcile_pool(
         return None
 
     diff = compute_pool_diff(current, requested, busy_chunks=busy_chunks,
-                             lent_devices=lent)
+                             lent_devices=lent, park_chunks=park_chunks)
     _print_diff(diff)
     if diff.is_empty():
         click.echo("✓ Pool already matches the request; nothing to do")
@@ -1136,7 +1138,8 @@ def init(ctx: click.Context, input: Optional[str], cpus: Optional[str], memory: 
         try:
             reconcile_pool(current, tree, get_busy_chunks_from_iomem(), dry_run,
                            manager, baseline_mgr,
-                           lent={d.pci_id for d in held.values() if d.pci_id})
+                           lent={d.pci_id for d in held.values() if d.pci_id},
+                           park_chunks=get_park_chunks_from_iomem())
         except ValidationError as e:
             click.echo(f"Error: {e}", err=True)
             sys.exit(1)
