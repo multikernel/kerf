@@ -108,7 +108,7 @@ int main(int argc, char *argv[])
     if (argc == 3 && !strcmp(argv[1], "load"))
         return test_load(argv[2]);
     if (argc == 3 && !strcmp(argv[1], "setup"))
-        return lockdown_setup(argv[2], print_log) < 0;
+        return lockdown_setup(argv[2], NULL, print_log) < 0;
 
     if (!plan && (argc != 3 || strcmp(argv[1], "btf"))) {
         fprintf(stderr, "usage: lockdown-test btf BTF_FILE\n"

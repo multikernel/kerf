@@ -42,9 +42,12 @@
 #define CMDLINE_PATH "/proc/cmdline"
 #define ENTRYPOINT_KEY "kerf.entrypoint="
 #define CONSOLE_KEY "console="
+#define CHAIN_KEY "kerf.init="
+#define PIN_DIR "/.kerf-lockdown"
 #define MAX_CMDLINE_LEN 4096
 #define MAX_ENTRYPOINT_LEN 4096
 #define MAX_CONSOLE_LEN 64
+#define MAX_CHAIN_LEN 256
 #define MAX_ARGS 64
 
 static pid_t child_pid = -1;
@@ -93,6 +96,11 @@ static int do_mkdir(const char *path, mode_t mode)
 
 static int mount_filesystems(void)
 {
+    /* An initramfs may come without them; a read-only root just refuses */
+    mkdir("/proc", 0555);
+    mkdir("/sys", 0555);
+    mkdir("/dev", 0755);
+
     if (do_mount("proc", "/proc", "proc", MS_NOSUID | MS_NODEV | MS_NOEXEC) < 0)
         return -1;
 
@@ -183,6 +191,48 @@ static int read_entrypoint(char *buf, size_t bufsize)
     buf[len] = '\0';
 
     return 0;
+}
+
+/*
+ * The init kerf load found this spawn's initramfs set to run, when it put
+ * kerf-init in front of it. Returns 1 with the path, 0 without one, -1 if
+ * it is unusable.
+ */
+static int read_chain(const char *cmdline, char *buf, size_t bufsize)
+{
+    size_t key_len = strlen(CHAIN_KEY);
+
+    for (const char *word = cmdline; (word = strstr(word, CHAIN_KEY)); word += key_len) {
+        const char *value = word + key_len;
+        size_t len = strcspn(value, " \t\n");
+
+        if (word != cmdline && word[-1] != ' ' && word[-1] != '\t')
+            continue;
+        if (!len || len >= bufsize)
+            return -1;
+        memcpy(buf, value, len);
+        buf[len] = '\0';
+        return 1;
+    }
+    return 0;
+}
+
+static int chain_init(char *path, char *argv[])
+{
+    int kmsg = open("/dev/kmsg", O_WRONLY | O_CLOEXEC);
+
+    /* The other init starts on the bare tree it would have found; /dev
+     * lazily, as the standard descriptors may be open on it */
+    umount("/dev/pts");
+    umount2("/dev", MNT_DETACH);
+    umount("/sys/kernel/security");
+    umount("/sys");
+    umount("/proc");
+
+    argv[0] = path;
+    execv(path, argv);
+    dprintf(kmsg, "kerf-init: ERROR: %s: %s\n", path, strerror(errno));
+    return 1;
 }
 
 static int read_console(char *buf, size_t bufsize)
@@ -433,11 +483,12 @@ static void ensure_std_fds(void)
 int main(int argc, char *argv[])
 {
     (void)argc;
-    (void)argv;
 
     char entrypoint[MAX_ENTRYPOINT_LEN];
     char cmdline[MAX_CMDLINE_LEN];
+    char chain[MAX_CHAIN_LEN];
     char *ep_argv[MAX_ARGS];
+    int chained;
 
     /* Nothing an initrd or loader left open may reach the workload */
     syscall(SYS_close_range, 3U, ~0U, 0U);
@@ -449,11 +500,26 @@ int main(int argc, char *argv[])
 
     ensure_std_fds();
 
+    if (read_cmdline(cmdline, sizeof(cmdline)) < 0)
+        return 1;
+    chained = read_chain(cmdline, chain, sizeof(chain));
+    if (chained < 0) {
+        log_msg("unusable " CHAIN_KEY " in cmdline");
+        return 1;
+    }
+
     /* Before the entrypoint and before any exec session can start */
-    if (read_cmdline(cmdline, sizeof(cmdline)) < 0 ||
-        lockdown_setup(cmdline, log_msg) < 0) {
+    if (lockdown_setup(cmdline, chained ? PIN_DIR : NULL, log_msg) < 0) {
         log_msg("failed to set up lockdown");
         return 1;
+    }
+
+    if (chained) {
+        char msg[MAX_CHAIN_LEN + 32];
+
+        snprintf(msg, sizeof(msg), "handing over to %s", chain);
+        log_msg(msg);
+        return chain_init(chain, argv);
     }
 
     if (read_entrypoint(entrypoint, sizeof(entrypoint)) < 0) {

@@ -88,9 +88,7 @@ def test_network_options_without_an_address_are_rejected(options, named):
     (["--lockdown=confidentiality", "--cmdline=quiet lockdown=integrity"],
      "Error: --lockdown=confidentiality conflicts with lockdown=integrity"),
     (["--deny=kcore"], "Error: --deny requires --lockdown=integrity"),
-    (["--lockdown=integrity", "--deny=kcore"], "--image or --rootfs-dir"),
-    (["--lockdown=integrity", "--deny=kcore", "--image=nginx", "--initrd=/boot/initrd"],
-     "--initrd"),
+    (["--lockdown=integrity", "--deny=kcore"], "--image, --rootfs-dir or --initrd"),
     (["--lockdown=integrity", "--deny=kexec", "--image=nginx"], "already covered"),
 ])
 def test_bad_lockdown_requests_are_rejected_before_anything_is_touched(args, message):

@@ -19,6 +19,10 @@ The kernel offers two levels, lockdown=integrity and
 lockdown=confidentiality. On top of integrity, kerf-init can deny
 individual confidentiality reasons with a BPF LSM program; kerf.deny=
 carries their names to it.
+
+kerf-init holds that program as the spawn's PID 1. A spawn that boots its
+own initramfs has another PID 1, so there kerf-init runs first as rdinit=,
+pins the program in a bpffs and execs the init named by kerf.init=.
 """
 
 import mmap
@@ -26,6 +30,7 @@ import re
 from dataclasses import dataclass
 from typing import List, Optional, Tuple
 
+from .data import KERF_INIT_PATH
 from .exceptions import KerfError
 
 LOCKDOWN_LEVELS: Tuple[str, ...] = ("integrity", "confidentiality")
@@ -87,6 +92,8 @@ class LockdownRequest:
     deny: Tuple[str, ...]
     params: Tuple[str, ...]
     warnings: Tuple[str, ...]
+    # kerf-init has to be added to the initrd, to run ahead of its init
+    chained: bool = False
 
 
 def lockdown_help() -> str:
@@ -114,14 +121,9 @@ def _check_options(level: Optional[str], kerf_init: bool, initrd: bool) -> None:
             "--deny is redundant with --lockdown=confidentiality, which already "
             "denies every confidentiality reason"
         )
-    if not kerf_init:
+    if not kerf_init and not initrd:
         raise LockdownError(
-            "--deny needs kerf-init as the spawn's init; use --image or --rootfs-dir"
-        )
-    if initrd:
-        raise LockdownError(
-            "--deny cannot be combined with --initrd: the initrd would run before "
-            "the deny list is in force"
+            "--deny needs kerf-init in the spawn; use --image, --rootfs-dir or --initrd"
         )
 
 
@@ -129,6 +131,8 @@ def _check_cmdline(words: List[str], level: str, denying: bool) -> bool:
     """Check the user's command line; return whether it already sets the level."""
     if any(word.startswith("kerf.deny=") for word in words):
         raise LockdownError("kerf.deny= is reserved; use --deny")
+    if any(word.startswith("kerf.init=") for word in words):
+        raise LockdownError("kerf.init= is reserved")
 
     wanted = f"lockdown={level}"
     settings = [word for word in words if word.startswith("lockdown=")]
@@ -174,6 +178,16 @@ def _parse_deny(deny: str) -> Tuple[Tuple[str, ...], Tuple[str, ...]]:
     return tuple(names), tuple(warnings)
 
 
+def _chain_params(words: List[str]) -> Tuple[str, ...]:
+    """Put kerf-init ahead of the init the initramfs would have run."""
+    rdinit = [word for word in words if word.startswith("rdinit=")]
+    target = rdinit[-1][len("rdinit="):] if rdinit else "/init"
+    if not target.startswith("/") or '"' in target:
+        raise LockdownError(f"--deny cannot run rdinit={target} after kerf-init")
+    # Appended after the user's own rdinit=, and the kernel takes the last
+    return (f"rdinit={KERF_INIT_PATH}", f"kerf.init={target}")
+
+
 def resolve_lockdown(
     level: Optional[str],
     deny: Optional[str],
@@ -202,13 +216,23 @@ def resolve_lockdown(
     if deny is not None:
         _check_options(level, kerf_init, initrd)
 
-    level_set = _check_cmdline((cmdline or "").split(), level, deny is not None)
+    words = (cmdline or "").split()
+    level_set = _check_cmdline(words, level, deny is not None)
     names, warnings = _parse_deny(deny) if deny is not None else ((), ())
+    chained = bool(names) and not kerf_init
 
     params = [] if level_set else [f"lockdown={level}"]
     if names:
         params.append(f"kerf.deny={','.join(names)}")
-    return LockdownRequest(level, names, tuple(params), warnings)
+    if chained:
+        params.extend(_chain_params(words))
+        warnings += (
+            "with --initrd alone the deny list is only pinned in a bpffs; it holds "
+            "until root in the spawn removes the pin",
+        )
+    elif names and initrd:
+        warnings += ("the initrd runs before the deny list is in force",)
+    return LockdownRequest(level, names, tuple(params), warnings, chained)
 
 
 def image_supports_lockdown(kernel_fd: int) -> bool:

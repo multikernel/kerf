@@ -16,7 +16,10 @@
 
 from pathlib import Path
 
-__all__ = ["get_init_binary_path"]
+__all__ = ["KERF_INIT_PATH", "get_init_binary_path"]
+
+# Off /init so that an image's or initramfs's own /init stays usable
+KERF_INIT_PATH = "/.kerf-init"
 
 
 def get_init_binary_path() -> Path:

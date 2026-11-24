@@ -100,8 +100,10 @@ def test_unknown_reason_is_passed_through_with_a_warning():
 @pytest.mark.parametrize("kwargs, message", [
     ({"level": None, "deny": "kcore"}, "--deny requires --lockdown=integrity"),
     ({"level": "confidentiality", "deny": "kcore"}, "already denies"),
-    ({"deny": "kcore", "kerf_init": False}, "--image or --rootfs-dir"),
-    ({"deny": "kcore", "initrd": True}, "--initrd"),
+    ({"deny": "kcore", "kerf_init": False}, "--image, --rootfs-dir or --initrd"),
+    ({"deny": "kcore", "cmdline": "kerf.init=/sbin/init"}, "kerf.init= is reserved"),
+    ({"deny": "kcore", "kerf_init": False, "initrd": True, "cmdline": "rdinit=bin/sh"},
+     "cannot run rdinit=bin/sh"),
     ({"deny": "kcore", "cmdline": "kerf.deny=perf"}, "kerf.deny= is reserved"),
     ({"cmdline": "kerf.deny=perf"}, "kerf.deny= is reserved"),
     ({"cmdline": "lsm=landlock,bpf"}, "lsm=landlock,bpf .*leaves out lockdown"),
@@ -116,6 +118,34 @@ def test_rejected_requests(kwargs, message):
 def test_lsm_list_that_keeps_both_is_fine():
     r = req(deny="kcore", cmdline="lsm=landlock lsm=landlock,lockdown,bpf")
     assert r.params == ("lockdown=integrity", "kerf.deny=kcore")
+
+
+def test_deny_with_only_an_initrd_runs_kerf_init_ahead_of_its_init():
+    r = req(deny="kcore", kerf_init=False, initrd=True)
+
+    assert r.chained
+    assert r.params == ("lockdown=integrity", "kerf.deny=kcore",
+                        "rdinit=/.kerf-init", "kerf.init=/init")
+    assert len(r.warnings) == 1 and "root in the spawn" in r.warnings[0]
+
+
+def test_chained_init_is_the_last_rdinit_of_the_command_line():
+    r = req(deny="kcore", kerf_init=False, initrd=True,
+            cmdline="rdinit=/bin/sh quiet rdinit=/sbin/init")
+
+    assert r.params[-2:] == ("rdinit=/.kerf-init", "kerf.init=/sbin/init")
+
+
+def test_an_initrd_ahead_of_kerf_init_is_trusted_and_said_so():
+    r = req(deny="kcore", initrd=True)
+
+    assert not r.chained
+    assert r.params == ("lockdown=integrity", "kerf.deny=kcore")
+    assert len(r.warnings) == 1 and "initrd runs before" in r.warnings[0]
+
+
+def test_level_without_deny_never_chains():
+    assert not req(kerf_init=False, initrd=True).chained
 
 
 def test_level_without_deny_works_with_any_init_and_an_initrd():
