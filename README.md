@@ -377,8 +377,8 @@ sudo kerf init --cpus=128-134 --memory=1GB --report
 `kerf init --input` and `kerf create --input` accept it back. This is the
 supported way to capture a configuration and replay it later or on another
 host; hand-written device tree files are not supported. An instance dump
-carries its CPUs, memory size, devices and id; options such as --uring and
---static are given again on the command line.
+carries its CPUs, memory size, devices and id; --static is given again on
+the command line.
 
 ```bash
 sudo kerf dump -o host.dtb            # baseline

@@ -411,10 +411,6 @@ def dump_overlay_for_debug(
     "size, devices and id, unless overridden by NAME or --id. Mutually exclusive "
     "with the resource options above.",
 )
-@click.option("--uring", is_flag=True, default=False, help="Enable io_uring shared ring (sq=256, cq=256, shim=64)")
-@click.option("--uring-sq-entries", type=int, default=None, help="io_uring SQ entries (power of 2, default: 256)")
-@click.option("--uring-cq-entries", type=int, default=None, help="io_uring CQ entries (power of 2, default: 256)")
-@click.option("--uring-shim-pages", type=int, default=None, help="Shim shared data pages (default: 64)")
 @click.option(
     "--static",
     is_flag=True,
@@ -436,10 +432,6 @@ def create(  # pylint: disable=too-many-arguments,too-many-positional-arguments
     memory: str,
     devices: Optional[str],
     input_path: Optional[str],
-    uring: bool,
-    uring_sq_entries: Optional[int],
-    uring_cq_entries: Optional[int],
-    uring_shim_pages: Optional[int],
     static: bool,
     dry_run: bool,
     verbose: bool,
@@ -656,7 +648,6 @@ def create(  # pylint: disable=too-many-arguments,too-many-positional-arguments
                 device_nodes.append(node)
 
             # Create instance resources with topology settings
-            uring_enabled = uring or uring_sq_entries is not None or uring_cq_entries is not None or uring_shim_pages is not None
             resources = InstanceResources(
                 cpus=cpu_list,
                 memory_base=0,
@@ -665,10 +656,6 @@ def create(  # pylint: disable=too-many-arguments,too-many-positional-arguments
                 numa_nodes=numa_node_list,
                 cpu_affinity=cpu_affinity,
                 memory_policy=memory_policy,
-                uring=uring_enabled,
-                uring_sq_entries=uring_sq_entries or (256 if uring_enabled else None),
-                uring_cq_entries=uring_cq_entries or (256 if uring_enabled else None),
-                uring_shim_pages=uring_shim_pages or (64 if uring_enabled else None),
             )
 
             # Create instance
