@@ -64,6 +64,7 @@ def _runs_kerf_init(words: List[str]) -> bool:
 def compose_cmdline(  # pylint: disable=too-many-arguments,too-many-positional-arguments
     base: str,
     has_initrd: bool,
+    console: str,
     lockdown: Optional[str],
     deny: Optional[str],
     entrypoint: Optional[str],
@@ -89,6 +90,8 @@ def compose_cmdline(  # pylint: disable=too-many-arguments,too-many-positional-a
         words.append(f"kerf.entrypoint={quote}{entrypoint}{quote}")
 
     words += split_cmdline(append or "")
+    if not any(word.startswith("console=") for word in words):
+        words.append(f"console={console}")
     request = resolve_lockdown(lockdown, deny, " ".join(words), kerf_init, has_initrd)
     # After --append: with --deny on an initramfs spawn, kerf's rdinit= has
     # to be the last one for kerf-init to run first
@@ -151,7 +154,15 @@ def _record_run(instance_id: int, metadata: Optional[dict], cmdline: Optional[st
 @click.command(name="start", epilog=lockdown_help())
 @click.argument("name", required=False)
 @click.option("--id", type=int, help="Multikernel instance ID to boot (alternative to name)")
-@click.option("--console", "attach_console", is_flag=True, help="Attach to console after boot")
+@click.option("--attach", "-a", "attach_console", is_flag=True,
+              help="Attach to console after boot")
+@click.option(
+    "--console",
+    "console_device",
+    default="mktty0",
+    show_default=True,
+    help="Console device for this run, ignored when the command line already sets console=",
+)
 @click.option(
     "--lockdown",
     type=click.Choice(LOCKDOWN_LEVELS),
@@ -173,6 +184,7 @@ def start_cmd(  # pylint: disable=too-many-arguments,too-many-positional-argumen
     name: Optional[str],
     id: Optional[int],
     attach_console: bool,
+    console_device: str,
     lockdown: Optional[str],
     deny: Optional[str],
     entrypoint: Optional[str],
@@ -184,10 +196,10 @@ def start_cmd(  # pylint: disable=too-many-arguments,too-many-positional-argumen
 
     This command boots a previously loaded multikernel instance by name or ID.
 
-    Without --lockdown, --deny, --entrypoint or --append the instance boots
-    with the command line it was loaded with. With any of them, that command
-    line is changed for this run only: the next start without options boots
-    the loaded one again, not locked down.
+    Every run boots with the command line the instance was loaded with, plus
+    the console and whatever --lockdown, --deny, --entrypoint and --append ask
+    for. They apply to this run only: the next start without them is not
+    locked down and runs the loaded entrypoint again.
 
     --deny is enforced by kerf-init. Loaded with --image or --rootfs-dir it is
     the spawn's PID 1 and keeps the restrictions in place for good. Loaded
@@ -195,7 +207,7 @@ def start_cmd(  # pylint: disable=too-many-arguments,too-many-positional-argumen
     initramfs's own init runs and then hands over to it; from there on they
     hold only until root in the spawn removes them.
 
-    Use --console to immediately attach to the instance's console after boot.
+    Use --attach to immediately attach to the instance's console after boot.
     Press Ctrl+] followed by . to detach from the console.
 
     Examples:
@@ -203,7 +215,11 @@ def start_cmd(  # pylint: disable=too-many-arguments,too-many-positional-argumen
         \b
         kerf start web-server
         kerf start --id=1
-        kerf start web-server --console
+        kerf start web-server --attach
+
+        \b
+        # Start with no console
+        kerf start web-server --console=ttynull
 
         \b
         # Start a spawn whose root can neither modify the kernel nor read
@@ -215,7 +231,6 @@ def start_cmd(  # pylint: disable=too-many-arguments,too-many-positional-argumen
         kerf start worker --entrypoint=/app/migrate.py --append=loglevel=7
     """
     instance_name, instance_id = resolve_instance(name, id)
-    per_run = any(option is not None for option in (lockdown, deny, entrypoint, append))
     metadata = load_instance_metadata(instance_id)
 
     cmdline, request = None, None
@@ -224,14 +239,13 @@ def start_cmd(  # pylint: disable=too-many-arguments,too-many-positional-argumen
     try:
         fd = instance.open_instance(instance_id)
         try:
-            if per_run:
-                cmdline, request = compose_cmdline(
-                    instance.loaded_cmdline(fd), bool(metadata and metadata.get("initrd")),
-                    lockdown, deny, entrypoint, append,
-                )
-                _warn(request, metadata)
-                if verbose:
-                    click.echo(f"Command line: {cmdline}")
+            cmdline, request = compose_cmdline(
+                instance.loaded_cmdline(fd), bool(metadata and metadata.get("initrd")),
+                console_device, lockdown, deny, entrypoint, append,
+            )
+            _warn(request, metadata)
+            if verbose:
+                click.echo(f"Command line: {cmdline}")
             instance.start(fd, cmdline)
         finally:
             os.close(fd)

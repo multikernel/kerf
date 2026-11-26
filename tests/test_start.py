@@ -47,8 +47,26 @@ def test_quoted_parameters_stay_whole():
     ]
 
 
-def _compose(base, has_initrd=False, lockdown=None, deny=None, entrypoint=None, append=None):
-    return compose_cmdline(base, has_initrd, lockdown, deny, entrypoint, append)
+def _compose(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+    base, has_initrd=False, lockdown=None, deny=None, entrypoint=None, append=None,
+    console="mktty0",
+):
+    return compose_cmdline(base, has_initrd, console, lockdown, deny, entrypoint, append)
+
+
+def test_console_is_added_to_a_command_line_without_one():
+    assert _compose("root=/dev/vda")[0] == "root=/dev/vda console=mktty0"
+    assert _compose("root=/dev/vda", console="ttynull")[0] == "root=/dev/vda console=ttynull"
+
+
+@pytest.mark.parametrize("base, append", [
+    ("root=/dev/vda console=ttyS0", None),
+    ("root=/dev/vda", "console=ttyS0"),
+])
+def test_console_option_gives_way_to_a_console_already_set(base, append):
+    cmdline, _ = _compose(base, append=append)
+
+    assert "console=mktty0" not in cmdline and "console=ttyS0" in cmdline
 
 
 def test_entrypoint_replaces_the_loaded_one():
@@ -141,12 +159,21 @@ def fixture_spawn(monkeypatch):
     return fake
 
 
-def test_start_without_options_passes_no_command_line(spawn):
+def test_start_without_options_boots_the_loaded_command_line(spawn):
     result = CliRunner().invoke(main, ["start", "web"])
 
     assert result.exit_code == 0
-    assert spawn.started_with == [None]
-    assert spawn.saved[-1]["last_run"] == {"cmdline": None, "lockdown": None}
+    assert spawn.started_with == [INITRAMFS]
+    assert spawn.saved[-1]["last_run"] == {"cmdline": INITRAMFS, "lockdown": None}
+
+
+def test_start_picks_the_console(spawn):
+    spawn.base = "root=/dev/vda"
+
+    result = CliRunner().invoke(main, ["start", "web", "--console=ttynull"])
+
+    assert result.exit_code == 0
+    assert spawn.started_with == ["root=/dev/vda console=ttynull"]
 
 
 def test_start_with_lockdown_composes_warns_and_records(spawn):

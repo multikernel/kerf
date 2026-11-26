@@ -84,8 +84,8 @@ def test_network_options_without_an_address_are_rejected(options, named):
     assert f"Error: {named} requires --ip (an address or dhcp)" in result.output
 
 
-@pytest.mark.parametrize("option", ["--lockdown=integrity", "--deny=kcore"])
-def test_lockdown_is_chosen_at_start_not_at_load(option):
+@pytest.mark.parametrize("option", ["--lockdown=integrity", "--deny=kcore", "--console=ttyS0"])
+def test_per_run_settings_are_chosen_at_start_not_at_load(option):
     result = CliRunner().invoke(load, ["web", "--kernel=/boot/vmlinuz", option])
 
     assert result.exit_code == 2

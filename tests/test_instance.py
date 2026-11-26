@@ -156,7 +156,7 @@ def test_kerf_start_boots_the_instance(kernel):
     result = CliRunner().invoke(main, ["start", "web"])
 
     assert result.exit_code == 0
-    assert ("start", 0, None) in kernel.calls
+    assert ("start", 0, b"console=mktty0\0") in kernel.calls
 
 
 def test_kerf_start_explains_a_missing_image(kernel):

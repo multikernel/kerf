@@ -131,13 +131,6 @@ def required_kernel_params(cmdline_parts: List[str], arch: Optional[str] = None)
 @click.option("--netmask", help="Network mask (default: 255.255.255.0)")
 @click.option("--nic", help="Network interface name (e.g., eth0)")
 @click.option("--hostname", help="Hostname for spawn kernel")
-@click.option(
-    "--console",
-    "console_device",
-    default="mktty0",
-    show_default=True,
-    help="Console device, ignored when --cmdline already sets console=",
-)
 @click.option("--verbose", "-v", is_flag=True, help="Verbose output")
 def load(  # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     ctx: click.Context,
@@ -154,7 +147,6 @@ def load(  # pylint: disable=too-many-arguments,too-many-positional-arguments,to
     netmask: Optional[str],
     nic: Optional[str],
     hostname: Optional[str],
-    console_device: Optional[str],
     verbose: bool,
 ):
     """
@@ -169,8 +161,9 @@ def load(  # pylint: disable=too-many-arguments,too-many-positional-arguments,to
     an extracted vmlinux carries no signature, so this will not work on
     hosts enforcing kexec signature verification (Secure Boot lockdown).
 
-    The command line built here is the one the instance boots with unless
-    kerf start is given options that change it for a run, such as --lockdown.
+    The command line built here is what kerf start begins with for every
+    run; it adds the console and what its own options ask for, such as
+    --lockdown.
     kerf-init is added to an --initrd so that kerf start --deny can run it
     first; it does nothing unless a start asks for it.
 
@@ -214,11 +207,6 @@ def load(  # pylint: disable=too-many-arguments,too-many-positional-arguments,to
         # Load with DHCP
         kerf load web-server --kernel=/boot/vmlinuz --image=nginx:latest \\
                  --ip=dhcp --nic=eth0
-
-        \b
-        # Load with no console
-        kerf load web-server --kernel=/boot/vmlinuz --image=nginx:latest \\
-                 --console=ttynull
     """
     try:
         if not name and id is None:
@@ -414,12 +402,6 @@ def load(  # pylint: disable=too-many-arguments,too-many-positional-arguments,to
             cmdline_parts.append(ip_param)
             if verbose:
                 click.echo(f"Network config: {ip_param}")
-
-        user_console = cmdline and any(arg.startswith("console=") for arg in cmdline.split())
-        if not user_console:
-            cmdline_parts.append(f"console={console_device}")
-            if verbose:
-                click.echo(f"Console: console={console_device}")
 
         # Last, so that it wins over anything given above
         required = required_kernel_params(cmdline_parts)
