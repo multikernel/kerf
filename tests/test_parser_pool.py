@@ -79,15 +79,6 @@ def test_parse_memory_node_without_reg_or_size_rejected():
         DeviceTreeParser().parse_dtb_from_bytes(_dtb(build))
 
 
-def test_parse_legacy_memory_base_bytes_rejected():
-    def build(sw):
-        sw.property_u64("memory-base", 0x80000000)
-        sw.property_u64("memory-bytes", 1 << 30)
-
-    with pytest.raises(ParseError):
-        DeviceTreeParser().parse_dtb_from_bytes(_dtb(build))
-
-
 def test_parse_cpus_available():
     def build(sw):
         sw.property("cpus-available", struct.pack(">Q", 5))
@@ -150,17 +141,6 @@ def test_parse_dtb_live_pool_without_memory_accepted():
     assert tree.hardware.memory.requested == {}
     assert tree.hardware.memory.total_bytes == 0
     assert tree.hardware.cpus.available_free == [5]
-
-
-def test_parse_dtb_legacy_memory_base_alone_rejected():
-    def build(sw):
-        sw.property_u64("memory-base", 0x80000000)
-        sw.begin_node("memory@0")
-        sw.property_u64("size", 1 << 30)
-        sw.end_node()
-
-    with pytest.raises(ParseError, match="not supported"):
-        DeviceTreeParser().parse_dtb_from_bytes(_dtb(build))
 
 
 def _dtb_with_kinds():

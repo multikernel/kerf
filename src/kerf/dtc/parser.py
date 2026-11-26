@@ -40,11 +40,6 @@ from ..models import (
 )
 
 
-_LEGACY_MEMORY_ERROR = (
-    "memory-base/memory-bytes are not supported; "
-    "use memory@N { size; numa-node-id; }"
-)
-
 _NO_MEMORY_ERROR = (
     "No memory description in /resources; "
     "expected memory@N { size; numa-node-id; }"
@@ -126,21 +121,6 @@ class DeviceTreeParser:
                     is_overlay = True
         except libfdt.FdtException:
             pass
-
-        # Fallback: detect overlays by fragment nodes (for compatibility with overlays missing compatible property)
-        if not is_overlay:
-            try:
-                offset = self.fdt.first_subnode(root)
-                while offset >= 0:
-                    if self.fdt.get_name(offset).startswith('fragment@'):
-                        is_overlay = True
-                        break
-                    try:
-                        offset = self.fdt.next_subnode(offset)
-                    except libfdt.FdtException:
-                        break
-            except libfdt.FdtException:
-                pass
 
         if not is_overlay:
             try:
@@ -315,10 +295,6 @@ class DeviceTreeParser:
                 requested[node_id] = requested.get(node_id, 0) + size_prop.as_uint64()
             else:
                 raise ParseError(f"{name}: expected 'reg' (existing chunk) or 'size' (request)")
-
-        for legacy in ('memory-base', 'memory-bytes'):
-            if self._optional_prop(resources_node, legacy) is not None:
-                raise ParseError(_LEGACY_MEMORY_ERROR)
 
         if not regions and not requested:
             if self._optional_prop(resources_node, 'cpus-available') is None:

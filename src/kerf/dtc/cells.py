@@ -37,15 +37,8 @@ def pack_cpu_id(cpu_id: int) -> bytes:
 
 
 def unpack_cpu_ids(data: bytes) -> List[int]:
-    """Decode a "cpus" property into a list of physical CPU IDs.
-
-    Arrays whose length is a multiple of 8 are decoded as 64-bit cells
-    (the current format); otherwise a multiple of 4 is decoded as legacy
-    32-bit cells.
-    """
+    """Decode a "cpus" property, an array of 64-bit cells, into physical CPU IDs."""
     raw = bytes(data)
-    if len(raw) % 8 == 0:
-        return list(struct.unpack(f">{len(raw) // 8}Q", raw))
-    if len(raw) % 4 == 0:
-        return list(struct.unpack(f">{len(raw) // 4}I", raw))
-    raise ValueError(f"Invalid cpus property length: {len(raw)} bytes")
+    if len(raw) % 8:
+        raise ValueError(f"Invalid cpus property length: {len(raw)} bytes")
+    return list(struct.unpack(f">{len(raw) // 8}Q", raw))
