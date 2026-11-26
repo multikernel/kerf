@@ -27,7 +27,7 @@ import click
 from ..runtime import DeviceTreeManager
 from ..models import InstanceState
 from ..exceptions import ResourceError, ValidationError, KernelInterfaceError, ParseError
-from ..utils import get_instance_id_from_name, get_instance_name_from_id, get_instance_status
+from ..utils import get_instance_status, resolve_instance
 
 
 @click.command(name="delete")
@@ -56,46 +56,13 @@ def delete(
         kerf delete web-server --dry-run
     """
     try:
-        if not name and id is None:
-            click.echo("Error: Either instance name or --id must be provided", err=True)
-            click.echo("Usage: kerf delete <name>  or  kerf delete --id=<id>", err=True)
-            sys.exit(2)
+        instance_name, instance_id = resolve_instance(name, id)
+        if verbose:
+            click.echo(f"Instance name: {instance_name} (ID: {instance_id})")
 
         debug = ctx.obj.get("debug", False) if ctx and ctx.obj else False
 
         manager = DeviceTreeManager()
-        instance_name = None
-        instance_id = None
-
-        if name:
-            instance_name = name
-            if not manager.has_instance(name):
-                click.echo(f"Error: Instance '{name}' does not exist", err=True)
-                click.echo("Check available instances in /sys/fs/multikernel/instances/", err=True)
-                sys.exit(1)
-
-            instance_id = get_instance_id_from_name(name)
-            if instance_id is None:
-                click.echo(f"Error: Could not read instance ID for '{name}'", err=True)
-                sys.exit(1)
-
-            if verbose:
-                click.echo(f"Instance name: {name} (ID: {instance_id})")
-        else:
-            instance_id = id
-            if instance_id < 1 or instance_id > 511:
-                click.echo(f"Error: --id must be between 1 and 511 (got {instance_id})", err=True)
-                sys.exit(2)
-
-            instance_name = get_instance_name_from_id(instance_id)
-            if not instance_name:
-                click.echo(f"Error: Instance with ID {instance_id} not found", err=True)
-                click.echo("Check available instances in /sys/fs/multikernel/instances/", err=True)
-                sys.exit(1)
-
-            if verbose:
-                click.echo(f"Instance name: {instance_name} (ID: {instance_id})")
-
         status = get_instance_status(instance_name)
 
         if status is None:
@@ -223,6 +190,8 @@ def delete(
                 traceback.print_exc()
             sys.exit(1)
 
+    except click.ClickException:
+        raise
     except KeyboardInterrupt:
         click.echo("\nOperation cancelled", err=True)
         sys.exit(130)

@@ -36,7 +36,7 @@ from ..metadata import load_instance_metadata
 from ..models import DeviceInfo, GlobalDeviceTree
 from ..pool_diff import ANY_NODE
 from ..resources import get_pool_allocated_bytes
-from ..utils import get_instance_id_from_name, get_instance_status
+from ..utils import get_instance_id_from_name, get_instance_status, resolve_instance
 
 
 def get_all_instance_names() -> List[str]:
@@ -459,12 +459,7 @@ def show(name: Optional[str], verbose: bool):
     try:
         if name:
             # Show specific instance
-            instance_id = get_instance_id_from_name(name)
-
-            if instance_id is None:
-                click.echo(f"Error: Instance '{name}' not found", err=True)
-                click.echo("Check available instances in /sys/fs/multikernel/instances/", err=True)
-                sys.exit(1)
+            _, instance_id = resolve_instance(name, None)
 
             # Get instance information
             instance_info = read_instance_info(name)
@@ -529,6 +524,8 @@ def show(name: Optional[str], verbose: bool):
     except KeyboardInterrupt:
         click.echo("\nOperation cancelled", err=True)
         sys.exit(130)
+    except click.ClickException:
+        raise
     except Exception as e:
         click.echo(f"Unexpected error: {e}", err=True)
         if verbose:

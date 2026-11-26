@@ -34,7 +34,7 @@ SESSION_TEST = Path(__file__).resolve().parents[1] / "src" / "init" / "session-t
 
 @pytest.fixture(name="instance")
 def fixture_instance():
-    with patch("kerf.exec.main.get_instance_id_from_name", return_value=3), \
+    with patch("kerf.exec.main.resolve_instance", return_value=("web", 3)), \
          patch("kerf.exec.main.get_instance_status", return_value="active"):
         yield
 
@@ -65,7 +65,7 @@ def test_missing_binary_exits_127(instance, agent):  # pylint: disable=unused-ar
 
 
 def test_instance_not_active():
-    with patch("kerf.exec.main.get_instance_id_from_name", return_value=3), \
+    with patch("kerf.exec.main.resolve_instance", return_value=("web", 3)), \
          patch("kerf.exec.main.get_instance_status", return_value="loaded"):
         result = CliRunner().invoke(main, ["exec", "web", "true"])
     assert result.exit_code == 1
@@ -73,7 +73,7 @@ def test_instance_not_active():
 
 
 def test_unknown_instance():
-    with patch("kerf.exec.main.get_instance_id_from_name", return_value=None):
+    with patch("kerf.utils.get_instance_id_from_name", return_value=None):
         result = CliRunner().invoke(main, ["exec", "nope", "true"])
     assert result.exit_code == 1
     assert "Instance 'nope' not found" in result.output
@@ -103,7 +103,7 @@ def test_needs_a_command(instance):  # pylint: disable=unused-argument
 
 @pytest.mark.skipif(not SESSION_TEST.exists(), reason="session-test not built")
 def test_by_id(agent):
-    with patch("kerf.exec.main.get_instance_name_from_id", return_value="web"), \
+    with patch("kerf.utils.get_instance_name_from_id", return_value="web"), \
          patch("kerf.exec.main.get_instance_status", return_value="active"):
         result = CliRunner().invoke(main, ["exec", "--id", "3", "--", "echo", "x"])
     assert result.output == "x\n"

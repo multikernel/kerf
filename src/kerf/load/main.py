@@ -34,7 +34,7 @@ from ..metadata import (
 from ..initrd import InitrdError, open_initrd_with_kerf_init
 from ..instance import KEXEC_FILE_DEBUG, load_image
 from ..lockdown import image_supports_lockdown
-from ..utils import get_instance_id_from_name, get_instance_name_from_id
+from ..utils import resolve_instance
 from ..signature import kexec_signatures_enforced
 from ..vmlinuz import BZIMAGE_HEADER_SIZE, VmlinuzError, is_bzimage, open_kernel_fd
 
@@ -209,14 +209,6 @@ def load(  # pylint: disable=too-many-arguments,too-many-positional-arguments,to
                  --ip=dhcp --nic=eth0
     """
     try:
-        if not name and id is None:
-            click.echo("Error: Either instance name or --id must be provided", err=True)
-            click.echo(
-                "Usage: kerf load <name> --kernel=<path>  or  kerf load --id=<id> --kernel=<path>",
-                err=True,
-            )
-            sys.exit(2)
-
         if image and rootfs_dir:
             click.echo("Error: --image and --rootfs-dir are mutually exclusive", err=True)
             sys.exit(2)
@@ -235,35 +227,9 @@ def load(  # pylint: disable=too-many-arguments,too-many-positional-arguments,to
             click.echo(f"Error: {', '.join(given)} requires --ip (an address or dhcp)", err=True)
             sys.exit(2)
 
-        instance_name = None
-        instance_id = None
-
-        if name:
-            instance_name = name
-            instance_id = get_instance_id_from_name(name)
-
-            if instance_id is None:
-                click.echo(f"Error: Instance '{name}' not found", err=True)
-                click.echo("Check available instances in /sys/fs/multikernel/instances/", err=True)
-                sys.exit(1)
-
-            if verbose:
-                click.echo(f"Instance name: {name} (ID: {instance_id})")
-        else:
-            instance_id = id
-
-            if instance_id < 1 or instance_id > 511:
-                click.echo(f"Error: --id must be between 1 and 511 (got {instance_id})", err=True)
-                sys.exit(2)
-
-            instance_name = get_instance_name_from_id(instance_id)
-            if not instance_name:
-                click.echo(f"Error: Instance with ID {instance_id} not found", err=True)
-                click.echo("Check available instances in /sys/fs/multikernel/instances/", err=True)
-                sys.exit(1)
-
-            if verbose:
-                click.echo(f"Instance name: {instance_name} (ID: {instance_id})")
+        instance_name, instance_id = resolve_instance(name, id)
+        if verbose:
+            click.echo(f"Instance name: {instance_name} (ID: {instance_id})")
 
         # Validate kernel file
         kernel_path = Path(kernel)
@@ -531,6 +497,8 @@ def load(  # pylint: disable=too-many-arguments,too-many-positional-arguments,to
             if initrd_fd >= 0:
                 os.close(initrd_fd)
 
+    except click.ClickException:
+        raise
     except Exception as e:
         click.echo(f"Unexpected error: {e}", err=True)
         if verbose:

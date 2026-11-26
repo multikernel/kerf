@@ -31,7 +31,7 @@ import click
 
 from ..daxfs.mkdaxfs import KERF_DAXFS_MNT_DIR
 from ..models import InstanceState
-from ..utils import get_instance_id_from_name, get_instance_name_from_id, get_instance_status
+from ..utils import get_instance_status, resolve_instance
 from . import protocol
 from .client import LostConnection, RemoteError, Session, build_env
 from .user import UserError, resolve_user
@@ -55,14 +55,7 @@ def _terminate(signo, _frame):
 
 
 def _resolve_instance(name: Optional[str], instance_id: Optional[int]) -> Tuple[str, int]:
-    if instance_id is None:
-        instance_id = get_instance_id_from_name(name)
-        if instance_id is None:
-            raise ExecError(f"Instance '{name}' not found")
-    else:
-        name = get_instance_name_from_id(instance_id)
-        if name is None:
-            raise ExecError(f"Instance with ID {instance_id} not found")
+    name, instance_id = resolve_instance(name, instance_id)
     status = get_instance_status(name)
     if status is None or status.lower() != InstanceState.ACTIVE.value:
         raise ExecError(

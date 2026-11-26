@@ -27,7 +27,7 @@ from typing import Optional
 import click
 
 from ..models import InstanceState
-from ..utils import get_instance_id_from_name, get_instance_name_from_id, get_instance_status
+from ..utils import get_instance_status, resolve_instance
 
 
 MKTTY_DEVICE = "/dev/mktty"
@@ -182,42 +182,9 @@ def console(name: Optional[str], id: Optional[int], verbose: bool):
         kerf console --id=1
     """
     try:
-        if not name and id is None:
-            click.echo("Error: Either instance name or --id must be provided", err=True)
-            click.echo("Usage: kerf console <name>  or  kerf console --id=<id>", err=True)
-            sys.exit(2)
-
-        instance_name = None
-        instance_id = None
-
-        if name:
-            # Use name, convert to ID
-            instance_name = name
-            instance_id = get_instance_id_from_name(name)
-
-            if instance_id is None:
-                click.echo(f"Error: Instance '{name}' not found", err=True)
-                click.echo("Check available instances in /sys/fs/multikernel/instances/", err=True)
-                sys.exit(1)
-
-            if verbose:
-                click.echo(f"Instance name: {name} (ID: {instance_id})")
-        else:
-            # Use ID directly, need to find name
-            instance_id = id
-
-            if instance_id < 1 or instance_id > 511:
-                click.echo(f"Error: --id must be between 1 and 511 (got {instance_id})", err=True)
-                sys.exit(2)
-
-            instance_name = get_instance_name_from_id(instance_id)
-            if not instance_name:
-                click.echo(f"Error: Instance with ID {instance_id} not found", err=True)
-                click.echo("Check available instances in /sys/fs/multikernel/instances/", err=True)
-                sys.exit(1)
-
-            if verbose:
-                click.echo(f"Instance name: {instance_name} (ID: {instance_id})")
+        instance_name, instance_id = resolve_instance(name, id)
+        if verbose:
+            click.echo(f"Instance name: {instance_name} (ID: {instance_id})")
 
         # Check instance status - must be active
         status = get_instance_status(instance_name)
@@ -244,6 +211,8 @@ def console(name: Optional[str], id: Optional[int], verbose: bool):
         result = run_console(instance_id, instance_name, verbose)
         sys.exit(result)
 
+    except click.ClickException:
+        raise
     except Exception as e:
         click.echo(f"Unexpected error: {e}", err=True)
         if verbose:
