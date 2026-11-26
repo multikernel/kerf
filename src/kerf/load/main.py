@@ -16,7 +16,6 @@
 Kernel loading subcommand implementation using kexec_file_load syscall.
 """
 
-import ctypes
 import errno
 import os
 import platform
@@ -33,6 +32,7 @@ from ..metadata import (
     save_instance_metadata,
 )
 from ..initrd import InitrdError, open_initrd_with_kerf_init
+from ..instance import KEXEC_FILE_DEBUG, load_image
 from ..lockdown import (
     LOCKDOWN_LEVELS,
     LockdownError,
@@ -43,27 +43,6 @@ from ..lockdown import (
 from ..utils import get_instance_id_from_name, get_instance_name_from_id
 from ..signature import kexec_signatures_enforced
 from ..vmlinuz import BZIMAGE_HEADER_SIZE, VmlinuzError, is_bzimage, open_kernel_fd
-
-
-# KEXEC flags definitions
-KEXEC_FILE_NO_INITRAMFS = 0x00000004
-KEXEC_FILE_DEBUG = 0x00000008
-KEXEC_FILE_MULTIKERNEL = 0x80000000
-KEXEC_FILE_MK_ID_MASK = 0x7FFF0000
-KEXEC_FILE_MK_ID_SHIFT = 16
-
-
-def KEXEC_FILE_MK_ID(id: int) -> int:  # pylint: disable=invalid-name
-    """Generate KEXEC_FILE_MK_ID flag value from kernel ID."""
-    return (id << KEXEC_FILE_MK_ID_SHIFT) & KEXEC_FILE_MK_ID_MASK
-
-
-# Syscall numbers (architecture-dependent)
-# For x86_64: 320, for x86: 320, for ARM64 and RISC-V: 294, for ARM: 382
-SYS_KEXEC_FILE_LOAD_X86_64 = 320
-SYS_KEXEC_FILE_LOAD_ARM64 = 294
-SYS_KEXEC_FILE_LOAD_ARM = 382
-SYS_KEXEC_FILE_LOAD_X86 = 320
 
 
 def build_ip_param(
@@ -141,114 +120,6 @@ def required_kernel_params(cmdline_parts: List[str], arch: Optional[str] = None)
         if not settings or settings[-1] != param:
             missing.append(param)
     return missing
-
-
-def get_kexec_file_load_syscall():
-    """Get the kexec_file_load syscall number for current architecture."""
-    arch = platform.machine().lower()
-    if arch in ("x86_64", "amd64"):
-        return SYS_KEXEC_FILE_LOAD_X86_64
-    if arch in ("aarch64", "arm64", "riscv64"):
-        return SYS_KEXEC_FILE_LOAD_ARM64
-    if arch.startswith("arm"):
-        return SYS_KEXEC_FILE_LOAD_ARM
-    if arch in ("i386", "i686", "x86"):
-        return SYS_KEXEC_FILE_LOAD_X86
-    # Default to x86_64, but warn
-    click.echo(
-        f"Warning: Unknown architecture '{arch}', assuming x86_64 syscall number", err=True
-    )
-    return SYS_KEXEC_FILE_LOAD_X86_64
-
-
-def kexec_file_load(
-    kernel_fd: int, initrd_fd: int, cmdline: str, flags: int, debug: bool = False
-) -> int:
-    """
-    Call kexec_file_load syscall.
-
-    Args:
-        kernel_fd: File descriptor for kernel image
-        initrd_fd: File descriptor for initrd (use -1 if not provided)
-        cmdline: Boot command line string
-        flags: KEXEC flags (e.g., KEXEC_FILE_MULTIKERNEL | KEXEC_FILE_MK_ID(id))
-
-    Returns:
-        0 on success, -errno on failure
-
-    Raises:
-        OSError: If syscall fails
-    """
-    libc = ctypes.CDLL(None, use_errno=True)
-    syscall_fn = libc.syscall
-
-    syscall_num = get_kexec_file_load_syscall()
-
-    # Prepare cmdline
-    # kexec_file_load expects: cmdline_len is length INCLUDING null terminator
-    #                         cmdline is pointer to null-terminated string (or NULL)
-    # Note: kexec-tools uses strlen(cmdline) + 1 for cmdline_len
-    cmdline_buf = None
-    if cmdline:
-        cmdline_bytes = cmdline.encode("utf-8")
-        cmdline_buf = ctypes.create_string_buffer(cmdline_bytes)
-        cmdline_len = len(cmdline_bytes) + 1
-        cmdline_ptr = cmdline_buf
-    else:
-        cmdline_len = 0
-        cmdline_ptr = None
-
-    # syscall signature: long syscall(long number, ...)
-    # kexec_file_load: long kexec_file_load(int kernel_fd, int initrd_fd,
-    #                                       unsigned long cmdline_len,
-    #                                       const char *cmdline,
-    #                                       unsigned long flags)
-    syscall_fn.argtypes = [
-        ctypes.c_long,  # syscall number
-        ctypes.c_int,  # kernel_fd
-        ctypes.c_int,  # initrd_fd
-        ctypes.c_ulong,  # cmdline_len
-        ctypes.c_char_p,  # cmdline (c_char_p handles None as NULL)
-        ctypes.c_ulong,  # flags
-    ]
-    syscall_fn.restype = ctypes.c_long
-
-    if debug:
-        click.echo(
-            f"DEBUG: syscall_num={syscall_num}, kernel_fd={kernel_fd}, initrd_fd={initrd_fd}, cmdline_len={cmdline_len}, flags=0x{flags:x}",
-            err=True,
-        )
-        click.echo(
-            f"DEBUG: KEXEC_FILE_MULTIKERNEL=0x{KEXEC_FILE_MULTIKERNEL:x}, "
-            f"KEXEC_FILE_MK_ID_MASK=0x{KEXEC_FILE_MK_ID_MASK:x}, "
-            f"KEXEC_FILE_MK_ID_SHIFT={KEXEC_FILE_MK_ID_SHIFT}",
-            err=True,
-        )
-        if cmdline:
-            click.echo(f"DEBUG: cmdline='{cmdline}', cmdline_ptr={cmdline_ptr}", err=True)
-            # Verify the buffer content
-            click.echo(
-                f"DEBUG: cmdline_buf.value={cmdline_buf.value!r}, len={len(cmdline_buf.value)}",
-                err=True,
-            )
-        else:
-            click.echo("DEBUG: cmdline_ptr=NULL", err=True)
-
-    result = syscall_fn(syscall_num, kernel_fd, initrd_fd, cmdline_len, cmdline_ptr, flags)
-
-    if debug:
-        click.echo(f"DEBUG: syscall returned: {result}", err=True)
-
-    if result < 0:
-        # Get errno
-        errno_value = ctypes.get_errno()
-        if errno_value == 0:
-            # If errno is 0 but result is negative, use -result as errno
-            # This handles cases where the syscall returns -errno directly
-            errno_value = -result
-        raise OSError(errno_value, os.strerror(errno_value))
-
-    return result
 
 
 @click.command(epilog=lockdown_help())
@@ -552,24 +423,6 @@ def load(  # pylint: disable=too-many-arguments,too-many-positional-arguments,to
                 click.echo(f"Error: {e}", err=True)
                 sys.exit(1)
 
-        # Always enable multikernel mode
-        mk_id_flags = KEXEC_FILE_MK_ID(instance_id)
-        flags = KEXEC_FILE_MULTIKERNEL | mk_id_flags
-
-        # If no initrd, set NO_INITRAMFS flag
-        if not initrd_path:
-            flags |= KEXEC_FILE_NO_INITRAMFS
-
-        if verbose:
-            click.echo(f"Multikernel mode enabled with ID: {instance_id}")
-            flag_parts = [
-                f"KEXEC_FILE_MULTIKERNEL=0x{KEXEC_FILE_MULTIKERNEL:x}",
-                f"KEXEC_FILE_MK_ID({instance_id})=0x{mk_id_flags:x}",
-            ]
-            if not initrd_path:
-                flag_parts.append(f"KEXEC_FILE_NO_INITRAMFS=0x{KEXEC_FILE_NO_INITRAMFS:x}")
-            click.echo(f"Flags: {', '.join(flag_parts)}, combined=0x{flags:x}")
-
         # Prepare command line
         cmdline_parts = []
         if cmdline:
@@ -625,7 +478,6 @@ def load(  # pylint: disable=too-many-arguments,too-many-positional-arguments,to
 
         if verbose:
             click.echo(f"Command line: {cmdline_str if cmdline_str else '(empty)'}")
-            click.echo(f"Flags: 0x{flags:x}")
 
         # Open kernel file, extracting the embedded vmlinux if it is a
         # bzImage, since the kexec ELF loader only accepts vmlinux
@@ -676,16 +528,13 @@ def load(  # pylint: disable=too-many-arguments,too-many-positional-arguments,to
                 click.echo("Calling kexec_file_load syscall...")
 
             debug = ctx.obj.get("debug", False) if ctx and ctx.obj else False
-            if debug:
-                flags |= KEXEC_FILE_DEBUG
-            result = kexec_file_load(kernel_fd, initrd_fd, cmdline_str, flags, debug=debug)
+            flags = KEXEC_FILE_DEBUG if debug else 0
+            # The descriptor is a handle only: the image stays loaded without it
+            os.close(load_image(instance_id, kernel_fd, initrd_fd, cmdline_str, flags))
 
-            if verbose:
-                click.echo(f"✓ Kernel loaded successfully (result: {result})")
-            else:
-                click.echo("✓ Kernel loaded successfully")
+            click.echo("✓ Kernel loaded successfully")
 
-            # Record image provenance for kerf show; /proc/kimage only
+            # Record image provenance for kerf show; the kernel only
             # knows about the loaded segments, not the source file
             rootfs_meta = None
             if image or rootfs_dir:

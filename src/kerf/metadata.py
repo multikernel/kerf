@@ -15,8 +15,7 @@
 """
 Per-instance load metadata recorded by kerf load.
 
-The kernel's /proc/kimage table only knows about loaded segments, not the
-source image file, so kerf load records the kernel image provenance here
+The kernel only knows about loaded segments, not the source image file, so kerf load records the kernel image provenance here
 for kerf show to display. The record lives on tmpfs and is keyed by
 instance ID because it describes a load, which neither survives a reboot nor
 carries over to a later instance reusing the same name.
