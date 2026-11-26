@@ -177,6 +177,7 @@ def console(name: Optional[str], id: Optional[int], verbose: bool):
 
     Examples:
 
+        \b
         kerf console web-server
         kerf console --id=1
     """

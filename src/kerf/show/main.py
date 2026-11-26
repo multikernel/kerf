@@ -570,6 +570,7 @@ def show(name: Optional[str], verbose: bool):
 
     Examples:
 
+        \b
         kerf show
         kerf show web-server
         kerf show --verbose

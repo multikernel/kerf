@@ -337,34 +337,42 @@ def load(  # pylint: disable=too-many-arguments,too-many-positional-arguments,to
 
     Examples:
 
+        \b
         kerf load web-server --kernel=/boot/vmlinuz --initrd=/boot/initrd.img \\
                  --cmdline="root=/dev/sda1"
         kerf load --kernel=/boot/vmlinuz --initrd=/boot/initrd.img \\
                  --cmdline="root=/dev/sda1" --id=1
 
+        \b
         # Load with Docker image as rootfs
         kerf load web-server --kernel=/boot/vmlinuz --image=nginx:latest
 
+        \b
         # Load with custom entrypoint
         kerf load worker --kernel=/boot/vmlinuz --image=python:3.11 \\
                  --entrypoint=/app/worker.py
 
+        \b
         # Load with pre-extracted rootfs directory
         kerf load custom --kernel=/boot/vmlinuz --rootfs-dir=/mnt/rootfs \\
                  --entrypoint=/sbin/init
 
+        \b
         # Load with static IP configuration
         kerf load web-server --kernel=/boot/vmlinuz --image=nginx:latest \\
                  --ip=192.168.1.100 --gateway=192.168.1.1 --nic=eth0
 
+        \b
         # Load with DHCP
         kerf load web-server --kernel=/boot/vmlinuz --image=nginx:latest \\
                  --ip=dhcp --nic=eth0
 
+        \b
         # Load with no console
         kerf load web-server --kernel=/boot/vmlinuz --image=nginx:latest \\
                  --console=ttynull
 
+        \b
         # Load a spawn whose root can neither modify the kernel nor read
         # /proc/kcore and IPsec keys, but can still use perf and tracing
         kerf load web-server --kernel=vmlinux.signed --image=nginx:latest \\

@@ -139,6 +139,7 @@ def exec_cmd(interactive, use_tty, env_vars, workdir, user, instance_id, args):
 
     Examples:
 
+        \b
         kerf exec web-server ls /
         kerf exec -it web-server sh
         kerf exec -u nobody --id=1 -- id

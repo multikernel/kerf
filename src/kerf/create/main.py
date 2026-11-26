@@ -448,30 +448,39 @@ def create(  # pylint: disable=too-many-arguments,too-many-positional-arguments
 
     Examples:
 
+        \b
         # Create instance with APIC IDs 128-134 and 2GB memory (auto-assigned base)
         kerf create web-server --cpus=128-134 --memory=2GB
 
+        \b
         # Create instance with name after options
         kerf create --cpus=128,130,132 --memory=8GB web-server
 
+        \b
         # Create instance with devices
         kerf create compute --cpus=128-142 --memory=4GB --devices=enp9s0
 
+        \b
         # Create instance with explicit single APIC ID
         kerf create web-server --cpus=128 --memory=2GB
 
+        \b
         # Create instance with auto-allocated CPU count
         kerf create web-server --cpu-count=4 --memory=2GB
 
+        \b
         # Create instance with topology-aware allocation (auto-allocated)
         kerf create database --cpu-count=8 --memory=16GB --numa-nodes=0 --cpu-affinity=compact --memory-policy=local
 
+        \b
         # Create instance with spread affinity across multiple NUMA nodes (auto-allocated)
         kerf create compute --cpu-count=16 --memory=32GB --numa-nodes=0,1 --cpu-affinity=spread --memory-policy=interleave
 
+        \b
         # Validate without applying
         kerf create web-server --cpu-count=4 --memory=2GB --dry-run
 
+        \b
         # Recreate an instance from 'kerf dump web-server -o web.dtb'
         kerf create --input=web.dtb
     """

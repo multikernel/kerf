@@ -1002,21 +1002,27 @@ def init(ctx: click.Context, input: Optional[str], cpus: Optional[str], memory: 
         # Replay a baseline captured with 'kerf dump -o host.dtb'
         kerf init --input=host.dtb
 
+        \b
         # Request 1GB of pool memory on the node of the requested CPUs
         kerf init --cpus=128-134 --memory=1GB
 
+        \b
         # Request memory per NUMA node
         kerf init --cpus=128-134 --memory=8GB@0,8GB@1
 
+        \b
         # Shrink the pool back to 1GB and 2 CPUs
         kerf init --cpus=128,129 --memory=1GB
 
+        \b
         # Keep the CPUs but hand every chunk back
         kerf init --cpus=128,129 --memory=none
 
+        \b
         # Return every pool resource to the host
         kerf init --cpus=none --memory=none
 
+        \b
         # Show what would change without applying
         kerf init --cpus=128-134 --memory=1GB --dry-run
     """

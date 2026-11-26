@@ -119,6 +119,7 @@ def kill_cmd(name: Optional[str], id: Optional[int], force: bool, verbose: bool)
 
     Examples:
 
+        \b
         kerf kill web-server
         kerf kill --id=1
         kerf kill --force web-server

@@ -49,6 +49,7 @@ def delete(
 
     Examples:
 
+        \b
         kerf delete web-server
         kerf delete --id=1
         kerf delete web-server --verbose

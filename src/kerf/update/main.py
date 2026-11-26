@@ -146,18 +146,23 @@ def update(
 
     Examples:
 
+        \b
         # Update CPUs only
         kerf update web-server --cpus=8-15
 
+        \b
         # Update memory only
         kerf update web-server --memory=4GB
 
+        \b
         # Update devices
         kerf update web-server --devices=0000:09:00.0,0000:0a:00.0
 
+        \b
         # Update CPUs, memory, and devices
         kerf update web-server --cpus=8-15 --memory=4GB --devices=0000:09:00.0
 
+        \b
         # Validate without applying
         kerf update web-server --cpus=8-15 --memory=4GB --dry-run
     """

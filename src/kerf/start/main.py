@@ -116,6 +116,7 @@ def start_cmd(name: Optional[str], id: Optional[int], attach_console: bool, verb
 
     Examples:
 
+        \b
         kerf start web-server
         kerf start --id=1
         kerf start web-server --console

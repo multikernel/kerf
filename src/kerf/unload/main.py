@@ -172,6 +172,7 @@ def unload(ctx: click.Context, name: Optional[str], id: Optional[int], verbose: 
 
     Examples:
 
+        \b
         kerf unload web-server
         kerf unload --id=1
         kerf unload --id=1 --verbose
