@@ -177,7 +177,7 @@ class TestDisplayMetadata:
 
         display_instance_info(
             {"name": "web-server", "id": "1", "status": "loaded"},
-            kimage_data={"mk_id": "1", "type": "multikernel"},
+            image={"cmdline": "console=mktty0"},
             metadata=self._metadata(),
         )
 
@@ -196,7 +196,7 @@ class TestDisplayMetadata:
 
         display_instance_info(
             {"name": "web-server", "id": "1", "status": "loaded"},
-            kimage_data={"mk_id": "1", "type": "multikernel"},
+            image={"cmdline": "console=mktty0"},
             metadata=metadata,
         )
         assert "Initrd" not in capsys.readouterr().out
@@ -209,19 +209,19 @@ class TestDisplayMetadata:
 
         display_instance_info(
             {"name": "web-server", "id": "1", "status": "loaded"},
-            kimage_data={"mk_id": "1", "type": "multikernel"},
+            image={"cmdline": "console=mktty0"},
             metadata=metadata,
         )
         assert "/boot/initrd.img (uncompressed cpio)" in capsys.readouterr().out
 
-    def test_stale_metadata_hidden_without_kimage_data(self, capsys):
+    def test_stale_metadata_hidden_without_a_loaded_image(self, capsys):
         from kerf.show.main import display_instance_info
 
         metadata = self._metadata()
         metadata["rootfs"] = {"source": "docker", "image": "alpine:latest"}
         display_instance_info(
             {"name": "web-server", "id": "1", "status": "ready"},
-            kimage_data=None,
+            image=None,
             metadata=metadata,
         )
 
@@ -236,7 +236,7 @@ class TestDisplayMetadata:
 
         display_instance_info(
             {"name": "web-server", "id": "1", "status": "loaded"},
-            kimage_data={"mk_id": "1", "type": "multikernel"},
+            image={"cmdline": "console=mktty0"},
             metadata=self._metadata(),
         )
         out = capsys.readouterr().out
@@ -245,7 +245,7 @@ class TestDisplayMetadata:
 
         display_instance_info(
             {"name": "web-server", "id": "1", "status": "loaded"},
-            kimage_data={"mk_id": "1", "type": "multikernel"},
+            image={"cmdline": "console=mktty0"},
             metadata=self._metadata(),
             verbose=True,
         )
@@ -267,7 +267,7 @@ class TestDisplayMetadata:
 
         display_instance_info(
             {"name": "web-server", "id": "1", "status": "loaded"},
-            kimage_data={"mk_id": "1", "type": "multikernel"},
+            image={"cmdline": "console=mktty0"},
             metadata=metadata,
         )
         out = capsys.readouterr().out
@@ -291,7 +291,7 @@ class TestDisplayMetadata:
 
         display_instance_info(
             {"name": "web-server", "id": "1", "status": "loaded"},
-            kimage_data={"mk_id": "1", "type": "multikernel"},
+            image={"cmdline": "console=mktty0"},
             metadata=metadata,
             verbose=True,
         )
@@ -310,14 +310,14 @@ class TestDisplayMetadata:
 
         display_instance_info(
             {"name": "web-server", "id": "1", "status": "loaded"},
-            kimage_data={"mk_id": "1", "type": "multikernel"},
+            image={"cmdline": "console=mktty0"},
             metadata=metadata,
         )
         assert "ef" * 32 not in capsys.readouterr().out
 
         display_instance_info(
             {"name": "web-server", "id": "1", "status": "loaded"},
-            kimage_data={"mk_id": "1", "type": "multikernel"},
+            image={"cmdline": "console=mktty0"},
             metadata=metadata,
             verbose=True,
         )
@@ -335,7 +335,7 @@ class TestDisplayMetadata:
 
         display_instance_info(
             {"name": "web-server", "id": "1", "status": "loaded"},
-            kimage_data={"mk_id": "1", "type": "multikernel"},
+            image={"cmdline": "console=mktty0"},
             metadata=metadata,
         )
         out = capsys.readouterr().out
@@ -347,7 +347,7 @@ class TestDisplayMetadata:
 
         display_instance_info(
             {"name": "web-server", "id": "1", "status": "loaded"},
-            kimage_data={"mk_id": "1", "type": "multikernel"},
+            image={"cmdline": "console=mktty0"},
             metadata=self._metadata(),
         )
         assert "Rootfs:" not in capsys.readouterr().out
@@ -361,7 +361,7 @@ class TestDisplayMetadata:
 
         display_instance_info(
             {"name": "web-server", "id": "1", "status": "loaded"},
-            kimage_data={"mk_id": "1", "type": "multikernel"},
+            image={"cmdline": "console=mktty0"},
             metadata=metadata,
         )
         assert "vmlinux (ELF)" in capsys.readouterr().out

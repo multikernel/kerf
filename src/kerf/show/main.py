@@ -298,16 +298,13 @@ def _display_kernel_metadata(metadata: Dict, verbose: bool = False):
     if kernel.get("version"):
         click.echo(f"    {'Version':15} {kernel['version']}")
     initrd = metadata.get("initrd")
-    if isinstance(initrd, dict):
+    if initrd:
         initrd_line = initrd.get("path", "")
         if initrd.get("compression") == "cpio":
             initrd_line += " (uncompressed cpio)"
         elif initrd.get("compression"):
             initrd_line += f" ({initrd['compression']} compressed)"
         click.echo(f"    {'Initrd':15} {initrd_line}")
-    elif initrd:
-        # Records from before initrd inspection hold just the path
-        click.echo(f"    {'Initrd':15} {initrd}")
     # Of the last start, since each run picks its own
     lockdown = (metadata.get("last_run") or {}).get("lockdown")
     if lockdown:
@@ -322,7 +319,7 @@ def _display_kernel_metadata(metadata: Dict, verbose: bool = False):
     if verbose:
         if kernel.get("sha256"):
             click.echo(f"    {'Sha256':15} {kernel['sha256']}")
-        if isinstance(initrd, dict) and initrd.get("sha256"):
+        if initrd and initrd.get("sha256"):
             click.echo(f"    {'Initrd Sha256':15} {initrd['sha256']}")
 
 
@@ -349,7 +346,7 @@ def _display_rootfs_metadata(rootfs: Dict, verbose: bool = False):
 
 def display_instance_info(
     instance_info: Dict[str, Any],
-    kimage_data: Optional[Dict[str, str]] = None,
+    image: Optional[Dict[str, str]] = None,
     verbose: bool = False,
     metadata: Optional[Dict] = None,
 ):
@@ -358,12 +355,12 @@ def display_instance_info(
 
     Args:
         instance_info: Instance information dictionary
-        kimage_data: Optional kimage data for this instance
+        image: What the kernel says about the loaded image, if there is one
         verbose: Whether to show verbose information
         metadata: Optional load metadata recorded by kerf load
     """
-    if not kimage_data:
-        # A record without a loaded kimage is left over from an earlier load
+    if not image:
+        # A record without a loaded image is left over from an earlier load
         metadata = None
 
     name = instance_info.get("name", "unknown")
@@ -382,9 +379,9 @@ def display_instance_info(
         click.echo(f"  Status:          {status}")
 
     # Kernel image information from the kernel plus load metadata
-    if kimage_data:
+    if image:
         click.echo("\n  Kernel Image:")
-        for key, value in kimage_data.items():
+        for key, value in image.items():
             key_display = key.replace("_", " ").title()
             click.echo(f"    {key_display:15} {value}")
         if metadata:
@@ -472,11 +469,11 @@ def show(name: Optional[str], verbose: bool):
             # Get instance information
             instance_info = read_instance_info(name)
 
-            kimage_data = read_loaded_image(instance_id)
+            image = read_loaded_image(instance_id)
 
             # Display information
             display_instance_info(
-                instance_info, kimage_data, verbose,
+                instance_info, image, verbose,
                 metadata=load_instance_metadata(instance_id),
             )
         else:
@@ -514,17 +511,17 @@ def show(name: Optional[str], verbose: bool):
                 instance_info = read_instance_info(inst_name)
                 instance_id_str = instance_info.get("id")
 
-                kimage_data = None
+                image = None
                 if instance_id_str:
                     try:
                         instance_id = int(instance_id_str)
-                        kimage_data = read_loaded_image(instance_id)
+                        image = read_loaded_image(instance_id)
                     except (ValueError, TypeError):
                         pass
 
                 display_instance_info(
-                    instance_info, kimage_data, verbose,
-                    metadata=load_instance_metadata(instance_id) if kimage_data else None,
+                    instance_info, image, verbose,
+                    metadata=load_instance_metadata(instance_id) if image else None,
                 )
 
             click.echo()
