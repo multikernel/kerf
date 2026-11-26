@@ -197,15 +197,18 @@ def test_no_iommu_line_for_a_device_without_one(capsys):
     ({"level": "integrity", "deny": ["kcore"], "pinned": True},
      "integrity, deny kcore (pinned, spawn root can lift it)"),
 ])
-def test_shows_the_lockdown_a_spawn_was_loaded_with(lockdown, row, capsys):
-    _display_kernel_metadata({"kernel": {"path": "/boot/vmlinux"}, "lockdown": lockdown})
+def test_shows_the_lockdown_a_spawn_was_last_started_with(lockdown, row, capsys):
+    _display_kernel_metadata(
+        {"kernel": {"path": "/boot/vmlinux"}, "last_run": {"lockdown": lockdown}}
+    )
 
     assert f"    {'Lockdown':15} {row}\n" in capsys.readouterr().out
 
 
 @pytest.mark.parametrize("metadata", [
     {"kernel": {"path": "/boot/vmlinux"}},
-    {"kernel": {"path": "/boot/vmlinux"}, "lockdown": None},
+    {"kernel": {"path": "/boot/vmlinux"}, "last_run": None},
+    {"kernel": {"path": "/boot/vmlinux"}, "last_run": {"lockdown": None}},
 ])
 def test_no_lockdown_row_when_none_was_requested(metadata, capsys):
     _display_kernel_metadata(metadata)

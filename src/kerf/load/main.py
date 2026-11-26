@@ -33,13 +33,7 @@ from ..metadata import (
 )
 from ..initrd import InitrdError, open_initrd_with_kerf_init
 from ..instance import KEXEC_FILE_DEBUG, load_image
-from ..lockdown import (
-    LOCKDOWN_LEVELS,
-    LockdownError,
-    image_supports_lockdown,
-    lockdown_help,
-    resolve_lockdown,
-)
+from ..lockdown import image_supports_lockdown
 from ..utils import get_instance_id_from_name, get_instance_name_from_id
 from ..signature import kexec_signatures_enforced
 from ..vmlinuz import BZIMAGE_HEADER_SIZE, VmlinuzError, is_bzimage, open_kernel_fd
@@ -122,7 +116,7 @@ def required_kernel_params(cmdline_parts: List[str], arch: Optional[str] = None)
     return missing
 
 
-@click.command(epilog=lockdown_help())
+@click.command()
 @click.pass_context
 @click.argument("name", required=False)
 @click.option("--kernel", "-k", required=True, help="Path to kernel image file")
@@ -144,20 +138,6 @@ def required_kernel_params(cmdline_parts: List[str], arch: Optional[str] = None)
     show_default=True,
     help="Console device, ignored when --cmdline already sets console=",
 )
-@click.option(
-    "--lockdown",
-    type=click.Choice(LOCKDOWN_LEVELS),
-    help="Lock down the spawn kernel. integrity restricts what lets root modify "
-    "the running kernel; confidentiality also restricts what lets root read "
-    "kernel memory. Both are listed below.",
-)
-@click.option(
-    "--deny",
-    help="With --lockdown=integrity, also restrict these confidentiality features "
-    "(comma-separated names from the list below). Needs a spawn kernel with BPF "
-    "LSM and BTF, and --image, --rootfs-dir or --initrd. With --initrd alone, "
-    "root in the spawn is trusted not to lift the restrictions.",
-)
 @click.option("--verbose", "-v", is_flag=True, help="Verbose output")
 def load(  # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     ctx: click.Context,
@@ -175,8 +155,6 @@ def load(  # pylint: disable=too-many-arguments,too-many-positional-arguments,to
     nic: Optional[str],
     hostname: Optional[str],
     console_device: Optional[str],
-    lockdown: Optional[str],
-    deny: Optional[str],
     verbose: bool,
 ):
     """
@@ -191,11 +169,10 @@ def load(  # pylint: disable=too-many-arguments,too-many-positional-arguments,to
     an extracted vmlinux carries no signature, so this will not work on
     hosts enforcing kexec signature verification (Secure Boot lockdown).
 
-    --deny is enforced by kerf-init. With --image or --rootfs-dir it is the
-    spawn's PID 1 and keeps the restrictions in place for good. With --initrd
-    alone, kerf-init is added to the initramfs, applies the restrictions
-    before the initramfs's own init runs and then hands over to it; from
-    there on they hold only until root in the spawn removes them.
+    The command line built here is the one the instance boots with unless
+    kerf start is given options that change it for a run, such as --lockdown.
+    kerf-init is added to an --initrd so that kerf start --deny can run it
+    first; it does nothing unless a start asks for it.
 
     When --image or --rootfs-dir is provided, a daxfs image is created and the
     kernel boots directly into daxfs as root filesystem (no initrd needed if
@@ -242,12 +219,6 @@ def load(  # pylint: disable=too-many-arguments,too-many-positional-arguments,to
         # Load with no console
         kerf load web-server --kernel=/boot/vmlinuz --image=nginx:latest \\
                  --console=ttynull
-
-        \b
-        # Load a spawn whose root can neither modify the kernel nor read
-        # /proc/kcore and IPsec keys, but can still use perf and tracing
-        kerf load web-server --kernel=vmlinux.signed --image=nginx:latest \\
-                 --lockdown=integrity --deny=kcore,xfrm-secret
     """
     try:
         if not name and id is None:
@@ -275,18 +246,6 @@ def load(  # pylint: disable=too-many-arguments,too-many-positional-arguments,to
         if given and not ip_addr:
             click.echo(f"Error: {', '.join(given)} requires --ip (an address or dhcp)", err=True)
             sys.exit(2)
-
-        # Checked here, before a rootfs or daxfs image exists to clean up
-        try:
-            lockdown_request = resolve_lockdown(
-                lockdown, deny, cmdline, bool(image or rootfs_dir), bool(initrd)
-            )
-        except LockdownError as e:
-            click.echo(f"Error: {e}", err=True)
-            sys.exit(2)
-        if lockdown_request:
-            for warning in lockdown_request.warnings:
-                click.echo(f"Warning: {warning}", err=True)
 
         instance_name = None
         instance_id = None
@@ -462,11 +421,6 @@ def load(  # pylint: disable=too-many-arguments,too-many-positional-arguments,to
             if verbose:
                 click.echo(f"Console: console={console_device}")
 
-        if lockdown_request and lockdown_request.params:
-            cmdline_parts.extend(lockdown_request.params)
-            if verbose:
-                click.echo(f"Lockdown: {' '.join(lockdown_request.params)}")
-
         # Last, so that it wins over anything given above
         required = required_kernel_params(cmdline_parts)
         if required:
@@ -493,13 +447,8 @@ def load(  # pylint: disable=too-many-arguments,too-many-positional-arguments,to
                     err=True,
                 )
             kernel_fd = open_kernel_fd(kernel_path)
-            if lockdown_request and not image_supports_lockdown(kernel_fd):
-                click.echo(
-                    "Warning: this kernel image does not appear to be built with the "
-                    "lockdown LSM (CONFIG_SECURITY_LOCKDOWN_LSM); it will ignore "
-                    f"lockdown={lockdown_request.level}.",
-                    err=True,
-                )
+            # Read from the image now, for kerf start --lockdown to warn from
+            lockdown_lsm = image_supports_lockdown(kernel_fd)
         except VmlinuzError as e:
             click.echo(f"Error: {e}", err=True)
             sys.exit(3)
@@ -511,12 +460,11 @@ def load(  # pylint: disable=too-many-arguments,too-many-positional-arguments,to
         initrd_fd = -1
         if initrd_path:
             try:
-                if lockdown_request and lockdown_request.chained:
-                    initrd_fd = open_initrd_with_kerf_init(initrd_path)
-                    if verbose:
-                        click.echo("Added kerf-init to the initrd")
-                else:
-                    initrd_fd = os.open(str(initrd_path), os.O_RDONLY)
+                # What is in the initramfs is fixed here, and a later
+                # kerf start --deny needs kerf-init in it
+                initrd_fd = open_initrd_with_kerf_init(initrd_path)
+                if verbose:
+                    click.echo("Added kerf-init to the initrd")
             except (OSError, InitrdError) as e:
                 os.close(kernel_fd)
                 click.echo(f"Error: Failed to open initrd image: {e}", err=True)
@@ -556,11 +504,7 @@ def load(  # pylint: disable=too-many-arguments,too-many-positional-arguments,to
                     "kernel": inspect_kernel_image(kernel_path),
                     "initrd": inspect_initrd_image(initrd_path) if initrd_path else None,
                     "rootfs": rootfs_meta,
-                    "lockdown": {
-                        "level": lockdown_request.level,
-                        "deny": list(lockdown_request.deny),
-                        "pinned": lockdown_request.chained,
-                    } if lockdown_request else None,
+                    "lockdown_lsm": lockdown_lsm,
                     "loaded_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
                 })
             except OSError as e:

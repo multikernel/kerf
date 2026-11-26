@@ -97,7 +97,7 @@ class LockdownRequest:
 
 
 def lockdown_help() -> str:
-    """The lockdown features of each level, for kerf load --help."""
+    """The lockdown features of each level, for kerf start --help."""
 
     def table(reasons):
         return "\n".join(f"  {name:22}{what}" for name, what in reasons)
@@ -123,7 +123,7 @@ def _check_options(level: Optional[str], kerf_init: bool, initrd: bool) -> None:
         )
     if not kerf_init and not initrd:
         raise LockdownError(
-            "--deny needs kerf-init in the spawn; use --image, --rootfs-dir or --initrd"
+            "--deny needs kerf-init in the spawn; load it with --image, --rootfs-dir or --initrd"
         )
 
 
@@ -138,17 +138,17 @@ def _check_cmdline(words: List[str], level: str, denying: bool) -> bool:
     settings = [word for word in words if word.startswith("lockdown=")]
     for setting in settings:
         if setting != wanted:
-            raise LockdownError(f"--lockdown={level} conflicts with {setting} in --cmdline")
+            raise LockdownError(f"--lockdown={level} conflicts with {setting} in the command line")
 
     # lsm= replaces the kernel's whole LSM list, and the last one wins
     lsm = [word for word in words if word.startswith("lsm=")]
     if lsm:
         active = lsm[-1][len("lsm="):].split(",")
         if "lockdown" not in active:
-            raise LockdownError(f"{lsm[-1]} in --cmdline leaves out lockdown, disabling it")
+            raise LockdownError(f"{lsm[-1]} in the command line leaves out lockdown, disabling it")
         if denying and "bpf" not in active:
             raise LockdownError(
-                f"{lsm[-1]} in --cmdline leaves out bpf, which --deny needs"
+                f"{lsm[-1]} in the command line leaves out bpf, which --deny needs"
             )
     return bool(settings)
 
@@ -196,14 +196,14 @@ def resolve_lockdown(
     initrd: bool,
 ) -> Optional[LockdownRequest]:
     """
-    Validate --lockdown and --deny against the rest of a kerf load request.
+    Validate --lockdown and --deny against the rest of a kerf start request.
 
     Args:
         level: --lockdown, if given
         deny: --deny, if given
-        cmdline: --cmdline, if given
+        cmdline: The command line of the run without them
         kerf_init: Whether kerf-init will be the spawn's init
-        initrd: Whether an initrd was given
+        initrd: Whether the spawn was loaded with an initrd
 
     Returns:
         The request, or None when neither option was given
@@ -227,7 +227,7 @@ def resolve_lockdown(
     if chained:
         params.extend(_chain_params(words))
         warnings += (
-            "with --initrd alone the deny list is only pinned in a bpffs; it holds "
+            "with an initrd alone the deny list is only pinned in a bpffs; it holds "
             "until root in the spawn removes the pin",
         )
     elif names and initrd:

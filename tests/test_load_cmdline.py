@@ -84,32 +84,9 @@ def test_network_options_without_an_address_are_rejected(options, named):
     assert f"Error: {named} requires --ip (an address or dhcp)" in result.output
 
 
-@pytest.mark.parametrize("args, message", [
-    (["--lockdown=confidentiality", "--cmdline=quiet lockdown=integrity"],
-     "Error: --lockdown=confidentiality conflicts with lockdown=integrity"),
-    (["--deny=kcore"], "Error: --deny requires --lockdown=integrity"),
-    (["--lockdown=integrity", "--deny=kcore"], "--image, --rootfs-dir or --initrd"),
-    (["--lockdown=integrity", "--deny=kexec", "--image=nginx"], "already covered"),
-])
-def test_bad_lockdown_requests_are_rejected_before_anything_is_touched(args, message):
-    result = CliRunner().invoke(load, ["web", "--kernel=/boot/vmlinuz", *args])
+@pytest.mark.parametrize("option", ["--lockdown=integrity", "--deny=kcore"])
+def test_lockdown_is_chosen_at_start_not_at_load(option):
+    result = CliRunner().invoke(load, ["web", "--kernel=/boot/vmlinuz", option])
 
     assert result.exit_code == 2
-    assert message in result.output
-
-
-def test_lockdown_takes_only_the_two_kernel_levels():
-    result = CliRunner().invoke(load, ["web", "--kernel=/boot/vmlinuz", "--lockdown=none"])
-
-    assert result.exit_code == 2
-    assert "integrity" in result.output and "confidentiality" in result.output
-
-
-def test_lockdown_help_names_levels_and_reasons():
-    output = CliRunner().invoke(load, ["--help"]).output
-
-    assert "--lockdown" in output and "--deny" in output
-    assert "/dev/mem" in output
-    for reason in ("kcore", "kprobes", "bpf-read-kernel", "dbg-read-kernel",
-                   "perf", "tracefs", "xmon-rw", "xfrm-secret"):
-        assert reason in output
+    assert "No such option" in result.output

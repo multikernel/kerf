@@ -154,23 +154,24 @@ kerf load --kernel=/boot/vmlinuz --initrd=/boot/initrd.img \
 kerf sign /boot/vmlinuz -o vmlinux.signed --key signing_key.pem --cert signing_cert.pem
 kerf load --kernel=vmlinux.signed --id=1
 
-# Lock a spawn kernel down at either of the kernel's two levels,
-# integrity or confidentiality
-kerf load --kernel=vmlinux.signed --id=1 --lockdown=integrity
-
-# Or pick individual confidentiality restrictions on top of integrity;
-# kerf-init enforces them, and the spawn kernel needs BPF LSM and BTF
-kerf load web --kernel=vmlinux.signed --image=nginx:latest \
-         --lockdown=integrity --deny=kcore,xfrm-secret
-
-# The same for a spawn that boots its own initramfs: kerf-init is added to
-# it and runs first. Here root in the spawn is trusted not to lift the
-# restrictions, which only stay pinned in a bpffs
-kerf load web --kernel=vmlinux.signed --initrd=/boot/initrd.img \
-         --lockdown=integrity --deny=kcore,xfrm-secret
-
 # Boot a kernel instance
 kerf start web-server
+
+# Lock a spawn kernel down for a run, at either of the kernel's two levels,
+# integrity or confidentiality. The next start without the option is not
+# locked down
+kerf start web-server --lockdown=integrity
+
+# Or pick individual confidentiality restrictions on top of integrity;
+# kerf-init enforces them, and the spawn kernel needs BPF LSM and BTF.
+# For a spawn that boots its own initramfs, kerf-init runs first and root
+# in the spawn is trusted not to lift the restrictions, which only stay
+# pinned in a bpffs
+kerf start web-server --lockdown=integrity --deny=kcore,xfrm-secret
+
+# Change the entrypoint or add boot parameters for one run, without
+# loading the image again
+kerf start web-server --entrypoint=/bin/sh --append=loglevel=7
 
 # Run a command inside a running instance (docker exec style)
 kerf exec web-server ls /

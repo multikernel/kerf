@@ -308,7 +308,8 @@ def _display_kernel_metadata(metadata: Dict, verbose: bool = False):
     elif initrd:
         # Records from before initrd inspection hold just the path
         click.echo(f"    {'Initrd':15} {initrd}")
-    lockdown = metadata.get("lockdown")
+    # Of the last start, since each run picks its own
+    lockdown = (metadata.get("last_run") or {}).get("lockdown")
     if lockdown:
         lockdown_line = lockdown["level"]
         if lockdown.get("deny"):
