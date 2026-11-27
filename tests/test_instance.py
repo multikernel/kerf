@@ -93,6 +93,8 @@ def fixture_fd(kernel):
 @pytest.fixture(name="kernel")
 def fixture_kernel(monkeypatch):
     fake = FakeKernel()
+    # arm64 adds a parameter of its own to every command line
+    monkeypatch.setattr("platform.machine", lambda: "x86_64")
     monkeypatch.setattr(instance, "kexec_file_load", fake.kexec_file_load)
     monkeypatch.setattr(instance.fcntl, "ioctl", fake.ioctl)
     for module in ("kerf.utils", "kerf.start.main", "kerf.kill.main"):

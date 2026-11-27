@@ -31,6 +31,12 @@ DAXFS = 'rootfstype=daxfs init=/.kerf-init kerf.entrypoint="/bin/sleep 20" conso
 INITRAMFS = "root=/dev/vda console=mktty0"
 
 
+@pytest.fixture(autouse=True)
+def on_x86(monkeypatch):
+    """What an architecture adds to every command line is tested on its own."""
+    monkeypatch.setattr("platform.machine", lambda: "x86_64")
+
+
 def test_start_is_the_boot_command():
     result = CliRunner().invoke(main, ["start", "--help"])
     assert result.exit_code == 0
@@ -114,6 +120,14 @@ def test_deny_on_an_initramfs_spawn_runs_kerf_init_first_even_after_append():
         "rdinit=/sbin/init lockdown=integrity kerf.deny=kcore "
         "rdinit=/.kerf-init kerf.init=/sbin/init"
     )
+
+
+def test_what_the_architecture_requires_comes_last(monkeypatch):
+    monkeypatch.setattr("platform.machine", lambda: "aarch64")
+
+    cmdline, _ = _compose(INITRAMFS, lockdown="integrity", append="quiet")
+
+    assert cmdline == f"{INITRAMFS} quiet lockdown=integrity irqchip.gicv3_pseudo_nmi=1"
 
 
 def test_deny_without_kerf_init_anywhere_is_refused():
