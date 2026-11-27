@@ -132,6 +132,7 @@ class FakeInstance:
     def __init__(self, cmdline):
         self.base = cmdline
         self.started_with = []
+        self.saved = []
 
     def open_instance(self, instance_id):
         assert instance_id == 3
@@ -147,15 +148,13 @@ class FakeInstance:
 @pytest.fixture(name="spawn")
 def fixture_spawn(monkeypatch):
     fake = FakeInstance(INITRAMFS)
-    saved = []
     metadata = {"kernel": {"path": "/boot/vmlinux"}, "initrd": None, "lockdown_lsm": False}
     monkeypatch.setattr(start_main, "instance", fake)
     monkeypatch.setattr(start_main, "resolve_instance", lambda name, instance_id: ("web", 3))
     monkeypatch.setattr(start_main, "load_instance_metadata", lambda instance_id: metadata)
     monkeypatch.setattr(
-        start_main, "save_instance_metadata", lambda instance_id, record: saved.append(record)
+        start_main, "save_instance_metadata", lambda instance_id, record: fake.saved.append(record)
     )
-    fake.saved = saved
     return fake
 
 

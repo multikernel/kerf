@@ -48,13 +48,13 @@ KEXEC_MK_STATE_STARTING = 2
 KEXEC_MK_STATE_ACTIVE = 3
 
 # struct kexec_mk_start: flags, timeout_ms, cmdline, cmdline_len, pad
-_START = struct.Struct("=IIQII")
+KEXEC_MK_START = struct.Struct("=IIQII")
 # struct kexec_mk_halt: flags, timeout_ms
-_HALT = struct.Struct("=II")
+KEXEC_MK_HALT = struct.Struct("=II")
 # struct kexec_mk_info: size, state, run, stop_reason, exit_status, flags, pad
-_INFO = struct.Struct("=IIQIiII")
+KEXEC_MK_INFO = struct.Struct("=IIQIiII")
 # struct kexec_mk_cmdline: buf, len, flags
-_CMDLINE = struct.Struct("=QII")
+KEXEC_MK_CMDLINE = struct.Struct("=QII")
 
 _IOC_WRITE = 1
 _IOC_READ = 2
@@ -65,10 +65,10 @@ def _ioc(direction: int, number: int, size: int) -> int:
     return (direction << 30) | (size << 16) | (_IOC_MAGIC << 8) | number
 
 
-KEXEC_MK_IOC_START = _ioc(_IOC_WRITE, 1, _START.size)
-KEXEC_MK_IOC_HALT = _ioc(_IOC_WRITE, 2, _HALT.size)
-KEXEC_MK_IOC_INFO = _ioc(_IOC_READ | _IOC_WRITE, 3, _INFO.size)
-KEXEC_MK_IOC_CMDLINE = _ioc(_IOC_READ | _IOC_WRITE, 5, _CMDLINE.size)
+KEXEC_MK_IOC_START = _ioc(_IOC_WRITE, 1, KEXEC_MK_START.size)
+KEXEC_MK_IOC_HALT = _ioc(_IOC_WRITE, 2, KEXEC_MK_HALT.size)
+KEXEC_MK_IOC_INFO = _ioc(_IOC_READ | _IOC_WRITE, 3, KEXEC_MK_INFO.size)
+KEXEC_MK_IOC_CMDLINE = _ioc(_IOC_READ | _IOC_WRITE, 5, KEXEC_MK_CMDLINE.size)
 
 # x86_64, and the generic table arm64 and riscv64 share
 _SYS_KEXEC_FILE_LOAD = {
@@ -179,11 +179,11 @@ def start(fd: int, cmdline: Optional[str] = None, timeout_ms: int = 0) -> None:
         timeout_ms: How long to wait for the boot, 0 to not wait
     """
     if cmdline is None:
-        fcntl.ioctl(fd, KEXEC_MK_IOC_START, _START.pack(0, timeout_ms, 0, 0, 0))
+        fcntl.ioctl(fd, KEXEC_MK_IOC_START, KEXEC_MK_START.pack(0, timeout_ms, 0, 0, 0))
         return
 
     buf = ctypes.create_string_buffer(cmdline.encode("utf-8"))
-    arg = _START.pack(0, timeout_ms, ctypes.addressof(buf), len(buf), 0)
+    arg = KEXEC_MK_START.pack(0, timeout_ms, ctypes.addressof(buf), len(buf), 0)
     fcntl.ioctl(fd, KEXEC_MK_IOC_START, arg)
 
 
@@ -196,14 +196,14 @@ def halt(fd: int, force: bool = False, timeout_ms: int = 0) -> None:
             ETIMEDOUT leaves the instance running and the request in effect.
     """
     flags = KEXEC_MK_HALT_FORCE if force else 0
-    fcntl.ioctl(fd, KEXEC_MK_IOC_HALT, _HALT.pack(flags, timeout_ms))
+    fcntl.ioctl(fd, KEXEC_MK_IOC_HALT, KEXEC_MK_HALT.pack(flags, timeout_ms))
 
 
 def info(fd: int) -> InstanceInfo:
     """Read the state of the instance."""
-    arg = bytearray(_INFO.pack(_INFO.size, 0, 0, 0, 0, 0, 0))
+    arg = bytearray(KEXEC_MK_INFO.pack(KEXEC_MK_INFO.size, 0, 0, 0, 0, 0, 0))
     fcntl.ioctl(fd, KEXEC_MK_IOC_INFO, arg)
-    _, state, run, stop_reason, exit_status, flags, _ = _INFO.unpack(arg)
+    _, state, run, stop_reason, exit_status, flags, _ = KEXEC_MK_INFO.unpack(arg)
     return InstanceInfo(state, run, stop_reason, exit_status, flags)
 
 
@@ -215,6 +215,6 @@ def loaded_cmdline(fd: int) -> str:
         OSError: ENOEXEC if the instance has no image
     """
     buf = ctypes.create_string_buffer(_MAX_CMDLINE)
-    arg = bytearray(_CMDLINE.pack(ctypes.addressof(buf), len(buf), 0))
+    arg = bytearray(KEXEC_MK_CMDLINE.pack(ctypes.addressof(buf), len(buf), 0))
     fcntl.ioctl(fd, KEXEC_MK_IOC_CMDLINE, arg)
     return buf.value.decode("utf-8", errors="replace")

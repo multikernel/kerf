@@ -64,16 +64,16 @@ class FakeKernel:
         if request in self.fail:
             raise OSError(self.fail[request], "refused")
         if request == instance.KEXEC_MK_IOC_START:
-            _, timeout_ms, ptr, length, _ = instance._START.unpack(arg)
+            _, timeout_ms, ptr, length, _ = instance.KEXEC_MK_START.unpack(arg)
             cmdline = ctypes.string_at(ptr, length) if ptr else None
             self.calls.append(("start", timeout_ms, cmdline))
         elif request == instance.KEXEC_MK_IOC_HALT:
-            self.calls.append(("halt",) + instance._HALT.unpack(arg))
+            self.calls.append(("halt",) + instance.KEXEC_MK_HALT.unpack(arg))
         elif request == instance.KEXEC_MK_IOC_INFO:
-            assert instance._INFO.unpack(arg)[0] == instance._INFO.size
-            arg[:] = instance._INFO.pack(instance._INFO.size, self.state, 0, 0, 0, 0, 0)
+            assert instance.KEXEC_MK_INFO.unpack(arg)[0] == instance.KEXEC_MK_INFO.size
+            arg[:] = instance.KEXEC_MK_INFO.pack(instance.KEXEC_MK_INFO.size, self.state, 0, 0, 0, 0, 0)
         elif request == instance.KEXEC_MK_IOC_CMDLINE:
-            ptr, length, _ = instance._CMDLINE.unpack(arg)
+            ptr, length, _ = instance.KEXEC_MK_CMDLINE.unpack(arg)
             data = self.loaded_cmdline.encode() + b"\0"
             assert length >= len(data)
             ctypes.memmove(ptr, data, len(data))
@@ -148,7 +148,7 @@ def test_a_ready_instance_is_neither_loaded_nor_running(kernel, fd):
     assert not state.running and not state.loaded
 
 
-def test_cmdline_reads_what_the_image_was_loaded_with(kernel, fd):
+def test_cmdline_reads_what_the_image_was_loaded_with(fd):
     assert instance.loaded_cmdline(fd) == "console=mktty0"
 
 
