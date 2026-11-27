@@ -25,7 +25,7 @@ from click.testing import CliRunner
 from kerf.cli import main
 from kerf.lockdown import LockdownError
 from kerf.start import main as start_main
-from kerf.start.main import compose_cmdline, split_cmdline
+from kerf.start.main import build_ip_param, compose_cmdline, split_cmdline
 
 DAXFS = 'rootfstype=daxfs init=/.kerf-init kerf.entrypoint="/bin/sleep 20" console=mktty0'
 INITRAMFS = "root=/dev/vda console=mktty0"
@@ -216,3 +216,49 @@ def test_lockdown_help_names_levels_and_reasons():
     for reason in ("kcore", "kprobes", "bpf-read-kernel", "dbg-read-kernel",
                    "perf", "tracefs", "xmon-rw", "xfrm-secret"):
         assert reason in output
+
+
+def test_dhcp_on_a_named_interface_puts_it_in_the_device_field():
+    param = build_ip_param("dhcp", None, "255.255.255.0", None, "enP9s0")
+    assert param == "ip=:::::enP9s0:dhcp"
+    assert param[3:].split(":")[5] == "enP9s0"
+
+
+def test_dhcp_on_any_interface():
+    assert build_ip_param("dhcp", None, "255.255.255.0", None, None) == "ip=dhcp"
+    assert build_ip_param("DHCP", None, "255.255.255.0", "web", None) == "ip=::::web::dhcp"
+
+
+def test_static_address():
+    assert (build_ip_param("192.168.122.157", "192.168.122.1", "255.255.255.0", None, "enP9s0")
+            == "ip=192.168.122.157::192.168.122.1:255.255.255.0::enP9s0:off")
+
+
+def test_no_address_no_parameter():
+    assert build_ip_param(None, None, "255.255.255.0", None, "eth0") is None
+
+
+def test_static_address_defaults_its_netmask():
+    assert (build_ip_param("10.0.0.2", None, None, None, "eth0")
+            == "ip=10.0.0.2:::255.255.255.0::eth0:off")
+
+
+@pytest.mark.parametrize("options, named", [
+    (["--nic=eth0"], "--nic"),
+    (["--gateway=10.0.0.1", "--hostname=web"], "--gateway, --hostname"),
+    (["--netmask=255.255.0.0"], "--netmask"),
+])
+def test_network_options_without_an_address_are_rejected(options, named):
+    result = CliRunner().invoke(main, ["start", "web", *options])
+
+    assert result.exit_code == 2
+    assert f"Error: {named} requires --ip (an address or dhcp)" in result.output
+
+
+def test_start_puts_the_network_configuration_behind_append(spawn):
+    result = CliRunner().invoke(
+        main, ["start", "web", "--ip=10.0.0.2", "--nic=eth0", "--append=quiet"]
+    )
+
+    assert result.exit_code == 0
+    assert spawn.started_with == [f"{INITRAMFS} quiet ip=10.0.0.2:::255.255.255.0::eth0:off"]

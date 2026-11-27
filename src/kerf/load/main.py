@@ -39,47 +39,6 @@ from ..signature import kexec_signatures_enforced
 from ..vmlinuz import BZIMAGE_HEADER_SIZE, VmlinuzError, is_bzimage, open_kernel_fd
 
 
-def build_ip_param(
-    ip_addr: Optional[str],
-    gateway: Optional[str],
-    netmask: Optional[str],
-    hostname: Optional[str],
-    nic: Optional[str],
-) -> Optional[str]:
-    """
-    Build Linux kernel ip= boot parameter.
-
-    Format: ip=<client-ip>:<server-ip>:<gw-ip>:<netmask>:<hostname>:<device>:<autoconf>
-
-    Args:
-        ip_addr: Client IP address or "dhcp"
-        gateway: Gateway IP address
-        netmask: Network mask
-        hostname: Hostname
-        nic: Network interface name
-
-    Returns:
-        ip= parameter string, or None if no IP configuration
-    """
-    if not ip_addr:
-        return None
-
-    dhcp = ip_addr.lower() == "dhcp"
-    if dhcp and not nic and not hostname:
-        return "ip=dhcp"
-
-    parts = [
-        "" if dhcp else ip_addr,
-        "",
-        "" if dhcp else gateway or "",
-        "" if dhcp else netmask or "255.255.255.0",
-        hostname or "",
-        nic or "",
-        "dhcp" if dhcp else "off",
-    ]
-    return "ip=" + ":".join(parts)
-
-
 # What a spawn kernel cannot do without, per architecture. On arm64 the host
 # can only force a wedged spawn down with a stop interrupt, and that reaches
 # a CPU that has interrupts off only when the spawn runs with pseudo-NMIs
@@ -126,11 +85,6 @@ def required_kernel_params(cmdline_parts: List[str], arch: Optional[str] = None)
 @click.option("--image", help="Docker image to use as rootfs (e.g., nginx:latest)")
 @click.option("--entrypoint", help="Override image entrypoint for init")
 @click.option("--rootfs-dir", help="Use existing directory as rootfs instead of Docker image")
-@click.option("--ip", "ip_addr", help="IP address for spawn kernel (or 'dhcp')")
-@click.option("--gateway", help="Default gateway IP address")
-@click.option("--netmask", help="Network mask (default: 255.255.255.0)")
-@click.option("--nic", help="Network interface name (e.g., eth0)")
-@click.option("--hostname", help="Hostname for spawn kernel")
 @click.option("--verbose", "-v", is_flag=True, help="Verbose output")
 def load(  # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     ctx: click.Context,
@@ -142,11 +96,6 @@ def load(  # pylint: disable=too-many-arguments,too-many-positional-arguments,to
     image: Optional[str],
     entrypoint: Optional[str],
     rootfs_dir: Optional[str],
-    ip_addr: Optional[str],
-    gateway: Optional[str],
-    netmask: Optional[str],
-    nic: Optional[str],
-    hostname: Optional[str],
     verbose: bool,
 ):
     """
@@ -197,16 +146,6 @@ def load(  # pylint: disable=too-many-arguments,too-many-positional-arguments,to
         # Load with pre-extracted rootfs directory
         kerf load custom --kernel=/boot/vmlinuz --rootfs-dir=/mnt/rootfs \\
                  --entrypoint=/sbin/init
-
-        \b
-        # Load with static IP configuration
-        kerf load web-server --kernel=/boot/vmlinuz --image=nginx:latest \\
-                 --ip=192.168.1.100 --gateway=192.168.1.1 --nic=eth0
-
-        \b
-        # Load with DHCP
-        kerf load web-server --kernel=/boot/vmlinuz --image=nginx:latest \\
-                 --ip=dhcp --nic=eth0
     """
     try:
         if image and rootfs_dir:
@@ -219,12 +158,6 @@ def load(  # pylint: disable=too-many-arguments,too-many-positional-arguments,to
 
         if entrypoint and not image and not rootfs_dir:
             click.echo("Error: --entrypoint requires --image or --rootfs-dir", err=True)
-            sys.exit(2)
-
-        network = {"--gateway": gateway, "--netmask": netmask, "--nic": nic, "--hostname": hostname}
-        given = [option for option, value in network.items() if value]
-        if given and not ip_addr:
-            click.echo(f"Error: {', '.join(given)} requires --ip (an address or dhcp)", err=True)
             sys.exit(2)
 
         instance_name, instance_id = resolve_instance(name, id)
@@ -361,13 +294,6 @@ def load(  # pylint: disable=too-many-arguments,too-many-positional-arguments,to
                 click.echo(f"Daxfs root: rootfstype=daxfs rootflags=phys=0x{daxfs_image.phys_addr:x},size={daxfs_image.size}")
                 if init_path:
                     click.echo(f"Entrypoint: kerf.entrypoint={init_path}")
-
-        # Add IP configuration if specified
-        ip_param = build_ip_param(ip_addr, gateway, netmask, hostname, nic)
-        if ip_param:
-            cmdline_parts.append(ip_param)
-            if verbose:
-                click.echo(f"Network config: {ip_param}")
 
         # Last, so that it wins over anything given above
         required = required_kernel_params(cmdline_parts)

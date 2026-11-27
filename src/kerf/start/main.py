@@ -36,6 +36,47 @@ from ..metadata import load_instance_metadata, save_instance_metadata
 from ..utils import resolve_instance
 
 
+def build_ip_param(
+    ip_addr: Optional[str],
+    gateway: Optional[str],
+    netmask: Optional[str],
+    hostname: Optional[str],
+    nic: Optional[str],
+) -> Optional[str]:
+    """
+    Build Linux kernel ip= boot parameter.
+
+    Format: ip=<client-ip>:<server-ip>:<gw-ip>:<netmask>:<hostname>:<device>:<autoconf>
+
+    Args:
+        ip_addr: Client IP address or "dhcp"
+        gateway: Gateway IP address
+        netmask: Network mask
+        hostname: Hostname
+        nic: Network interface name
+
+    Returns:
+        ip= parameter string, or None if no IP configuration
+    """
+    if not ip_addr:
+        return None
+
+    dhcp = ip_addr.lower() == "dhcp"
+    if dhcp and not nic and not hostname:
+        return "ip=dhcp"
+
+    parts = [
+        "" if dhcp else ip_addr,
+        "",
+        "" if dhcp else gateway or "",
+        "" if dhcp else netmask or "255.255.255.0",
+        hostname or "",
+        nic or "",
+        "dhcp" if dhcp else "off",
+    ]
+    return "ip=" + ":".join(parts)
+
+
 def split_cmdline(cmdline: str) -> List[str]:
     """Split a kernel command line into parameters, as the kernel does."""
     words = []
@@ -177,6 +218,11 @@ def _record_run(instance_id: int, metadata: Optional[dict], cmdline: Optional[st
     "LSM and BTF, loaded with --image, --rootfs-dir or --initrd. With an initrd "
     "alone, root in the spawn is trusted not to lift the restrictions.",
 )
+@click.option("--ip", "ip_addr", help="IP address for spawn kernel (or 'dhcp')")
+@click.option("--gateway", help="Default gateway IP address")
+@click.option("--netmask", help="Network mask (default: 255.255.255.0)")
+@click.option("--nic", help="Network interface name (e.g., eth0)")
+@click.option("--hostname", help="Hostname for spawn kernel")
 @click.option("--entrypoint", help="Run this instead of the entrypoint the spawn was loaded with")
 @click.option("--append", help="Boot parameters to add to the command line for this run")
 @click.option("--verbose", "-v", is_flag=True, help="Verbose output")
@@ -187,6 +233,11 @@ def start_cmd(  # pylint: disable=too-many-arguments,too-many-positional-argumen
     console_device: str,
     lockdown: Optional[str],
     deny: Optional[str],
+    ip_addr: Optional[str],
+    gateway: Optional[str],
+    netmask: Optional[str],
+    nic: Optional[str],
+    hostname: Optional[str],
     entrypoint: Optional[str],
     append: Optional[str],
     verbose: bool,
@@ -197,9 +248,10 @@ def start_cmd(  # pylint: disable=too-many-arguments,too-many-positional-argumen
     This command boots a previously loaded multikernel instance by name or ID.
 
     Every run boots with the command line the instance was loaded with, plus
-    the console and whatever --lockdown, --deny, --entrypoint and --append ask
-    for. They apply to this run only: the next start without them is not
-    locked down and runs the loaded entrypoint again.
+    the console and whatever the network options, --lockdown, --deny,
+    --entrypoint and --append ask for. They apply to this run only: the next
+    start without them has no network configuration, is not locked down and
+    runs the loaded entrypoint again.
 
     --deny is enforced by kerf-init. Loaded with --image or --rootfs-dir it is
     the spawn's PID 1 and keeps the restrictions in place for good. Loaded
@@ -218,6 +270,11 @@ def start_cmd(  # pylint: disable=too-many-arguments,too-many-positional-argumen
         kerf start web-server --attach
 
         \b
+        # Start with a static IP configuration, or with DHCP
+        kerf start web-server --ip=192.168.1.100 --gateway=192.168.1.1 --nic=eth0
+        kerf start web-server --ip=dhcp --nic=eth0
+
+        \b
         # Start with no console
         kerf start web-server --console=ttynull
 
@@ -230,6 +287,14 @@ def start_cmd(  # pylint: disable=too-many-arguments,too-many-positional-argumen
         # Run something else for once, with one more boot parameter
         kerf start worker --entrypoint=/app/migrate.py --append=loglevel=7
     """
+    network = {"--gateway": gateway, "--netmask": netmask, "--nic": nic, "--hostname": hostname}
+    given = [option for option, value in network.items() if value]
+    if given and not ip_addr:
+        raise click.UsageError(f"{', '.join(given)} requires --ip (an address or dhcp)")
+    # Behind --append, so that the address asked for here is the one in effect
+    ip_param = build_ip_param(ip_addr, gateway, netmask, hostname, nic)
+    append = " ".join(part for part in (append, ip_param) if part) or None
+
     instance_name, instance_id = resolve_instance(name, id)
     metadata = load_instance_metadata(instance_id)
 

@@ -17,7 +17,7 @@
 import pytest
 from click.testing import CliRunner
 
-from kerf.load.main import build_ip_param, load, required_kernel_params
+from kerf.load.main import load, required_kernel_params
 
 PSEUDO_NMI = "irqchip.gicv3_pseudo_nmi=1"
 
@@ -47,44 +47,9 @@ def test_appended_again_when_turned_off_after_being_on():
     assert required_kernel_params(parts, "aarch64") == [PSEUDO_NMI]
 
 
-def test_dhcp_on_a_named_interface_puts_it_in_the_device_field():
-    param = build_ip_param("dhcp", None, "255.255.255.0", None, "enP9s0")
-    assert param == "ip=:::::enP9s0:dhcp"
-    assert param[3:].split(":")[5] == "enP9s0"
-
-
-def test_dhcp_on_any_interface():
-    assert build_ip_param("dhcp", None, "255.255.255.0", None, None) == "ip=dhcp"
-    assert build_ip_param("DHCP", None, "255.255.255.0", "web", None) == "ip=::::web::dhcp"
-
-
-def test_static_address():
-    assert (build_ip_param("192.168.122.157", "192.168.122.1", "255.255.255.0", None, "enP9s0")
-            == "ip=192.168.122.157::192.168.122.1:255.255.255.0::enP9s0:off")
-
-
-def test_no_address_no_parameter():
-    assert build_ip_param(None, None, "255.255.255.0", None, "eth0") is None
-
-
-def test_static_address_defaults_its_netmask():
-    assert (build_ip_param("10.0.0.2", None, None, None, "eth0")
-            == "ip=10.0.0.2:::255.255.255.0::eth0:off")
-
-
-@pytest.mark.parametrize("options, named", [
-    (["--nic=eth0"], "--nic"),
-    (["--gateway=10.0.0.1", "--hostname=web"], "--gateway, --hostname"),
-    (["--netmask=255.255.0.0"], "--netmask"),
-])
-def test_network_options_without_an_address_are_rejected(options, named):
-    result = CliRunner().invoke(load, ["web", "--kernel=/boot/vmlinuz", *options])
-
-    assert result.exit_code == 2
-    assert f"Error: {named} requires --ip (an address or dhcp)" in result.output
-
-
-@pytest.mark.parametrize("option", ["--lockdown=integrity", "--deny=kcore", "--console=ttyS0"])
+@pytest.mark.parametrize(
+    "option", ["--lockdown=integrity", "--deny=kcore", "--console=ttyS0", "--ip=dhcp", "--nic=eth0"]
+)
 def test_per_run_settings_are_chosen_at_start_not_at_load(option):
     result = CliRunner().invoke(load, ["web", "--kernel=/boot/vmlinuz", option])
 
